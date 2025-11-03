@@ -48,6 +48,7 @@ services:
     restart: always
     environment:
       OLLAMA_HOST: 0.0.0.0
+    command: serve          # <--- Ensures embedding API is available!
     ports:
       - "11434:11434"
     volumes:
