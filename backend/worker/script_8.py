@@ -1,0 +1,152 @@
+# Create React App.js (main component)
+import os
+
+project_name = "Privacy-Aware-RAG"
+app_js_content = """import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { DocumentProvider } from './contexts/DocumentContext';
+import Header from './components/Header';
+import Sidebar from './components/Sidebar';
+import Dashboard from './pages/Dashboard';
+import DocumentUpload from './pages/DocumentUpload';
+import DocumentList from './pages/DocumentList';
+import Search from './pages/Search';
+import Chat from './pages/Chat';
+import Settings from './pages/Settings';
+import './App.css';
+
+function App() {
+  return (
+    <DocumentProvider>
+      <Router>
+        <div className="min-h-screen bg-gray-50">
+          <Header />
+          <div className="flex">
+            <Sidebar />
+            <main className="flex-1 p-6">
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/upload" element={<DocumentUpload />} />
+                <Route path="/documents" element={<DocumentList />} />
+                <Route path="/search" element={<Search />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/settings" element={<Settings />} />
+              </Routes>
+            </main>
+          </div>
+        </div>
+      </Router>
+    </DocumentProvider>
+  );
+}
+
+export default App;
+"""
+
+# Write App.js
+with open(f"{project_name}/frontend/src/App.js", "w") as f:
+    f.write(app_js_content)
+
+# Create App.css with Tailwind imports
+app_css_content = """@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-colors duration-200;
+  }
+  
+  .btn-secondary {
+    @apply bg-secondary-200 text-secondary-700 px-4 py-2 rounded-lg hover:bg-secondary-300 focus:outline-none focus:ring-2 focus:ring-secondary-500 focus:ring-offset-2 transition-colors duration-200;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg shadow-md border border-gray-200;
+  }
+  
+  .input-field {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-colors duration-200;
+  }
+  
+  .textarea-field {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-vertical min-h-[100px] transition-colors duration-200;
+  }
+}
+
+/* Custom scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* Loading animation */
+.loading-spinner {
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #3b82f6;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* File upload drop zone */
+.drop-zone {
+  @apply border-2 border-dashed border-gray-300 rounded-lg p-8 text-center transition-colors duration-200;
+}
+
+.drop-zone.drag-over {
+  @apply border-primary-500 bg-primary-50;
+}
+
+/* Message animations */
+.message-enter {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.message-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms, transform 300ms;
+}
+
+.message-exit {
+  opacity: 1;
+}
+
+.message-exit-active {
+  opacity: 0;
+  transition: opacity 300ms;
+}
+"""
+
+# Write App.css
+with open(f"{project_name}/frontend/src/App.css", "w") as f:
+    f.write(app_css_content)
+
+print("Created React App.js and App.css")

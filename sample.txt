@@ -1,0 +1,1 @@
+This is a sample document for testing Privacy-Aware RAG document upload and chunking.
