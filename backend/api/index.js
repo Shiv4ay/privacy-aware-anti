@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const { abacMiddleware } = require('./middleware/abacMiddleware');
 const express = require('express');
 const { Pool } = require('pg');
 const Redis = require('ioredis');
@@ -281,23 +282,27 @@ app.get('/api/download/:id', async (req, res) => {
 });
 
 // -----------------------------
-// Search Endpoint
+// Search Endpoint (ABAC-protected)
 // -----------------------------
-app.post('/api/search', async (req, res) => {
+app.post('/api/search', abacMiddleware('search'), async (req, res) => {
     const { query, top_k = 5 } = req.body;
 
     if (!query || typeof query !== 'string' || query.trim().length === 0) {
-        return res.status(400).json({ 
+        return res.status(400).json({
             error: 'Missing or invalid query',
             details: 'Query must be a non-empty string'
         });
     }
 
     try {
-        const response = await axios.post(`${WORKER_URL}/search`, {
+        // Build payload including user attributes set by abacMiddleware
+        const payload = {
+            user: req.user, // user object attached by middleware
             query: query.trim(),
             top_k
-        }, {
+        };
+
+        const response = await axios.post(`${WORKER_URL}/search`, payload, {
             timeout: 30000
         });
 
@@ -318,6 +323,9 @@ app.post('/api/search', async (req, res) => {
         } else if (error.code === 'ECONNREFUSED') {
             errorMessage = 'Search service unavailable';
             statusCode = 503;
+        } else if (error.code === 'ECONNABORTED') {
+            errorMessage = 'Search request timed out';
+            statusCode = 504;
         }
 
         res.status(statusCode).json({

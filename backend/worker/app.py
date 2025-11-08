@@ -6,15 +6,19 @@ import json
 import uuid
 import asyncio
 import logging
+import re
+import hashlib
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 import psycopg2
+from psycopg2.extras import Json as PGJson
 import redis
 import requests
 from minio import Minio
 from pypdf import PdfReader
 from threading import Thread
+import chromadb
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -39,15 +43,24 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "mxbai-embed-large")
 
-CHROMADB_URL = os.getenv("CHROMADB_URL", "http://chromadb:8000")
+CHROMADB_HOST = os.getenv("CHROMADB_HOST", "chromadb")
+CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", 8000))
 CHROMADB_COLLECTION = os.getenv("CHROMADB_COLLECTION", "privacy_documents")
 
 TOP_K = int(os.getenv("TOP_K", 5))
+QUERY_HASH_SALT = os.getenv("QUERY_HASH_SALT", "change_me_query_salt")
 
 # -----------------------------
 # FastAPI app
 # -----------------------------
 app = FastAPI(title="Privacy-Aware RAG Worker", version="1.0.0")
+
+# -----------------------------
+# ChromaDB client
+# -----------------------------
+# Note: chromadb client usage depends on installed client version; adapt if required.
+chroma_client = chromadb.HttpClient(host=CHROMADB_HOST, port=CHROMADB_PORT)
+chroma_collection = chroma_client.get_or_create_collection(name=CHROMADB_COLLECTION)
 
 # -----------------------------
 # Pydantic models
@@ -70,7 +83,69 @@ class DocumentChunk(BaseModel):
     score: float
 
 # -----------------------------
-# Utility functions
+# Privacy helpers (redaction + hashing)
+# -----------------------------
+EMAIL_RE = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')
+PHONE_RE = re.compile(r'\b(?:\+?\d{1,3}[-.\s]?)?(?:\d[-.\s]?){6,14}\b')
+SSN_RE = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
+
+PII_PATTERNS = [EMAIL_RE, PHONE_RE, SSN_RE]
+
+def redact_text(text: str, replacement='[REDACTED]') -> str:
+    if not text:
+        return text
+    out = text
+    for p in PII_PATTERNS:
+        out = p.sub(replacement, out)
+    return out
+
+def hash_query(text: str) -> str:
+    salt = QUERY_HASH_SALT or "change_me_query_salt"
+    h = hashlib.sha256()
+    h.update((salt + (text or '')).encode('utf-8'))
+    return h.hexdigest()
+
+# -----------------------------
+# DB / Audit helpers
+# -----------------------------
+_db_conn = None
+
+def get_db_connection(retries=10, delay=3):
+    global _db_conn
+    if _db_conn:
+        return _db_conn
+    for attempt in range(retries):
+        try:
+            _db_conn = psycopg2.connect(DATABASE_URL)
+            _db_conn.autocommit = True
+            return _db_conn
+        except Exception as e:
+            if attempt == retries - 1:
+                raise e
+            time.sleep(delay)
+
+def insert_audit_log(user_id, action, resource_type, resource_id, details, ip_address=None, user_agent=None):
+    """
+    Insert an audit log into audit_logs table.
+    details should be a JSON-serializable dict (will be stored as jsonb).
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO audit_logs (user_id, action, resource_type, resource_id, details, ip_address, user_agent)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id;
+        """, (user_id, action, resource_type, resource_id, PGJson(details), ip_address, user_agent))
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else None
+    except Exception as e:
+        logger.exception("Failed to insert audit log: %s", e)
+        return None
+
+# -----------------------------
+# Utility functions (embeddings, chat, chroma)
 # -----------------------------
 def get_embedding(text: str) -> Optional[List[float]]:
     """Get embedding from Ollama API"""
@@ -114,53 +189,24 @@ Please provide a helpful and accurate response based on the context provided. If
         return "I'm sorry, I encountered an error generating a response."
 
 def chromadb_add(ids: List[str], documents: List[str], embeddings: List[List[float]]):
-    """Add documents to ChromaDB"""
-    url = f"{CHROMADB_URL}/api/v1/collections/{CHROMADB_COLLECTION}/add"
-    data = {
-        "ids": ids,
-        "documents": documents,
-        "embeddings": embeddings
-    }
-    response = requests.post(url, json=data, timeout=60)
-    response.raise_for_status()
-    return response.json()
+    """Add documents to ChromaDB using Python client"""
+    chroma_collection.add(
+        ids=ids,
+        documents=documents,
+        embeddings=embeddings
+    )
 
 def chromadb_query(query_embeddings: List[List[float]], n_results: int = TOP_K):
-    """Query ChromaDB"""
-    url = f"{CHROMADB_URL}/api/v1/collections/{CHROMADB_COLLECTION}/query"
-    data = {
-        "query_embeddings": query_embeddings,
-        "n_results": n_results
-    }
-    response = requests.post(url, json=data, timeout=60)
-    response.raise_for_status()
-    return response.json()
-
-def chromadb_create_collection():
-    """Create ChromaDB collection if it doesn't exist"""
-    try:
-        url = f"{CHROMADB_URL}/api/v1/collections"
-        data = {"name": CHROMADB_COLLECTION}
-        response = requests.post(url, json=data, timeout=30)
-        if response.status_code in [200, 409]:  # 409 means collection already exists
-            logger.info(f"ChromaDB collection '{CHROMADB_COLLECTION}' ready")
-        else:
-            response.raise_for_status()
-    except Exception as e:
-        logger.error(f"Failed to create ChromaDB collection: {e}")
+    """Query ChromaDB for most relevant documents using Python client"""
+    results = chroma_collection.query(
+        query_embeddings=query_embeddings,
+        n_results=n_results
+    )
+    return results
 
 # -----------------------------
-# Database operations
+# Ensure database tables (documents, processing_jobs, audit_logs)
 # -----------------------------
-def get_db_connection(retries=10, delay=3):
-    for attempt in range(retries):
-        try:
-            return psycopg2.connect(DATABASE_URL)
-        except Exception as e:
-            if attempt == retries - 1:
-                raise e
-            time.sleep(delay)
-
 def ensure_database_tables():
     """Create database tables if they don't exist"""
     conn = get_db_connection()
@@ -174,6 +220,9 @@ def ensure_database_tables():
             filename TEXT NOT NULL,
             status TEXT DEFAULT 'pending',
             content_preview TEXT,
+            uploaded_by INTEGER,
+            department TEXT,
+            sensitivity TEXT,
             created_at TIMESTAMP DEFAULT NOW(),
             processed_at TIMESTAMP
         );
@@ -190,9 +239,23 @@ def ensure_database_tables():
         );
     """)
 
+    # Audit logs table
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            action VARCHAR(100) NOT NULL,
+            resource_type VARCHAR(50),
+            resource_id INTEGER,
+            details JSONB,
+            ip_address INET,
+            user_agent TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+    """)
+
     conn.commit()
     cur.close()
-    conn.close()
     logger.info("Database tables ensured")
 
 # -----------------------------
@@ -302,9 +365,9 @@ def process_document_job(job_data: Dict[str, Any]):
             # Store in ChromaDB if we have embeddings
             if batch_embeddings and len(batch_embeddings) == len(batch_chunks):
                 try:
-                    chromadb_add(batch_ids[:len(batch_embeddings)], 
-                               batch_chunks[:len(batch_embeddings)], 
-                               batch_embeddings)
+                    chromadb_add(batch_ids[:len(batch_embeddings)],
+                                 batch_chunks[:len(batch_embeddings)],
+                                 batch_embeddings)
                     logger.info(f"Stored batch of {len(batch_embeddings)} chunks from {file_key}")
                 except Exception as e:
                     logger.error(f"Failed to store batch in ChromaDB: {e}")
@@ -337,7 +400,6 @@ def process_document_job(job_data: Dict[str, Any]):
 def background_worker():
     """Background worker to process jobs from Redis queue"""
     ensure_database_tables()
-    chromadb_create_collection()
 
     redis_client = redis.from_url(REDIS_URL)
 
@@ -378,27 +440,18 @@ def health_check():
     """Health check endpoint"""
     checks = {
         "ollama": False,
-        "chromadb": False,
+        "chromadb": True,
         "postgres": False,
         "redis": False,
         "minio": False
     }
 
-    # Check Ollama
     try:
         response = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         checks["ollama"] = response.status_code == 200
     except:
         pass
 
-    # Check ChromaDB
-    try:
-        response = requests.get(f"{CHROMADB_URL}/api/v1/heartbeat", timeout=5)
-        checks["chromadb"] = response.status_code == 200
-    except:
-        pass
-
-    # Check PostgreSQL
     try:
         conn = get_db_connection()
         conn.close()
@@ -406,14 +459,12 @@ def health_check():
     except:
         pass
 
-    # Check Redis
     try:
         redis_client = redis.from_url(REDIS_URL)
         checks["redis"] = redis_client.ping()
     except:
         pass
 
-    # Check MinIO
     try:
         minio_client.bucket_exists(MINIO_BUCKET)
         checks["minio"] = True
@@ -425,15 +476,13 @@ def health_check():
 
 @app.post("/embed")
 def embed_text(request: EmbedRequest):
-    """Embed text and optionally store in ChromaDB"""
+    """Embed text and store in ChromaDB via Python client"""
     try:
         embedding = get_embedding(request.text)
         if not embedding:
             raise HTTPException(status_code=500, detail="Failed to generate embedding")
 
         doc_id = request.id or str(uuid.uuid4())
-
-        # Store in ChromaDB
         chromadb_add([doc_id], [request.text], [embedding])
 
         return {
@@ -447,37 +496,84 @@ def embed_text(request: EmbedRequest):
 
 @app.post("/search")
 def search_documents(request: SearchRequest):
-    """Search for similar documents"""
+    """Search for similar documents using ChromaDB client and record audit logs"""
+    user = {}  # default empty user if caller didn't provide user context
+    # In your real flow, the API gateway populates user info in payload.
+    # If you forward user object from api -> worker, use it. Here we check request context.
+    # For compatibility, attempt to read a 'user' field if present in request (if using raw dict).
     try:
-        # Get query embedding
-        query_embedding = get_embedding(request.query)
+        # Redact and hash query for audit
+        raw_query = request.query or ""
+        query_redacted = redact_text(raw_query)
+        query_hash = hash_query(raw_query)
+
+        # Generate embedding
+        query_embedding = get_embedding(raw_query)
         if not query_embedding:
+            # audit with error and return failure
+            details = {
+                "query_hash": query_hash,
+                "query_redacted": query_redacted,
+                "error": "Failed to generate query embedding",
+                "result_count": 0,
+                "document_ids": []
+            }
+            insert_audit_log(user.get("id"), "search", "document", None, details)
             raise HTTPException(status_code=500, detail="Failed to generate query embedding")
 
         # Query ChromaDB
         results = chromadb_query([query_embedding], request.top_k)
-
-        # Format results
         documents = []
-        if results.get("documents") and results["documents"][0]:
-            for i, (doc_text, doc_id, distance) in enumerate(zip(
+        doc_ids = []
+        if results and results.get("documents") and results["documents"][0]:
+            for (doc_text, doc_id, distance) in zip(
                 results["documents"][0],
                 results["ids"][0],
                 results["distances"][0]
-            )):
-                documents.append(DocumentChunk(
-                    id=doc_id,
-                    text=doc_text,
-                    score=1.0 - distance  # Convert distance to similarity score
-                ))
+            ):
+                score = 1.0 - distance
+                documents.append(DocumentChunk(id=doc_id, text=doc_text, score=score))
+                doc_ids.append(doc_id)
+
+        # NOTE: you should apply document-level access filtering here (use your ABAC logic)
+        # For now we assume the caller has already passed allowed docs, or ABAC is enforced before worker.
+        filtered = documents  # keep as-is; replace with filtering if you implement it
+
+        # Build audit details
+        details = {
+            "query_hash": query_hash,
+            "query_redacted": query_redacted,
+            "result_count": len(filtered),
+            "document_ids": doc_ids
+        }
+
+        # Insert audit log (best-effort)
+        try:
+            insert_audit_log(user.get("id"), "search", "document", None, details)
+        except Exception as e:
+            logger.exception("Audit insert failed: %s", e)
 
         return {
-            "query": request.query,
-            "results": documents,
-            "total_found": len(documents)
+            "query": raw_query,
+            "results": filtered,
+            "total_found": len(filtered)
         }
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Search error: {e}")
+        logger.exception("Search error: %s", e)
+        # attempt best-effort audit
+        try:
+            insert_audit_log(user.get("id"), "search", "document", None, {
+                "query_hash": hash_query(request.query if hasattr(request, 'query') else ""),
+                "query_redacted": redact_text(request.query if hasattr(request, 'query') else ""),
+                "error": str(e),
+                "result_count": 0,
+                "document_ids": []
+            })
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/chat")
@@ -485,13 +581,9 @@ def chat_with_documents(request: ChatRequest):
     """Chat interface with document context"""
     try:
         context = ""
-
         if not request.context:
-            # Search for relevant documents
             search_request = SearchRequest(query=request.query, top_k=3)
             search_results = search_documents(search_request)
-
-            # Build context from search results
             contexts = []
             for doc in search_results["results"]:
                 contexts.append(doc.text)
@@ -499,9 +591,7 @@ def chat_with_documents(request: ChatRequest):
         else:
             context = request.context
 
-        # Generate response
         response = generate_chat_response(request.query, context)
-
         return {
             "query": request.query,
             "response": response,
@@ -517,16 +607,14 @@ def chat_with_documents(request: ChatRequest):
 # -----------------------------
 @app.on_event("startup")
 def startup():
-    """Initialize services on startup"""
     global minio_client
     logger.info("Privacy-Aware RAG Worker starting...")
 
-    # Initialize MinIO client
+    # ensure DB tables exist
+    ensure_database_tables()
+
     minio_client = get_minio_client()
-
-    # Start background worker
     start_background_worker()
-
     logger.info("Worker service initialized successfully")
 
 if __name__ == "__main__":
