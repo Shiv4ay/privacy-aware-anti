@@ -1,75 +1,191 @@
-// backend/api/middleware/abacMiddleware.js
 const jwt = require('jsonwebtoken');
 const jsonLogic = require('json-logic-js');
 const { Pool } = require('pg');
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// Helper: load user by numeric id (works with your integer PK)
+// Simple in-memory cache for enabled policies to avoid DB roundtrips on every request.
+// TTL in ms (default 5s to stay fresh during development). Increase in prod if you want.
+const POLICY_CACHE_TTL = Number(process.env.ABAC_POLICY_CACHE_MS || 5000);
+let policyCache = { ts: 0, policies: [] };
+
 async function queryUserById(userId) {
   const uid = Number(userId);
-  const q = `
+  if (Number.isNaN(uid)) return null;
+
+  // Try the full query first (application schema expected)
+  const fullQuery = `
     SELECT u.id, u.username, u.email, u.department, u.clearance_level, u.role_id, r.name as role_name
     FROM users u
     LEFT JOIN user_roles r ON u.role_id = r.id
     WHERE u.id = $1
     LIMIT 1;
   `;
-  const res = await pool.query(q, [uid]);
-  if (!res.rows.length) return null;
-  const row = res.rows[0];
-  const roles = row.role_name ? [row.role_name] : [];
-  return {
-    id: row.id,
-    username: row.username,
-    email: row.email,
-    department: row.department,
-    clearance_level: row.clearance_level,
-    role_id: row.role_id,
-    roles
-  };
+
+  try {
+    const res = await pool.query(fullQuery, [uid]);
+    if (!res.rows.length) return null;
+    const row = res.rows[0];
+    const roles = row.role_name ? [row.role_name] : [];
+    return {
+      id: row.id,
+      username: row.username,
+      email: row.email,
+      department: row.department,
+      clearance_level: row.clearance_level,
+      role_id: row.role_id,
+      roles
+    };
+  } catch (err) {
+    // If schema differs (missing column/table), fallback to a minimal safe query.
+    console.warn('queryUserById: full query failed, retrying minimal select. Error:', err && err.message ? err.message : err);
+    try {
+      const safeQ = `SELECT id, username, email, role_id FROM users WHERE id = $1 LIMIT 1`;
+      const r2 = await pool.query(safeQ, [uid]);
+      if (!r2.rows.length) return null;
+      const row = r2.rows[0];
+      return {
+        id: row.id,
+        username: row.username,
+        email: row.email,
+        department: null,
+        clearance_level: null,
+        role_id: row.role_id,
+        roles: []
+      };
+    } catch (e2) {
+      console.error('queryUserById: minimal query failed too:', e2 && e2.message ? e2.message : e2);
+      return null;
+    }
+  }
 }
 
 async function queryDocumentById(docId) {
   const did = Number(docId);
+  if (Number.isNaN(did)) return null;
   const q = `SELECT id, file_key, filename, uploaded_by, metadata, sensitivity, department FROM documents WHERE id = $1 LIMIT 1`;
-  const res = await pool.query(q, [did]);
-  return res.rows[0] || null;
+  try {
+    const res = await pool.query(q, [did]);
+    return res.rows[0] || null;
+  } catch (err) {
+    console.warn('queryDocumentById: DB query failed (returning null). Error:', err && err.message ? err.message : err);
+    return null;
+  }
 }
 
+/**
+ * getEnabledPolicies()
+ * - Protected against missing table/column errors: returns [] on DB errors and logs.
+ * - Caches results briefly for performance.
+ */
 async function getEnabledPolicies() {
-  // abac_policies.expression stored as jsonb in DB
-  const res = await pool.query(`SELECT id, effect, expression::text AS expression_text, priority FROM abac_policies WHERE enabled = true ORDER BY priority ASC`);
-  return res.rows.map(r => ({ id: r.id, effect: r.effect, expression: JSON.parse(r.expression_text), priority: r.priority }));
+  const now = Date.now();
+  if (policyCache.policies.length && (now - policyCache.ts) < POLICY_CACHE_TTL) {
+    return policyCache.policies;
+  }
+
+  try {
+    const res = await pool.query(`SELECT id, effect, expression, priority FROM abac_policies WHERE enabled = true ORDER BY priority ASC`);
+    const policies = res.rows.map(r => {
+      let expr = r.expression;
+      if (typeof expr === 'string') {
+        try { expr = JSON.parse(expr); } catch (e) { /* leave as-is */ }
+      }
+      const effect = (r.effect && (String(r.effect).toLowerCase() === 'deny')) ? 'deny' : 'allow';
+      return { id: r.id, effect: effect, expression: expr, priority: r.priority };
+    });
+
+    policyCache = { ts: now, policies };
+    return policies;
+  } catch (err) {
+    console.warn('ABAC: failed to load policies from DB (treating as no policies). Error:', err && err.message ? err.message : err);
+    policyCache = { ts: now, policies: [] };
+    return [];
+  }
+}
+
+function resolveResourceId(req) {
+  let body = req.body;
+  if (body && typeof body === 'string') {
+    try { body = JSON.parse(body); } catch (e) { /* ignore parse error */ }
+  }
+
+  return req.params?.id || req.params?.docId || (body && (body.document_id || body.file_id)) || req.query?.document_id || req.query?.file_id || null;
+}
+
+function normalizeRoles(r) {
+  if (!r) return [];
+  if (Array.isArray(r)) return r;
+  if (typeof r === 'string') {
+    try {
+      const parsed = JSON.parse(r);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) { /* ignore */ }
+    return [r];
+  }
+  return [];
+}
+
+function safeJsonLogicApply(expression, data) {
+  try {
+    return jsonLogic.apply(expression, data);
+  } catch (e) {
+    console.error('json-logic apply error:', e);
+    return false;
+  }
 }
 
 // Factory: returns middleware that enforces `requiredAction`
 function abacMiddleware(requiredAction) {
   return async (req, res, next) => {
     try {
-      const authHeader = req.headers.authorization || req.headers.Authorization;
-      const token = authHeader ? String(authHeader).split(' ')[1] : null;
-      if (!token) return res.status(401).json({ error: 'Missing token' });
+      // Accept token from Authorization (Bearer), or common alternative headers
+      const authHeader = req.headers.authorization || req.headers.Authorization || req.get && req.get('Authorization') || null;
+      let token = authHeader ? String(authHeader).split(' ')[1] : null;
+      if (!token) {
+        // fallback header names some clients use
+        token = req.get && (req.get('x-access-token') || req.get('x-auth-token') || req.get('x-token')) || null;
+      }
+      if (!token) {
+        console.warn('ABAC: missing Authorization header/token');
+        return res.status(401).json({ error: 'Missing token' });
+      }
 
       let payload;
       try {
-        payload = jwt.verify(token, process.env.JWT_SECRET);
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+          console.error('ABAC: JWT_SECRET not configured!');
+          return res.status(500).json({ error: 'Authorization failure' });
+        }
+        // require HS256 to avoid algorithm confusion
+        payload = jwt.verify(token, secret, { algorithms: ['HS256'] });
       } catch (e) {
+        console.error('Token verification failed:', e && e.message ? e.message : e);
         return res.status(401).json({ error: 'Invalid token' });
       }
-      if (!payload || !payload.sub) return res.status(401).json({ error: 'Invalid token payload' });
 
-      const user = await queryUserById(payload.sub);
-      if (!user) return res.status(403).json({ error: 'User not found' });
+      // Accept numeric sub OR numeric id from payload
+      const numericSub = Number(payload.sub ?? payload.id);
+      if (!payload || Number.isNaN(numericSub)) {
+        console.error('Invalid token payload (missing or non-numeric sub/id). Payload:', payload);
+        return res.status(401).json({ error: 'Invalid token payload (missing numeric sub/id)' });
+      }
 
-      const resourceId = req.params.id || req.params.docId || req.body.document_id || req.body.file_id || null;
+      const user = await queryUserById(numericSub);
+      if (!user) {
+        console.warn(`User not found for sub=${numericSub}`);
+        return res.status(403).json({ error: 'User not found' });
+      }
+
+      const resourceId = resolveResourceId(req);
       const resource = resourceId ? await queryDocumentById(resourceId) : null;
 
       const attrs = {
         user: {
           id: user.id,
           username: user.username,
-          roles: user.roles,
+          roles: normalizeRoles(user.roles),
           department: user.department,
           clearance_level: user.clearance_level
         },
@@ -91,34 +207,44 @@ function abacMiddleware(requiredAction) {
 
       let allowed = false;
       for (const p of policies) {
+        if (!p.expression) continue;
+        let matches = false;
         try {
-          const matches = jsonLogic.apply(p.expression, attrs);
-          if (matches) {
-            if (p.effect === 'deny') {
-              req.abac = { decision: 'denied', policy_id: p.id, attrs };
-              return res.status(403).json({ error: 'Access denied by policy' });
-            } else if (p.effect === 'allow') {
-              allowed = true;
-              req.abac = { decision: 'allowed', policy_id: p.id, attrs };
-              break;
-            }
-          }
+          matches = safeJsonLogicApply(p.expression, attrs);
         } catch (e) {
-          console.error('Policy eval error', p.id, e);
-          // skip this policy if eval fails
+          console.error('Policy evaluation error for', p.id, e);
+          matches = false;
+        }
+
+        if (matches) {
+          if (p.effect === 'deny') {
+            req.abac = { decision: 'denied', policy_id: p.id, attrs };
+            return res.status(403).json({ error: 'Access denied by policy' });
+          }
+          if (p.effect === 'allow') {
+            allowed = true;
+            req.abac = { decision: 'allowed', policy_id: p.id, attrs };
+            break;
+          }
         }
       }
 
       if (!allowed) {
+        if (process.env.NODE_ENV === 'development') {
+          // log attribute bag so you can see why policy evaluation failed
+          try {
+            console.warn('ABAC: decision=denied attrs=', JSON.stringify(attrs));
+          } catch (e) { console.warn('ABAC: decision=denied (could not stringify attrs)'); }
+        }
         req.abac = { decision: 'denied', policy_id: null, attrs };
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      // attach user to req for downstream use
       req.user = user;
-      next();
+      req.tokenPayload = payload;
+      return next();
     } catch (err) {
-      console.error('ABAC middleware error', err);
+      console.error('ABAC middleware error', err && err.message ? err.message : err);
       return res.status(500).json({ error: 'Authorization failure' });
     }
   };
