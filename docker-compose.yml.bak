@@ -1,0 +1,231 @@
+
+
+services:
+  # ---------------------------
+  # PostgreSQL Database
+  # ---------------------------
+  postgres:
+    image: postgres:15
+    container_name: privacy-aware-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - privacy_aware_net
+
+  # ---------------------------
+  # Redis (for background job queue)
+  # ---------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: privacy-aware-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - privacy_aware_net
+
+  # ---------------------------
+  # MinIO (object storage)
+  # ---------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: privacy-aware-minio
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - privacy_aware_net
+
+  # ---------------------------
+  # Ollama (LLM & Embedding Engine)
+  # ---------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: privacy-aware-ollama
+    restart: always
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+    command: serve
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - privacy_aware_net
+
+  # ---------------------------
+  # ChromaDB (Vector Store)
+  # ---------------------------
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:latest
+    container_name: privacy-aware-chromadb
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "False"
+    networks:
+      - privacy_aware_net
+
+  # ---------------------------
+  # Worker Service (Python FastAPI)
+  # Handles embeddings, search, and auditing
+  # ---------------------------
+  worker:
+    build:
+      context: ./backend/worker
+      dockerfile: Dockerfile
+    container_name: privacy-aware-worker
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      ollama:
+        condition: service_started
+      chromadb:
+        condition: service_started
+    ports:
+      - "8001:8001"               # Expose worker API (for /health, /search)
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+
+      # Pass both host+port and endpoint string for compatibility
+      MINIO_HOST: ${MINIO_HOST}
+      MINIO_PORT: ${MINIO_PORT}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+
+      # Ollama
+      OLLAMA_URL: ${OLLAMA_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL}
+
+      # Chroma
+      CHROMA_HOST: ${CHROMA_HOST}
+      CHROMA_PORT: ${CHROMA_PORT}
+      CHROMADB_URL: ${CHROMADB_URL}
+      CHROMADB_COLLECTION: ${CHROMADB_COLLECTION}
+
+      TOP_K: ${TOP_K}
+    networks:
+      - privacy_aware_net
+
+  # ---------------------------
+  # API Gateway (Node.js Express)
+  # Performs JWT auth, ABAC checks, and privacy filtering
+  # ---------------------------
+  api:
+    build:
+      context: ./backend/api
+      dockerfile: Dockerfile
+    container_name: privacy-aware-api
+    restart: always
+    depends_on:
+      worker:
+        condition: service_started
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      API_PORT: ${API_PORT:-3001}
+      DATABASE_URL: ${DATABASE_URL}
+      WORKER_URL: ${WORKER_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      QUERY_HASH_SALT: ${QUERY_HASH_SALT}
+      REDIS_URL: ${REDIS_URL}
+
+      # MinIO (pass host+port; API code should use host+port)
+      MINIO_HOST: ${MINIO_HOST}
+      MINIO_PORT: ${MINIO_PORT}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+
+      # CORS (both names available)
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+
+      # Chroma
+      CHROMA_HOST: ${CHROMA_HOST}
+      CHROMA_PORT: ${CHROMA_PORT}
+    networks:
+      - privacy_aware_net
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http=require('http'); const req=http.get('http://127.0.0.1:3001/api/health', res=>{ process.exit(res.statusCode===200?0:1) }); req.on('error', ()=>process.exit(1));"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+
+  # ---------------------------
+  # Frontend (React + Vite)
+  # ---------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: privacy-aware-frontend
+    restart: always
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3002:80"
+    environment:
+      # must match Vite environment variables
+      - VITE_API_URL=http://api:3001
+      - VITE_MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - VITE_CHROMA_ENDPOINT=${CHROMADB_URL}
+      - VITE_OLLAMA_ENDPOINT=${OLLAMA_URL}
+    networks:
+      - privacy_aware_net
+    # For local development: uncomment to hot reload
+    # volumes:
+    #   - ./frontend:/app
+
+# ---------------------------
+# Persistent Data Volumes
+# ---------------------------
+volumes:
+  postgres_data:
+  minio_data:
+  ollama_data:
+  chromadb_data:
+
+# ---------------------------
+# Network
+# ---------------------------
+networks:
+  privacy_aware_net:
+    driver: bridge
