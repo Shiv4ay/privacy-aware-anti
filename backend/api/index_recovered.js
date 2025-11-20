@@ -970,7 +970,6 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 
         const userResult = await pool.query(
             `SELECT u.id, u.username, u.email, u.name, u.role_id, u.is_active, u.created_at,
-                    u.organization, u.department, u.user_category,
                     ur.name as role_name
              FROM users u
              LEFT JOIN user_roles ur ON u.role_id = ur.id
@@ -995,9 +994,6 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
                 email: user.email,
                 name: user.name,
                 roles: roles,
-                organization: user.organization,
-                department: user.department,
-                user_category: user.user_category,
                 created_at: user.created_at
             }
         });
@@ -1282,9 +1278,6 @@ app.post('/api/search', authMiddleware, abacMiddleware('search'), async (req, re
                 timeout: 30000,
                 headers: headersToForward
             });
-
-            // DEBUG: Log worker response
-            console.log('Worker search response:', JSON.stringify(response.data, null, 2));
 
             // Forward all response data including privacy fields (query_redacted, query_hash, etc.)
             res.json({

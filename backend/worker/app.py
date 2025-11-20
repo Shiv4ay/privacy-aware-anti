@@ -234,10 +234,22 @@ class EmbedRequest(BaseModel):
 class SearchRequest(BaseModel):
     query: str
     top_k: Optional[int] = TOP_K
+    organization: Optional[str] = "default"
+    department: Optional[str] = None
+    user_category: Optional[str] = None
 
 class ChatRequest(BaseModel):
     query: str
     context: Optional[str] = None
+    organization: Optional[str] = "default"
+    department: Optional[str] = None
+    user_category: Optional[str] = None
+
+def get_org_collection(org_name: str):
+    """Get or create a ChromaDB collection for a specific organization"""
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', org_name).lower()
+    collection_name = f"privacy_documents_{safe_name}"
+    return chroma_client.get_or_create_collection(name=collection_name)
 
 class DocumentChunk(BaseModel):
     id: str
@@ -549,17 +561,19 @@ Please provide a helpful and accurate response based on the context provided. If
         logger.error(f"Chat generation failed: {e}")
         return "I'm sorry, I encountered an error generating a response."
 
-def chromadb_add(ids: List[str], documents: List[str], embeddings: List[List[float]]):
+def chromadb_add(ids: List[str], documents: List[str], embeddings: List[List[float]], collection=None):
     """Add documents to ChromaDB using Python client"""
-    chroma_collection.add(
+    target_collection = collection or chroma_collection
+    target_collection.add(
         ids=ids,
         documents=documents,
         embeddings=embeddings
     )
 
-def chromadb_query(query_embeddings: List[List[float]], n_results: int = TOP_K):
+def chromadb_query(query_embeddings: List[List[float]], n_results: int = TOP_K, collection=None):
     """Query ChromaDB for most relevant documents using Python client"""
-    results = chroma_collection.query(
+    target_collection = collection or chroma_collection
+    results = target_collection.query(
         query_embeddings=query_embeddings,
         n_results=n_results
     )
@@ -827,10 +841,15 @@ def process_document_job(job_data: Dict[str, Any]):
             # Store in ChromaDB if we have embeddings
             if batch_embeddings and len(batch_embeddings) == len(batch_chunks):
                 try:
+                    # Get organization-specific collection
+                    org_name = job_data.get("organization", "default")
+                    org_collection = get_org_collection(org_name)
+                    
                     chromadb_add(batch_ids[:len(batch_embeddings)],
                                  batch_chunks[:len(batch_embeddings)],
-                                 batch_embeddings)
-                    logger.info(f"Stored batch of {len(batch_embeddings)} chunks from {file_key}")
+                                 batch_embeddings,
+                                 collection=org_collection)
+                    logger.info(f"Stored batch of {len(batch_embeddings)} chunks from {file_key} in org='{org_name}'")
                 except Exception as e:
                     logger.error(f"Failed to store batch in ChromaDB: {e}")
 
@@ -1003,7 +1022,8 @@ def search_documents(request: SearchRequest):
             raise HTTPException(status_code=500, detail="Failed to generate query embedding")
 
         # Query ChromaDB
-        results = chromadb_query([query_embedding], request.top_k)
+        org_collection = get_org_collection(request.organization)
+        results = chromadb_query([query_embedding], request.top_k, collection=org_collection)
         documents = []
         doc_ids = []
         if results and results.get("documents") and results["documents"][0]:
@@ -1012,7 +1032,10 @@ def search_documents(request: SearchRequest):
                 results["ids"][0],
                 results["distances"][0]
             ):
-                score = 1.0 - distance
+                # ChromaDB returns L2 (Euclidean) distance, not similarity
+                # Lower distance = higher similarity
+                # Convert to a similarity score (higher is better)
+                score = 1.0 / (1.0 + distance)  # Ranges from 0 to 1
                 documents.append(DocumentChunk(id=doc_id, text=doc_text, score=score))
                 doc_ids.append(doc_id)
 
