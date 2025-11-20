@@ -15,7 +15,7 @@ async function queryUserById(userId) {
 
   // Try the full query first (application schema expected)
   const fullQuery = `
-    SELECT u.id, u.username, u.email, u.department, u.clearance_level, u.role_id, r.name as role_name
+    SELECT u.id, u.username, u.email, u.department, u.organization, u.user_category, u.role_id, r.name as role_name
     FROM users u
     LEFT JOIN user_roles r ON u.role_id = r.id
     WHERE u.id = $1
@@ -32,7 +32,8 @@ async function queryUserById(userId) {
       username: row.username,
       email: row.email,
       department: row.department,
-      clearance_level: row.clearance_level,
+      organization: row.organization,
+      user_category: row.user_category,
       role_id: row.role_id,
       roles
     };
@@ -49,7 +50,8 @@ async function queryUserById(userId) {
         username: row.username,
         email: row.email,
         department: null,
-        clearance_level: null,
+        organization: null,
+        user_category: null,
         role_id: row.role_id,
         roles: []
       };
@@ -74,18 +76,32 @@ async function queryDocumentById(docId) {
 }
 
 /**
- * getEnabledPolicies()
+ * getEnabledPolicies(organization)
  * - Protected against missing table/column errors: returns [] on DB errors and logs.
- * - Caches results briefly for performance.
+ * - Caches results briefly for performance (per org).
  */
-async function getEnabledPolicies() {
+async function getEnabledPolicies(organization = 'default') {
   const now = Date.now();
-  if (policyCache.policies.length && (now - policyCache.ts) < POLICY_CACHE_TTL) {
-    return policyCache.policies;
+  const cacheKey = organization || 'default';
+
+  if (!policyCache[cacheKey]) {
+    policyCache[cacheKey] = { ts: 0, policies: [] };
+  }
+
+  if (policyCache[cacheKey].policies.length && (now - policyCache[cacheKey].ts) < POLICY_CACHE_TTL) {
+    return policyCache[cacheKey].policies;
   }
 
   try {
-    const res = await pool.query(`SELECT id, effect, expression, priority FROM abac_policies WHERE enabled = true ORDER BY priority ASC`);
+    // Fetch global policies (org='default' or org=NULL) AND org-specific policies
+    const res = await pool.query(
+      `SELECT id, effect, expression, priority 
+         FROM abac_policies 
+         WHERE enabled = true AND (organization = $1 OR organization = 'default') 
+         ORDER BY priority ASC`,
+      [organization]
+    );
+
     const policies = res.rows.map(r => {
       let expr = r.expression;
       if (typeof expr === 'string') {
@@ -95,11 +111,11 @@ async function getEnabledPolicies() {
       return { id: r.id, effect: effect, expression: expr, priority: r.priority };
     });
 
-    policyCache = { ts: now, policies };
+    policyCache[cacheKey] = { ts: now, policies };
     return policies;
   } catch (err) {
     console.warn('ABAC: failed to load policies from DB (treating as no policies). Error:', err && err.message ? err.message : err);
-    policyCache = { ts: now, policies: [] };
+    policyCache[cacheKey] = { ts: now, policies: [] };
     return [];
   }
 }
@@ -203,7 +219,7 @@ function abacMiddleware(requiredAction) {
         }
       };
 
-      const policies = await getEnabledPolicies();
+      const policies = await getEnabledPolicies(user.organization);
 
       let allowed = false;
       for (const p of policies) {

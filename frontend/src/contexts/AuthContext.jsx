@@ -14,11 +14,21 @@ export function AuthProvider({ children }) {
       try {
         const token = localStorage.getItem('token')
         if (token) {
-          const res = await client.get('/api/auth/me').catch(() => null)
-          if (mounted && res && res.data) setUser(res.data)
+          // Set default header for all requests
+          client.defaults.headers.common['Authorization'] = `Bearer ${token}`
+
+          const res = await client.get('/auth/me').catch(() => null)
+          if (mounted && res && res.data) {
+            setUser(res.data)
+            // Ensure organization is persisted/synced if needed
+            if (res.data.organization) {
+              localStorage.setItem('organization', res.data.organization)
+            }
+          }
         }
       } catch (e) {
-        // ignore
+        console.error("Auth load error", e)
+        localStorage.removeItem('token')
       } finally {
         if (mounted) setLoading(false)
       }
@@ -27,35 +37,41 @@ export function AuthProvider({ children }) {
     return () => { mounted = false }
   }, [])
 
-  const login = async ({ email, password }) => {
-    const res = await client.post('/api/auth/login', { email, password })
-    const token = res?.data?.token || res?.data?.accessToken || null
-    if (!token) throw new Error('No token returned')
-    localStorage.setItem('token', token)
-    const profileRes = await client.get('/api/auth/me').catch(() => null)
-    if (profileRes && profileRes.data) setUser(profileRes.data)
-    return token
-  }
-
-  const register = async ({ name, email, password }) => {
-    const res = await client.post('/api/auth/register', { name, email, password })
-    const token = res?.data?.token || res?.data?.accessToken || null
+  const login = async (userData, token) => {
+    // If token is provided directly (e.g. from Login component after API call)
     if (token) {
       localStorage.setItem('token', token)
-      const profileRes = await client.get('/api/auth/me').catch(() => null)
-      if (profileRes && profileRes.data) setUser(profileRes.data)
-      return token
+      client.defaults.headers.common['Authorization'] = `Bearer ${token}`
     }
-    return res
+
+    if (userData) {
+      setUser(userData)
+      if (userData.organization) {
+        localStorage.setItem('organization', userData.organization)
+      }
+    } else {
+      // Fetch user if not provided
+      const res = await client.get('/auth/me')
+      setUser(res.data)
+    }
+  }
+
+  const register = async (data) => {
+    // Registration usually returns token, handled in component or here
+    // For now, we'll let the component handle the API call and use login() to set state
+    // This keeps it consistent with the Login component flow
+    pass
   }
 
   const logout = () => {
     localStorage.removeItem('token')
+    localStorage.removeItem('organization')
+    delete client.defaults.headers.common['Authorization']
     setUser(null)
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   )
