@@ -1,1 +1,0 @@
-Fake downloaded document used for end-to-end pipeline testing.

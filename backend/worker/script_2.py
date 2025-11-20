@@ -44,6 +44,8 @@ CHROMADB_COLLECTION = os.getenv("CHROMADB_COLLECTION", "privacy_documents")
 TOP_K = int(os.getenv("TOP_K", 5))
 
 app = FastAPI(title="Privacy-Aware RAG Worker", version="1.0.0")
+from contextlib import asynccontextmanager
+
 
 class EmbedRequest(BaseModel):
     id: Optional[str] = None
@@ -405,13 +407,19 @@ def chat_with_documents(request: ChatRequest):
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.on_event("startup")
-def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Worker starting...")
+    ensure_database_tables()
     global minio_client
-    logger.info("Privacy-Aware RAG Worker starting...")
     minio_client = get_minio_client()
-    start_background_worker()
-    logger.info("Worker service initialized successfully")
+    Thread(target=background_worker, daemon=True).start()
+    logger.info("Worker initialized")
+    yield
+    logger.info("Worker shutting down gracefully.")
+
+app = FastAPI(title="Privacy-Aware RAG Worker", version="1.0.0", lifespan=lifespan)
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)
