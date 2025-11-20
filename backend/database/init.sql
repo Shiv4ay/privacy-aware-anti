@@ -20,7 +20,11 @@ CREATE TABLE IF NOT EXISTS users (
     role_id INTEGER REFERENCES user_roles(id),
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
-    last_login TIMESTAMP
+    last_login TIMESTAMP,
+    organization VARCHAR(100),
+    department VARCHAR(100),
+    user_category VARCHAR(50),
+    password_hash TEXT
 );
 
 -- Documents table
@@ -99,10 +103,28 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DE
 CREATE INDEX IF NOT EXISTS idx_search_queries_created_at ON search_queries(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_document_access_logs_document_id ON document_access_logs(document_id);
 
+-- ABAC Policies table
+CREATE TABLE IF NOT EXISTS abac_policies (
+    id SERIAL PRIMARY KEY,
+    organization VARCHAR(100) DEFAULT 'default',
+    effect VARCHAR(10) CHECK (effect IN ('allow', 'deny')),
+    expression TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    description TEXT,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_abac_policies_org ON abac_policies(organization);
+
 -- Insert default user roles
 INSERT INTO user_roles (name, description) VALUES 
-    ('admin', 'Administrator with full access'),
-    ('user', 'Regular user with limited access')
+    ('super_admin', 'Super Administrator with global access'),
+    ('admin', 'Organization Administrator'),
+    ('data_steward', 'Data Steward for organization'),
+    ('user', 'Regular user'),
+    ('auditor', 'Compliance Auditor'),
+    ('guest', 'Guest user with restricted access')
 ON CONFLICT (name) DO NOTHING;
 
 -- Insert default admin user (password should be changed in production)
