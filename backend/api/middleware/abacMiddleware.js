@@ -15,9 +15,9 @@ async function queryUserById(userId) {
 
   // Try the full query first (application schema expected)
   const fullQuery = `
-    SELECT u.id, u.username, u.email, u.department, u.organization, u.user_category, u.role_id, r.name as role_name
+    SELECT u.id, u.username, u.email, u.department, u.organization, u.user_category, u.role_id, u.org_id, u.role, r.name as role_name
     FROM users u
-    LEFT JOIN user_roles r ON u.role_id = r.id
+    LEFT JOIN roles r ON u.role_id = r.id
     WHERE u.id = $1
     LIMIT 1;
   `;
@@ -26,15 +26,20 @@ async function queryUserById(userId) {
     const res = await pool.query(fullQuery, [uid]);
     if (!res.rows.length) return null;
     const row = res.rows[0];
-    const roles = row.role_name ? [row.role_name] : [];
+    // Use role column if available, fallback to role_name
+    const primaryRole = row.role || row.role_name || 'user';
+    const roles = [primaryRole];
+
     return {
       id: row.id,
       username: row.username,
       email: row.email,
       department: row.department,
-      organization: row.organization,
+      organization: row.organization, // Legacy string
+      org_id: row.org_id,             // New ID
       user_category: row.user_category,
       role_id: row.role_id,
+      role: primaryRole,
       roles
     };
   } catch (err) {
@@ -65,7 +70,7 @@ async function queryUserById(userId) {
 async function queryDocumentById(docId) {
   const did = Number(docId);
   if (Number.isNaN(did)) return null;
-  const q = `SELECT id, file_key, filename, uploaded_by, metadata, sensitivity, department FROM documents WHERE id = $1 LIMIT 1`;
+  const q = `SELECT id, file_key, filename, uploaded_by, metadata, sensitivity, department, org_id FROM documents WHERE id = $1 LIMIT 1`;
   try {
     const res = await pool.query(q, [did]);
     return res.rows[0] || null;
@@ -209,7 +214,8 @@ function abacMiddleware(requiredAction) {
           id: resource.id,
           owner_id: resource.uploaded_by,
           department: resource.department,
-          sensitivity: resource.sensitivity
+          sensitivity: resource.sensitivity,
+          org_id: resource.org_id
         } : {},
         action: requiredAction,
         context: {
@@ -218,6 +224,17 @@ function abacMiddleware(requiredAction) {
           user_agent: req.get('User-Agent') || ''
         }
       };
+
+      // -------------------------------------------------------
+      // Multi-Tenancy Enforcement
+      // -------------------------------------------------------
+      // If resource belongs to an org, user MUST belong to same org (unless Super Admin)
+      if (resource && resource.org_id && user.role !== 'super_admin') {
+        if (user.org_id !== resource.org_id) {
+          console.warn(`Cross-Org Access Attempt: User ${user.id} (Org ${user.org_id}) tried to access Doc ${resource.id} (Org ${resource.org_id})`);
+          return res.status(403).json({ error: 'Access denied: Cross-organization access prohibited' });
+        }
+      }
 
       const policies = await getEnabledPolicies(user.organization);
 
