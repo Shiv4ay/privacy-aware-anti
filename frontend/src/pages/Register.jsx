@@ -1,168 +1,184 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
-import api from '../api';
+import client from '../api/index';
+import { UserPlus, Mail, Lock, User, Building, ArrowRight, Loader2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
-const Register = () => {
+export default function Register() {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
-    confirmPassword: '',
-    organization: 'university', // Default
+    org_id: '',
     department: '',
-    user_category: ''
+    user_category: 'employee'
   });
-  const [error, setError] = useState('');
+  const [organizations, setOrganizations] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const { login } = useAuth(); // Auto-login after register
   const navigate = useNavigate();
 
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+  useEffect(() => {
+    fetchOrganizations();
+  }, []);
+
+  const fetchOrganizations = async () => {
+    try {
+      const res = await client.get('/auth/organizations');
+      if (res.data.success) {
+        console.log("Fetched organizations:", res.data.organizations);
+        setOrganizations(res.data.organizations);
+        if (res.data.organizations.length > 0) {
+          setFormData(prev => ({ ...prev, org_id: res.data.organizations[0].id }));
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch organizations", err);
+      toast.error("Failed to load organizations");
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
+    setLoading(true);
     try {
-      await api.post('/auth/register', {
-        name: formData.name,
-        email: formData.email,
-        password: formData.password,
-        organization: formData.organization,
-        department: formData.department,
-        user_category: formData.user_category
-      });
-      navigate('/login');
+      const res = await client.post('/auth/register', formData);
+      if (res.data.success) {
+        toast.success('Registration successful! Logging in...');
+        await login(formData.email, formData.password);
+        navigate('/dashboard', { replace: true });
+      }
     } catch (err) {
-      setError(err.response?.data?.error || 'Registration failed');
+      toast.error(err.response?.data?.error || 'Registration failed');
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#111111] py-12 px-4 sm:px-6 lg:px-8">
-      <div className="bg-[#1a1a1a] p-8 rounded-xl shadow-2xl w-full max-w-md border border-gray-800">
-        <h2 className="text-3xl font-bold text-center text-white mb-8">Create Account</h2>
+    <div className="flex items-center justify-center min-h-screen bg-premium-black relative overflow-hidden py-10">
+      {/* Background Accents */}
+      <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-premium-gold/5 rounded-full blur-[100px]" />
+      <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-900/10 rounded-full blur-[100px]" />
 
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/50 text-red-500 p-3 rounded-lg mb-6 text-sm text-center">
-            {error}
+      <div className="glass-panel p-8 rounded-2xl shadow-2xl w-full max-w-lg relative z-10 animate-slide-up">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-premium-gold/10 mb-4">
+            <UserPlus className="w-6 h-6 text-premium-gold" />
           </div>
-        )}
+          <h2 className="text-3xl font-bold text-white mb-2">Create Account</h2>
+          <p className="text-gray-400">Join your organization's secure workspace</p>
+        </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Full Name</label>
-            <input
-              name="name"
-              type="text"
-              value={formData.name}
-              onChange={handleChange}
-              className="w-full bg-[#222] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Email Address</label>
-            <input
-              name="email"
-              type="email"
-              value={formData.email}
-              onChange={handleChange}
-              className="w-full bg-[#222] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-              required
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Organization</label>
-              <select
-                name="organization"
-                value={formData.organization}
-                onChange={handleChange}
-                className="w-full bg-[#222] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="university">University</option>
-                <option value="hospital">Hospital</option>
-                <option value="finance">Finance</option>
-                <option value="banking">Banking</option>
-                <option value="hr">HR</option>
-                <option value="corporate">Corporate</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Department</label>
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300 ml-1">Full Name</label>
+            <div className="relative">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
               <input
-                name="department"
                 type="text"
-                value={formData.department}
-                onChange={handleChange}
-                className="w-full bg-[#222] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                placeholder="e.g. IT"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                className="glass-input w-full pl-10 pr-4 py-3 rounded-xl"
+                placeholder="John Doe"
+                required
               />
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">User Category</label>
-            <input
-              name="user_category"
-              type="text"
-              value={formData.user_category}
-              onChange={handleChange}
-              className="w-full bg-[#222] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-              placeholder="e.g. Student, Doctor"
-            />
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300 ml-1">Email Address</label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+              <input
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                className="glass-input w-full pl-10 pr-4 py-3 rounded-xl"
+                placeholder="name@company.com"
+                required
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Password</label>
-            <input
-              name="password"
-              type="password"
-              value={formData.password}
-              onChange={handleChange}
-              className="w-full bg-[#222] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-              required
-            />
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300 ml-1">Password</label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+              <input
+                type="password"
+                value={formData.password}
+                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                className="glass-input w-full pl-10 pr-4 py-3 rounded-xl"
+                placeholder="••••••••"
+                required
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-400 mb-1">Confirm Password</label>
-            <input
-              name="confirmPassword"
-              type="password"
-              value={formData.confirmPassword}
-              onChange={handleChange}
-              className="w-full bg-[#222] border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-              required
-            />
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300 ml-1">Organization</label>
+            <div className="relative">
+              <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+              <select
+                value={formData.org_id}
+                onChange={(e) => setFormData({ ...formData, org_id: e.target.value })}
+                className="glass-input w-full pl-10 pr-4 py-3 rounded-xl appearance-none"
+                required
+              >
+                <option value="" disabled className="text-gray-500">Select Organization</option>
+                {organizations.map(org => (
+                  <option key={org.id} value={org.id} className="text-black">
+                    {org.name} ({org.type})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-300 ml-1">Department</label>
+              <input
+                type="text"
+                value={formData.department}
+                onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                className="glass-input w-full px-4 py-3 rounded-xl"
+                placeholder="Engineering"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-300 ml-1">Category</label>
+              <select
+                value={formData.user_category}
+                onChange={(e) => setFormData({ ...formData, user_category: e.target.value })}
+                className="glass-input w-full px-4 py-3 rounded-xl appearance-none"
+              >
+                <option value="employee" className="text-black">Employee</option>
+                <option value="contractor" className="text-black">Contractor</option>
+                <option value="guest" className="text-black">Guest</option>
+              </select>
+            </div>
           </div>
 
           <button
             type="submit"
-            className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-bold py-3 rounded-lg transition-all transform hover:scale-[1.02] shadow-lg mt-4"
+            disabled={loading}
+            className="w-full btn-primary py-3 rounded-xl flex items-center justify-center gap-2 group disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            Create Account
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Create Account'}
+            {!loading && <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-gray-400 text-sm">
+        <div className="mt-6 text-center text-sm text-gray-400">
           Already have an account?{' '}
-          <Link to="/login" className="text-blue-400 hover:text-blue-300 font-medium">
-            Sign in
+          <Link to="/login" className="text-premium-gold hover:text-premium-gold-hover font-medium transition-colors">
+            Sign In
           </Link>
-        </p>
+        </div>
       </div>
     </div>
   );
-};
-
-export default Register;
+}

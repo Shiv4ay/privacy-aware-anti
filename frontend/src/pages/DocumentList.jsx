@@ -1,84 +1,113 @@
-import React, { useEffect, useState } from 'react'
-import client from '../api/index'
-import { useDocuments } from '../contexts/DocumentContext'
+import React, { useEffect, useState } from 'react';
+import client from '../api/index';
+import { useDocuments } from '../contexts/DocumentContext';
+import { FileText, RefreshCw, Search, Clock, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function DocumentList() {
-  const { documents, setList } = useDocuments()
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const { documents, setList } = useDocuments();
+  const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   const loadDocuments = async () => {
-    setLoading(true)
-    setError(null)
+    setLoading(true);
     try {
-      const res = await client.get('/api/documents')
-      // Backend returns { documents: [...], pagination: {...} }
-      const docs = res.data?.documents || res.data || []
-      setList(Array.isArray(docs) ? docs : [])
+      const res = await client.get('/api/documents');
+      const docs = res.data?.documents || res.data || [];
+      setList(Array.isArray(docs) ? docs : []);
     } catch (err) {
-      console.error('Failed to load documents:', err)
-      const errorMsg = err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Failed to load documents'
-      setError(errorMsg)
-      setList([]) // Clear documents on error
+      console.error('Failed to load documents:', err);
+      toast.error('Failed to load documents');
+      setList([]);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    loadDocuments()
-  }, [setList])
+    loadDocuments();
+  }, [setList]);
+
+  const filteredDocs = documents.filter(d =>
+    (d.filename || d.name || '').toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Documents</h2>
+    <div className="h-full flex flex-col">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+          <FileText className="w-5 h-5 text-premium-gold" />
+          Documents
+        </h2>
         <button
           onClick={loadDocuments}
           disabled={loading}
-          className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          className="btn-secondary p-2 rounded-lg"
+          title="Refresh"
         >
-          {loading ? 'Loading...' : 'Refresh'}
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
-      {loading && <div className="text-gray-600">Loading documents...</div>}
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
-      <div className="space-y-3">
-        {!loading && documents.length === 0 && !error && (
-          <div className="text-slate-600 p-4 bg-gray-50 rounded-lg text-center">
-            No documents found. Upload a document to get started.
-          </div>
-        )}
-        {documents.map((d, i) => (
-          <div key={d.id || i} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
-            <div className="flex justify-between items-start mb-2">
-              <div className="font-medium text-gray-900">{d.filename || d.name || `Document ${i+1}`}</div>
-              {d.status && (
-                <span className={`text-xs px-2 py-1 rounded-full ${
-                  d.status === 'processed' ? 'bg-green-100 text-green-700' :
-                  d.status === 'processing' ? 'bg-yellow-100 text-yellow-700' :
-                  d.status === 'pending' ? 'bg-gray-100 text-gray-700' :
-                  'bg-red-100 text-red-700'
-                }`}>
-                  {d.status}
-                </span>
-              )}
+
+      {/* Search Bar */}
+      <div className="mb-6 relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+        <input
+          type="text"
+          placeholder="Search documents..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="glass-input w-full pl-10 pr-4 py-2 rounded-lg"
+        />
+      </div>
+
+      {/* Document List */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3">
+        {loading && documents.length === 0 ? (
+          // Skeletons
+          [...Array(3)].map((_, i) => (
+            <div key={i} className="glass-panel p-4 rounded-xl animate-pulse">
+              <div className="h-4 bg-white/10 rounded w-3/4 mb-2"></div>
+              <div className="h-3 bg-white/5 rounded w-1/2"></div>
             </div>
-            {d.content_preview && (
-              <div className="text-sm text-slate-600 mt-1 line-clamp-2">{d.content_preview}</div>
-            )}
-            {d.created_at && (
-              <div className="text-xs text-slate-500 mt-2">
-                Uploaded: {new Date(d.created_at).toLocaleString()}
-              </div>
-            )}
+          ))
+        ) : filteredDocs.length === 0 ? (
+          <div className="text-center py-12 text-gray-500">
+            <FileText className="w-12 h-12 mx-auto mb-3 opacity-20" />
+            <p>No documents found</p>
           </div>
-        ))}
+        ) : (
+          filteredDocs.map((d, i) => (
+            <div key={d.id || i} className="glass-panel p-4 rounded-xl hover:bg-white/5 transition-colors group">
+              <div className="flex justify-between items-start mb-2">
+                <div className="font-medium text-gray-200 truncate pr-4">{d.filename || d.name || `Document ${i + 1}`}</div>
+                {d.status && (
+                  <span className={`text-xs px-2 py-0.5 rounded flex items-center gap-1 ${d.status === 'processed' ? 'bg-green-500/10 text-green-400' :
+                      d.status === 'processing' ? 'bg-yellow-500/10 text-yellow-400' :
+                        d.status === 'failed' ? 'bg-red-500/10 text-red-400' :
+                          'bg-gray-500/10 text-gray-400'
+                    }`}>
+                    {d.status === 'processed' && <CheckCircle className="w-3 h-3" />}
+                    {d.status === 'processing' && <Loader2 className="w-3 h-3 animate-spin" />}
+                    {d.status === 'failed' && <AlertCircle className="w-3 h-3" />}
+                    <span className="capitalize">{d.status}</span>
+                  </span>
+                )}
+              </div>
+              {d.content_preview && (
+                <div className="text-xs text-gray-500 mt-1 line-clamp-2">{d.content_preview}</div>
+              )}
+              <div className="flex items-center gap-4 mt-3 text-[10px] text-gray-600">
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  {d.created_at ? new Date(d.created_at).toLocaleDateString() : 'Unknown date'}
+                </span>
+                {d.file_size && <span>{(d.file_size / 1024).toFixed(1)} KB</span>}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
-  )
+  );
 }

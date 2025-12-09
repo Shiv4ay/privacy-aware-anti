@@ -4,7 +4,17 @@
 -- Create extension for generating UUIDs
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- User roles table
+-- Organizations table
+CREATE TABLE IF NOT EXISTS organizations (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    type TEXT,
+    domain TEXT,
+    logo TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- User roles table (keeping for reference, but using role text column as primary)
 CREATE TABLE IF NOT EXISTS user_roles (
     id SERIAL PRIMARY KEY,
     name VARCHAR(50) UNIQUE NOT NULL,
@@ -17,14 +27,24 @@ CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(100) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE,
-    role_id INTEGER REFERENCES user_roles(id),
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT NOW(),
-    last_login TIMESTAMP,
-    organization VARCHAR(100),
+    password_hash TEXT,
+    
+    -- Multi-tenancy fields
+    org_id INTEGER REFERENCES organizations(id),
+    role VARCHAR(50) CHECK (role IN ('super_admin', 'admin', 'data_steward', 'user', 'auditor', 'guest')),
+    
+    -- Profile fields
     department VARCHAR(100),
     user_category VARCHAR(50),
-    password_hash TEXT
+    
+    -- Status
+    is_active BOOLEAN DEFAULT TRUE,
+    last_login TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    
+    -- Legacy fields (kept for compatibility if needed, but nullable)
+    role_id INTEGER REFERENCES user_roles(id),
+    organization VARCHAR(100) -- Legacy string field
 );
 
 -- Documents table
@@ -39,6 +59,9 @@ CREATE TABLE IF NOT EXISTS documents (
     content_preview TEXT,
     metadata JSONB,
     uploaded_by INTEGER REFERENCES users(id),
+    org_id INTEGER REFERENCES organizations(id), -- Added for multi-tenancy
+    department VARCHAR(100),
+    sensitivity VARCHAR(50),
     created_at TIMESTAMP DEFAULT NOW(),
     processed_at TIMESTAMP,
     updated_at TIMESTAMP DEFAULT NOW()
@@ -56,6 +79,18 @@ CREATE TABLE IF NOT EXISTS processing_jobs (
     created_at TIMESTAMP DEFAULT NOW(),
     started_at TIMESTAMP,
     completed_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Ingestion logs table
+CREATE TABLE IF NOT EXISTS ingestion_logs (
+    id SERIAL PRIMARY KEY,
+    org_id INTEGER REFERENCES organizations(id),
+    url TEXT,
+    type TEXT NOT NULL, -- 'dummy_university', 'web', etc.
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+    details JSONB,
+    created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -128,9 +163,10 @@ INSERT INTO user_roles (name, description) VALUES
 ON CONFLICT (name) DO NOTHING;
 
 -- Insert default admin user (password should be changed in production)
-INSERT INTO users (username, email, role_id) VALUES 
-    ('admin', 'admin@privacy-aware-rag.local', 1)
-ON CONFLICT (username) DO NOTHING;
+INSERT INTO users (username, email, password_hash, role_id) VALUES 
+    ('admin', 'admin@privacy-aware-rag.local', '$2b$12$VizkJpM6PRMG7U9wGCw56uXLVB3abBstaqNCQIxx.e1gbg0T2W.Pv6', 1)
+ON CONFLICT (username) DO UPDATE 
+    SET password_hash = EXCLUDED.password_hash;
 
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()

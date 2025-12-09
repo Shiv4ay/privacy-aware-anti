@@ -1,1 +1,14 @@
-This is a small test file generated at 11/16/2025 19:38:26
+Privacy-Aware RAG System Test Document
+
+This is a test document created for Phase 1-4 verification of the Privacy-Aware RAG system.
+
+Key Features Being Tested:
+1. Document Upload and Storage (MinIO)
+2. Embedding Generation (Ollama with nomic-embed-text)
+3. Vector Storage (ChromaDB)
+4. Organization-based Isolation (Multi-tenancy)
+5. Authenticated Access Control (JWT + ABAC)
+
+Test Organization: ORG001
+Test User: admin@privacy-aware-rag.local
+Test Content: This paragraph contains searchable content about artificial intelligence, machine learning, and natural language processing for retrieval testing.

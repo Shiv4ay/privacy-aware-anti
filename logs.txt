@@ -1,0 +1,82 @@
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+
+> api@1.0.0 start
+> node index.js
+
+🔐 Initializing Auth System...
+✅ Simple Auth mounted at /api/simple-auth
+🚧 Dev Auth Routes enabled at /api/dev/token
+✅ SimpleAuth mounted at /api/auth (Schema Compatible)
+🚀 Server running on port 3001
+✅ Auth & Application endpoints ready
+✅ MinIO bucket 'privacy-documents' ready
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request POST /api/simple-auth/login started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=172.18.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+🔑 Simple login attempt: admin@privacy-aware-rag.local
+❌ Invalid password for: admin@privacy-aware-rag.local
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth

@@ -159,6 +159,11 @@ services:
       TOP_K: ${TOP_K}
       DB_MIN_CONN: ${DB_MIN_CONN:-1}
       DB_MAX_CONN: ${DB_MAX_CONN:-6}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      PRIMARY_MODEL: ${PRIMARY_MODEL}
+      PRIMARY_EMBED: ${PRIMARY_EMBED}
+      LOCAL_CHAT_MODEL: ${LOCAL_CHAT_MODEL}
+      LOCAL_EMBED_MODEL: ${LOCAL_EMBED_MODEL}
     volumes:
       - embed_meta:/tmp/embed_meta
     networks:
@@ -210,6 +215,9 @@ services:
       # Dev Auth (added)
       DEV_AUTH_KEY: ${DEV_AUTH_KEY:-super-secret-dev-key}
       DEV_TOKEN_EXPIRES_IN: ${DEV_TOKEN_EXPIRES_IN:-30d}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      PRIMARY_MODEL: ${PRIMARY_MODEL}
+      LOCAL_CHAT_MODEL: ${LOCAL_CHAT_MODEL}
     networks:
       - privacy_aware_net
     healthcheck:
@@ -232,9 +240,9 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "127.0.0.1:3000:80"
+      - "3000:80"
     environment:
-      - VITE_API_URL=http://api:3001
+      - VITE_API_URL=http://localhost:3001
       - VITE_MINIO_ENDPOINT=${MINIO_ENDPOINT}
       - VITE_CHROMA_ENDPOINT=${CHROMADB_URL}
       - VITE_OLLAMA_ENDPOINT=${OLLAMA_URL}

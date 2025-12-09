@@ -1,187 +1,208 @@
-// frontend/src/pages/DocumentUpload.jsx
-import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import client from '../api/index'
-import { useDocuments } from '../contexts/DocumentContext'
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import client from '../api/index';
+import { useDocuments } from '../contexts/DocumentContext';
+import { UploadCloud, File, X, FileText, Loader2, Shield, CheckCircle2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function DocumentUpload() {
-  const [file, setFile] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [msg, setMsg] = useState(null)
-  const [error, setError] = useState(null)
-  const { addDocument } = useDocuments()
-  const navigate = useNavigate()
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const { addDocument } = useDocuments();
+  const navigate = useNavigate();
 
   const handleFileChange = (e) => {
-    const selectedFile = e.target.files?.[0]
+    const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      // Check file size (e.g., 10MB limit)
-      const maxSize = 10 * 1024 * 1024 // 10MB
+      const maxSize = 10 * 1024 * 1024; // 10MB
       if (selectedFile.size > maxSize) {
-        setError('File size exceeds 10MB limit')
-        setFile(null)
-        return
+        toast.error('File size exceeds 10MB limit');
+        setFile(null);
+        return;
       }
-      setFile(selectedFile)
-      setError(null)
-      setMsg(null)
+      setFile(selectedFile);
+      toast.success(`Selected: ${selectedFile.name}`);
     }
-  }
+  };
 
   const handleUpload = async (e) => {
-    e.preventDefault()
-    if (!file) {
-      setError('Please select a file first')
-      return
-    }
-    
-    setLoading(true)
-    setMsg(null)
-    setError(null)
-    
+    e.preventDefault();
+    if (!file) return;
+
+    setLoading(true);
+
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      
-      // Do NOT set Content-Type manually for multipart/form-data; axios will add boundary
+      const fd = new FormData();
+      fd.append('file', file);
+
       const res = await client.post('/api/documents/upload', fd, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        },
-        timeout: 120000 // 2 minutes for large files
-      })
-      
-      // If your backend returns { ok:true, docId, ... } adapt accordingly
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000
+      });
+
       if (res.data) {
-        // Add to context with proper format
-        const docData = res.data.document || res.data
+        const docData = res.data.document || res.data;
         addDocument({
           id: res.data.docId || res.data.id,
           filename: docData.filename || file.name,
           status: docData.status || 'pending',
           created_at: new Date().toISOString()
-        })
-        setMsg(`Uploaded successfully${res.data.docId ? ` - Document ID: ${res.data.docId}` : ''}`)
-        setFile(null)
+        });
+        toast.success('Document uploaded successfully!');
+        setFile(null);
+
         // Reset file input
-        const fileInput = document.querySelector('input[type="file"]')
-        if (fileInput) fileInput.value = ''
-        
-        // Optionally navigate to documents list after 2 seconds
-        setTimeout(() => {
-          navigate('/documents')
-        }, 2000)
+        const fileInput = document.querySelector('input[type="file"]');
+        if (fileInput) fileInput.value = '';
+
+        setTimeout(() => navigate('/documents'), 1500);
       }
     } catch (err) {
-      console.error('Upload error', err)
-      // Handle error response properly
-      let errorMessage = 'Upload failed'
-      if (err?.response?.data) {
-        if (typeof err.response.data === 'string') {
-          errorMessage = err.response.data
-        } else if (err.response.data.message) {
-          errorMessage = err.response.data.message
-        } else if (err.response.data.error) {
-          errorMessage = err.response.data.error
-          if (err.response.data.details) {
-            errorMessage += ': ' + err.response.data.details
-          }
-        } else {
-          errorMessage = JSON.stringify(err.response.data)
-        }
-      } else if (err?.message) {
-        errorMessage = err.message
-      }
-      setError(errorMessage)
+      console.error('Upload error', err);
+      const msg = err?.response?.data?.error || err?.message || 'Upload failed';
+      toast.error(msg);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div>
-      <h2 className="text-xl font-semibold mb-4">Upload Document</h2>
+    <div className="min-h-screen animated-gradient-bg">
+      <div className="max-w-4xl mx-auto px-6 py-12">
+        {/* Header */}
+        <div className="text-center mb-12 animate-fade-in">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-premium-gold/10 mb-4">
+            <UploadCloud className="w-8 h-8 text-premium-gold" />
+          </div>
+          <h1 className="text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-300">
+            Upload Document
+          </h1>
+          <p className="text-gray-400">Add documents to your knowledge base</p>
+        </div>
 
-      {/* Privacy Notice */}
-      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-        <div className="flex items-start gap-2">
-          <svg className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-          </svg>
-          <div className="text-sm text-blue-800">
-            <strong>Privacy & Security:</strong> Uploaded documents are processed with PII redaction, 
-            access-controlled by RBAC, and all access is logged for audit purposes.
+        {/* Privacy Notice */}
+        <div className="glass-panel p-4 rounded-xl mb-6 animate-fade-in">
+          <div className="flex items-start gap-3">
+            <Shield className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-gray-300">
+              <strong className="text-white">Secure Processing:</strong> Documents are automatically scanned for PII, encrypted at rest, and access is strictly controlled by your organization.
+            </div>
+          </div>
+        </div>
+
+        {/* Upload Area */}
+        <form onSubmit={handleUpload}>
+          <div className="glass-panel-strong p-12 rounded-2xl border-2 border-dashed border-white/20 hover:border-premium-gold/40 transition-all duration-300 relative">
+            <input
+              type="file"
+              onChange={handleFileChange}
+              accept=".pdf,.txt,.doc,.docx,.md"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              disabled={loading}
+            />
+
+            {!file ? (
+              <div className="text-center relative z-0">
+                <div className="w-24 h-24 mx-auto bg-white/5 rounded-2xl flex items-center justify-center mb-6 group-hover:bg-white/10 transition-colors">
+                  <UploadCloud className="w-12 h-12 text-premium-gold" />
+                </div>
+                <h3 className="text-xl font-semibold text-white mb-2">
+                  Drop files here or click to browse
+                </h3>
+                <p className="text-gray-400 mb-6">
+                  Support for PDF, TXT, DOC, DOCX, MD
+                </p>
+                <div className="inline-flex items-center gap-2 text-sm text-gray-500">
+                  <FileText className="w-4 h-4" />
+                  <span>Maximum file size: 10MB</span>
+                </div>
+              </div>
+            ) : (
+              <div className="relative z-20">
+                <div className="glass-panel p-6 rounded-xl border border-white/10">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-premium-gold/10 rounded-xl">
+                      <File className="w-8 h-8 text-premium-gold" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-base font-medium text-white truncate mb-1">
+                        {file.name}
+                      </div>
+                      <div className="text-sm text-gray-400">
+                        {(file.size / 1024).toFixed(2)} KB
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setFile(null);
+                        toast.info('File removed');
+                      }}
+                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                      disabled={loading}
+                    >
+                      <X className="w-5 h-5 text-gray-400" />
+                    </button>
+                  </div>
+
+                  {/* Success Indicator */}
+                  <div className="mt-4 flex items-center gap-2 text-sm text-green-400">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Ready to upload</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Upload Button */}
+          <div className="mt-8 flex justify-center">
+            <button
+              type="submit"
+              disabled={loading || !file}
+              className="btn-primary px-12 py-4 rounded-xl text-lg flex items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed group"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  Start Upload
+                  <UploadCloud className="w-5 h-5 group-hover:translate-y-[-2px] transition-transform" />
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+
+        {/* Info Cards */}
+        <div className="grid md:grid-cols-3 gap-4 mt-12">
+          <div className="premium-card p-4 text-center">
+            <div className="w-10 h-10 mx-auto bg-blue-500/10 rounded-lg flex items-center justify-center mb-3">
+              <Shield className="w-5 h-5 text-blue-400" />
+            </div>
+            <h4 className="text-sm font-semibold text-white mb-1">Encrypted</h4>
+            <p className="text-xs text-gray-500">End-to-end encryption</p>
+          </div>
+          <div className="premium-card p-4 text-center">
+            <div className="w-10 h-10 mx-auto bg-green-500/10 rounded-lg flex items-center justify-center mb-3">
+              <FileText className="w-5 h-5 text-green-400" />
+            </div>
+            <h4 className="text-sm font-semibold text-white mb-1">Processed</h4>
+            <p className="text-xs text-gray-500">Auto-indexed for search</p>
+          </div>
+          <div className="premium-card p-4 text-center">
+            <div className="w-10 h-10 mx-auto bg-purple-500/10 rounded-lg flex items-center justify-center mb-3">
+              <CheckCircle2 className="w-5 h-5 text-purple-400" />
+            </div>
+            <h4 className="text-sm font-semibold text-white mb-1">Compliant</h4>
+            <p className="text-xs text-gray-500">PII detection & RBAC</p>
           </div>
         </div>
       </div>
-
-      {msg && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-800 text-sm">
-          {msg}
-        </div>
-      )}
-
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
-
-      <form onSubmit={handleUpload} className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Select Document
-          </label>
-          <input
-            type="file"
-            onChange={handleFileChange}
-            accept=".pdf,.txt,.doc,.docx,.md"
-            className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-          />
-          <p className="mt-2 text-xs text-gray-500">
-            Supported formats: PDF, TXT, DOC, DOCX, MD (Max 10MB)
-          </p>
-          {file && (
-            <div className="mt-2 text-sm text-gray-700">
-              Selected: <strong>{file.name}</strong> ({(file.size / 1024).toFixed(2)} KB)
-            </div>
-          )}
-        </div>
-
-        <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={loading || !file}
-            className="px-6 py-2 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-          >
-            {loading ? 'Uploading...' : 'Upload Document'}
-          </button>
-          {file && (
-            <button
-              type="button"
-              onClick={() => {
-                setFile(null)
-                setError(null)
-                setMsg(null)
-                const fileInput = document.querySelector('input[type="file"]')
-                if (fileInput) fileInput.value = ''
-              }}
-              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-
-        {loading && (
-          <div className="mt-4">
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-              <span>Processing document and generating embeddings...</span>
-            </div>
-          </div>
-        )}
-      </form>
     </div>
-  )
+  );
 }

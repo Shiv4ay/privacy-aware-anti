@@ -1,0 +1,359 @@
+
+ValidationError: Custom keyGenerator appears to use request IP without calling the ipKeyGenerator helper function for IPv6 addresses. This could allow IPv6 users to bypass limits. See https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/ for more information.
+> api@1.0.0 start
+> node index.js
+
+    at Object.keyGeneratorIpFallback (/app/node_modules/express-rate-limit/dist/index.cjs:637:13)
+    at wrappedValidations.<computed> [as keyGeneratorIpFallback] (/app/node_modules/express-rate-limit/dist/index.cjs:680:22)
+    at parseOptions (/app/node_modules/express-rate-limit/dist/index.cjs:750:16)
+    at rateLimit (/app/node_modules/express-rate-limit/dist/index.cjs:831:18)
+    at Object.<anonymous> (/app/middleware/rateLimiter.js:17:22)
+    at Module._compile (node:internal/modules/cjs/loader:1364:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1422:10)
+    at Module.load (node:internal/modules/cjs/loader:1203:32)
+    at Module._load (node:internal/modules/cjs/loader:1019:12)
+    at Module.require (node:internal/modules/cjs/loader:1231:19) {
+  code: 'ERR_ERL_KEY_GEN_IPV6',
+  help: 'https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/'
+}
+ValidationError: Custom keyGenerator appears to use request IP without calling the ipKeyGenerator helper function for IPv6 addresses. This could allow IPv6 users to bypass limits. See https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/ for more information.
+    at Object.keyGeneratorIpFallback (/app/node_modules/express-rate-limit/dist/index.cjs:637:13)
+    at wrappedValidations.<computed> [as keyGeneratorIpFallback] (/app/node_modules/express-rate-limit/dist/index.cjs:680:22)
+    at parseOptions (/app/node_modules/express-rate-limit/dist/index.cjs:750:16)
+    at rateLimit (/app/node_modules/express-rate-limit/dist/index.cjs:831:18)
+    at Object.<anonymous> (/app/middleware/rateLimiter.js:34:30)
+    at Module._compile (node:internal/modules/cjs/loader:1364:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1422:10)
+    at Module.load (node:internal/modules/cjs/loader:1203:32)
+    at Module._load (node:internal/modules/cjs/loader:1019:12)
+    at Module.require (node:internal/modules/cjs/loader:1231:19) {
+  code: 'ERR_ERL_KEY_GEN_IPV6',
+  help: 'https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/'
+}
+ValidationError: Custom keyGenerator appears to use request IP without calling the ipKeyGenerator helper function for IPv6 addresses. This could allow IPv6 users to bypass limits. See https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/ for more information.
+    at Object.keyGeneratorIpFallback (/app/node_modules/express-rate-limit/dist/index.cjs:637:13)
+    at wrappedValidations.<computed> [as keyGeneratorIpFallback] (/app/node_modules/express-rate-limit/dist/index.cjs:680:22)
+    at parseOptions (/app/node_modules/express-rate-limit/dist/index.cjs:750:16)
+    at rateLimit (/app/node_modules/express-rate-limit/dist/index.cjs:831:18)
+    at Object.<anonymous> (/app/middleware/rateLimiter.js:49:29)
+    at Module._compile (node:internal/modules/cjs/loader:1364:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1422:10)
+    at Module.load (node:internal/modules/cjs/loader:1203:32)
+    at Module._load (node:internal/modules/cjs/loader:1019:12)
+≡ƒöÉ Initializing Auth System...
+≡ƒÜº Dev Auth Routes enabled at /api/dev/token
+Γ£à Phase 4 Auth Routes mounted at /api/auth
+≡ƒÜÇ Server running on port 3001
+Γ£à Auth & Application endpoints ready
+Γ£à MinIO bucket 'privacy-documents' ready
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+    at Module.require (node:internal/modules/cjs/loader:1231:19) {
+  code: 'ERR_ERL_KEY_GEN_IPV6',
+  help: 'https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/'
+}
+ValidationError: Custom keyGenerator appears to use request IP without calling the ipKeyGenerator helper function for IPv6 addresses. This could allow IPv6 users to bypass limits. See https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/ for more information.
+    at Object.keyGeneratorIpFallback (/app/node_modules/express-rate-limit/dist/index.cjs:637:13)
+    at wrappedValidations.<computed> [as keyGeneratorIpFallback] (/app/node_modules/express-rate-limit/dist/index.cjs:680:22)
+    at parseOptions (/app/node_modules/express-rate-limit/dist/index.cjs:750:16)
+    at rateLimit (/app/node_modules/express-rate-limit/dist/index.cjs:831:18)
+    at Object.<anonymous> (/app/middleware/rateLimiter.js:61:20)
+    at Module._compile (node:internal/modules/cjs/loader:1364:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1422:10)
+    at Module.load (node:internal/modules/cjs/loader:1203:32)
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request POST /api/dev/token started
+[DEBUG] CORS passed
+    at Module._load (node:internal/modules/cjs/loader:1019:12)
+    at Module.require (node:internal/modules/cjs/loader:1231:19) {
+  code: 'ERR_ERL_KEY_GEN_IPV6',
+  help: 'https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/'
+}
+ValidationError: Custom keyGenerator appears to use request IP without calling the ipKeyGenerator helper function for IPv6 addresses. This could allow IPv6 users to bypass limits. See https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/ for more information.
+    at Object.keyGeneratorIpFallback (/app/node_modules/express-rate-limit/dist/index.cjs:637:13)
+    at wrappedValidations.<computed> [as keyGeneratorIpFallback] (/app/node_modules/express-rate-limit/dist/index.cjs:680:22)
+    at parseOptions (/app/node_modules/express-rate-limit/dist/index.cjs:750:16)
+    at rateLimit (/app/node_modules/express-rate-limit/dist/index.cjs:831:18)
+    at Object.<anonymous> (/app/middleware/rateLimiter.js:86:23)
+    at Module._compile (node:internal/modules/cjs/loader:1364:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1422:10)
+    at Module.load (node:internal/modules/cjs/loader:1203:32)
+    at Module._load (node:internal/modules/cjs/loader:1019:12)
+    at Module.require (node:internal/modules/cjs/loader:1231:19) {
+  code: 'ERR_ERL_KEY_GEN_IPV6',
+  help: 'https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/'
+}
+ValidationError: Custom keyGenerator appears to use request IP without calling the ipKeyGenerator helper function for IPv6 addresses. This could allow IPv6 users to bypass limits. See https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/ for more information.
+    at Object.keyGeneratorIpFallback (/app/node_modules/express-rate-limit/dist/index.cjs:637:13)
+    at wrappedValidations.<computed> [as keyGeneratorIpFallback] (/app/node_modules/express-rate-limit/dist/index.cjs:680:22)
+    at parseOptions (/app/node_modules/express-rate-limit/dist/index.cjs:750:16)
+    at rateLimit (/app/node_modules/express-rate-limit/dist/index.cjs:831:18)
+    at Object.<anonymous> (/app/middleware/rateLimiter.js:96:20)
+    at Module._compile (node:internal/modules/cjs/loader:1364:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1422:10)
+    at Module.load (node:internal/modules/cjs/loader:1203:32)
+    at Module._load (node:internal/modules/cjs/loader:1019:12)
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+    at Module.require (node:internal/modules/cjs/loader:1231:19) {
+  code: 'ERR_ERL_KEY_GEN_IPV6',
+  help: 'https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/'
+}
+SERVER ERROR: SyntaxError: Unexpected token \ in JSON at position 1
+    at JSON.parse (<anonymous>)
+    at parse (/app/node_modules/body-parser/lib/types/json.js:77:19)
+    at /app/node_modules/body-parser/lib/read.js:123:18
+    at AsyncResource.runInAsyncScope (node:async_hooks:203:9)
+    at invokeCallback (/app/node_modules/raw-body/index.js:238:16)
+    at done (/app/node_modules/raw-body/index.js:227:7)
+    at IncomingMessage.onEnd (/app/node_modules/raw-body/index.js:287:7)
+    at IncomingMessage.emit (node:events:517:28)
+    at endReadableNT (node:internal/streams/readable:1400:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  expose: true,
+  statusCode: 400,
+  status: 400,
+  body: '{\\',
+  type: 'entity.parse.failed'
+}
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Request POST /api/dev/token started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=172.20.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+[DEBUG] Inside devAuth handler
+[DEBUG] Extracting key...
+[DEBUG] Key extracted: FOUND
+[DEBUG] Parsing user data...
+[DEBUG] User data ready. Signing token...
+SERVER ERROR: ReferenceError: roles is not defined
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
+[DEBUG] Rate Limiter passed
+[DEBUG] DB Context attached
+[DEBUG] Entering DevAuth
+    at /app/routes/devAuth.js:72:5
+    at Layer.handleRequest (/app/node_modules/router/lib/layer.js:152:17)
+    at next (/app/node_modules/router/lib/route.js:157:13)
+    at Route.dispatch (/app/node_modules/router/lib/route.js:117:3)
+    at handle (/app/node_modules/router/index.js:435:11)
+    at Layer.handleRequest (/app/node_modules/router/lib/layer.js:152:17)
+    at /app/node_modules/router/index.js:295:15
+    at processParams (/app/node_modules/router/index.js:582:12)
+    at next (/app/node_modules/router/index.js:291:5)
+    at Function.handle (/app/node_modules/router/index.js:186:3)
