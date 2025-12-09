@@ -4,5 +4,9 @@ psycopg2-binary
 redis
 requests
 minio
-Pypdf
+pypdf
 chromadb
+openai
+tiktoken
+langchain-text-splitters
+beautifulsoup4

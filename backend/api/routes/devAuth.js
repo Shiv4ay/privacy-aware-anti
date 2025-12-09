@@ -44,21 +44,25 @@ function extractProvidedKey(req) {
 }
 
 router.post('/dev/token', (req, res) => {
+  console.log('[DEBUG] Inside devAuth handler');
   if (process.env.NODE_ENV !== 'development') {
     return res.status(403).json({ error: 'Dev token endpoint disabled in non-development environment' });
   }
 
+  console.log('[DEBUG] Extracting key...');
   const providedKey = extractProvidedKey(req);
+  console.log('[DEBUG] Key extracted:', providedKey ? 'FOUND' : 'NOT_FOUND');
+
   if (!providedKey || providedKey !== DEV_AUTH_KEY) {
-    // helpful message, but don't leak the expected key
     return res.status(401).json({ error: 'Missing or invalid dev auth key' });
   }
 
-  // Allow caller to specify a custom user object for testing (optional)
-  // Example body: { "key":"...", "user": { "id": 1, "username": "siba", "roles":["admin"] } }
+  console.log('[DEBUG] Parsing user data...');
   const requestedUser = (req.body && req.body.user) || {};
   const sub = requestedUser.id ? Number(requestedUser.id) : 1;
   const username = requestedUser.username || 'siba';
+
+  console.log('[DEBUG] User data ready. Signing token...');
   const roles = Array.isArray(requestedUser.roles) ? requestedUser.roles : (requestedUser.role ? [requestedUser.role] : ['admin']);
   const role = roles[0] || 'admin';
 

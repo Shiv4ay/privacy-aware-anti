@@ -2,18 +2,33 @@
 import axios from 'axios'
 
 /**
- * API Base URL
- * - In production (Docker): Use relative URLs (nginx proxies /api/ to backend)
- * - In development: Use VITE_API_URL or fallback to http://localhost:3001
+ * API Base URL Configuration
+ * Usage:
+ * - Host Dev: VITE_API_URL=http://localhost:3001 -> matches directly
+ * - Docker Dev: VITE_API_URL=http://api:3001 -> detects internal name, falls back to relative '/api'
+ * - Prod: VITE_API_URL (or undefined) -> uses relative '/api' or provided URL
  */
 const getBaseURL = () => {
-  // If we're in a browser and the API URL points to a Docker service name,
-  // use relative URLs (nginx will proxy)
-  if (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL.includes('api:3001')) {
-    return '' // Use relative URLs, nginx will proxy
+  const envUrl = import.meta.env.VITE_API_URL;
+
+  // Docker Safeguard: If URL points to internal Docker DNS, use relative path
+  // so browser uses the Vite Proxy instead of failing to resolve 'api'
+  if (envUrl && envUrl.includes('api:3001')) {
+    return '/api';
   }
-  // Use explicit URL from env or fallback
-  return import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+  // Use provided URL or fallback to localhost
+  let url = envUrl || 'http://localhost:3001';
+
+  // Normalize URL to not end with slash before appending /api
+  if (url.endsWith('/')) {
+    url = url.slice(0, -1);
+  }
+
+  // If it's already a relative path (e.g. just /api) return as is
+  if (url === '/api') return url;
+
+  return `${url}/api`;
 }
 
 const baseURL = getBaseURL()
@@ -23,39 +38,53 @@ const baseURL = getBaseURL()
  */
 const client = axios.create({
   baseURL,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 30000 // Increased timeout for search/chat operations
+  timeout: 30000
 })
 
 /**
  * Interceptor: attach authentication headers
- * - DEV_AUTH_KEY is used for demo/dev mode
- * - backend expects BOTH:
- *     Authorization: Bearer <token>
- *     x-dev-auth: <token>
  */
 client.interceptors.request.use(
   (cfg) => {
     try {
-      const token =
-        localStorage.getItem('DEV_AUTH_KEY') || localStorage.getItem('token')
+      const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
 
       if (token) {
-        cfg.headers = cfg.headers || {}
-
-        // required by backend for dev-access bypass
-        cfg.headers.Authorization = `Bearer ${token}`
-
-        // IMPORTANT: backend dev mode expects this header (401 without it)
-        cfg.headers['x-dev-auth'] = token
+        cfg.headers = cfg.headers || {};
+        cfg.headers.Authorization = `Bearer ${token}`;
       }
     } catch (err) {
-      console.error('Auth header error:', err)
+      console.error('Auth header error:', err);
     }
 
-    return cfg
+    return cfg;
   },
   (err) => Promise.reject(err)
-)
+);
 
-export default client
+/**
+ * Response interceptor: handle 401 unauthorized
+ */
+client.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Clear auth data on 401
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('token');
+      delete client.defaults.headers.common['Authorization'];
+
+      // Redirect to login if not already there
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default client;
+

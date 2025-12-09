@@ -1,82 +1,103 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
-import client from '../api/index'
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import client from '../api/index';
 
-const AuthContext = createContext(null)
+const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let mounted = true
+    let mounted = true;
     async function load() {
-      setLoading(true)
+      setLoading(true);
       try {
-        const token = localStorage.getItem('token')
+        const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
         if (token) {
-          // Set default header for all requests
-          client.defaults.headers.common['Authorization'] = `Bearer ${token}`
+          client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
 
-          const res = await client.get('/auth/me').catch(() => null)
-          if (mounted && res && res.data) {
-            setUser(res.data)
-            // Ensure organization is persisted/synced if needed
-            if (res.data.organization) {
-              localStorage.setItem('organization', res.data.organization)
+          // Try to get user profile from /auth/me
+          const res = await client.get('/auth/me').catch(() => null);
+
+          if (mounted && res?.data?.user) {
+            setUser(res.data.user);
+            if (res.data.user.org_id) {
+              localStorage.setItem('organization', res.data.user.org_id);
+            }
+          } else if (mounted && res?.data && !res.data.user) {
+            // Backend might return user data directly without wrapping in { user }
+            setUser(res.data);
+            if (res.data.org_id) {
+              localStorage.setItem('organization', res.data.org_id);
             }
           }
         }
       } catch (e) {
-        console.error("Auth load error", e)
-        localStorage.removeItem('token')
+        console.error("Auth load error", e);
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('token');
+        delete client.defaults.headers.common['Authorization'];
       } finally {
-        if (mounted) setLoading(false)
+        if (mounted) setLoading(false);
       }
     }
-    load()
-    return () => { mounted = false }
-  }, [])
+    load();
+    return () => { mounted = false };
+  }, []);
 
-  const login = async (userData, token) => {
-    // If token is provided directly (e.g. from Login component after API call)
-    if (token) {
-      localStorage.setItem('token', token)
-      client.defaults.headers.common['Authorization'] = `Bearer ${token}`
+  const login = async (email, password) => {
+    console.log('[Auth] Attempting login with fresh credentials:', email);
+    const res = await client.post('/simple-auth/login', { email, password });
+
+    // Phase 4 backend returns: { accessToken, refreshToken, user }
+    const { accessToken, refreshToken, user: userData } = res.data;
+
+    if (!accessToken) {
+      throw new Error('No access token received from server');
     }
 
-    if (userData) {
-      setUser(userData)
-      if (userData.organization) {
-        localStorage.setItem('organization', userData.organization)
-      }
-    } else {
-      // Fetch user if not provided
-      const res = await client.get('/auth/me')
-      setUser(res.data)
+    // Store tokens
+    localStorage.setItem('accessToken', accessToken);
+    if (refreshToken) {
+      localStorage.setItem('refreshToken', refreshToken);
     }
-  }
 
-  const register = async (data) => {
-    // Registration usually returns token, handled in component or here
-    // For now, we'll let the component handle the API call and use login() to set state
-    // This keeps it consistent with the Login component flow
-    pass
-  }
+    // Set authorization header
+    client.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
 
-  const logout = () => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('organization')
-    delete client.defaults.headers.common['Authorization']
-    setUser(null)
-  }
+    // Set user state
+    setUser(userData);
+
+    // Store organization if present
+    if (userData?.org_id) {
+      localStorage.setItem('organization', userData.org_id);
+    }
+
+    return res.data;
+  };
+
+  const logout = async () => {
+    try {
+      await client.post('/auth/logout');
+    } catch (err) {
+      console.error('Logout API call failed', err);
+    } finally {
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('token');
+      localStorage.removeItem('organization');
+      delete client.defaults.headers.common['Authorization'];
+      setUser(null);
+    }
+  };
 
   return (
     <AuthContext.Provider value={{ user, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
-  )
+  );
 }
 
 export function useAuth() {
-  return useContext(AuthContext)
+  return useContext(AuthContext);
 }

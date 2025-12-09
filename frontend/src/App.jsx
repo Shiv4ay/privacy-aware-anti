@@ -4,9 +4,12 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider } from './contexts/AuthContext'
 import { DocumentProvider } from './contexts/DocumentContext'
 import ProtectedRoute from './components/ProtectedRoute'
-import Header from './components/Header'
-import Sidebar from './components/Sidebar'
+import DashboardLayout from './components/DashboardLayout'
 import Dashboard from './pages/Dashboard'
+import SuperAdminDashboard from './pages/SuperAdminDashboard'
+import AdminDashboard from './pages/AdminDashboard'
+import AuditDashboard from './pages/AuditDashboard'
+import DataDashboard from './pages/DataDashboard'
 import DocumentUpload from './pages/DocumentUpload'
 import DocumentList from './pages/DocumentList'
 import Search from './pages/Search'
@@ -19,9 +22,18 @@ import ResetPassword from './pages/ResetPassword'
 import OtpVerification from './pages/OtpVerification'
 import './index.css'
 
+import { Toaster } from 'react-hot-toast';
+
 function App() {
   return (
     <AuthProvider>
+      <Toaster position="top-right" toastOptions={{
+        style: {
+          background: '#1A1A1A',
+          color: '#fff',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+        },
+      }} />
       <DocumentProvider>
         <Router>
           <Routes>
@@ -31,33 +43,43 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/otp-verify" element={<OtpVerification />} />
-            
+
             {/* Protected routes */}
             <Route
               path="/*"
               element={
                 <ProtectedRoute>
-                  <div className="min-h-screen bg-gray-50">
-                    <Header />
-                    <div className="max-w-7xl mx-auto px-4 py-6">
-                      <div className="flex gap-6">
-                        <aside className="w-64 flex-shrink-0">
-                          <Sidebar />
-                        </aside>
-                        <main className="flex-1">
-                          <Routes>
-                            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                            <Route path="/dashboard" element={<Dashboard />} />
-                            <Route path="/search" element={<Search />} />
-                            <Route path="/chat" element={<Chat />} />
-                            <Route path="/documents" element={<DocumentList />} />
-                            <Route path="/documents/upload" element={<DocumentUpload />} />
-                            <Route path="/settings" element={<Settings />} />
-                          </Routes>
-                        </main>
-                      </div>
-                    </div>
-                  </div>
+                  <DashboardLayout>
+                    <Routes>
+                      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                      <Route path="/dashboard" element={<Dashboard />} />
+                      <Route path="/super-admin" element={
+                        <ProtectedRoute roles={['super_admin']}>
+                          <SuperAdminDashboard />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/admin" element={
+                        <ProtectedRoute roles={['admin', 'super_admin']}>
+                          <AdminDashboard />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/audit" element={
+                        <ProtectedRoute roles={['auditor', 'super_admin']}>
+                          <AuditDashboard />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/data" element={
+                        <ProtectedRoute roles={['data_steward', 'super_admin']}>
+                          <DataDashboard />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/search" element={<Search />} />
+                      <Route path="/chat" element={<Chat />} />
+                      <Route path="/documents" element={<DocumentList />} />
+                      <Route path="/documents/upload" element={<DocumentUpload />} />
+                      <Route path="/settings" element={<Settings />} />
+                    </Routes>
+                  </DashboardLayout>
                 </ProtectedRoute>
               }
             />
