@@ -70,9 +70,11 @@ router.post('/dev/token', (req, res) => {
   const payload = {
     sub,
     id: sub,
+    userId: sub, // ✅ Fix: Match authMiddleware expectation
     username,
     roles,
-    role
+    role,
+    type: 'access'
   };
 
   if (!JWT_SECRET) {

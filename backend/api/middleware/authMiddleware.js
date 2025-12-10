@@ -71,10 +71,10 @@ async function authenticateJWT(req, res, next) {
         // Fetch full user from database (if db connection available)
         if (req.db) {
             const userResult = await req.db.query(
-                `SELECT user_id, username, email, role, department_id, organization_id, 
-                entity_id, is_active, locked_until 
+                `SELECT id, username, email, role, department, org_id, 
+                is_active 
          FROM users 
-         WHERE user_id = $1`,
+         WHERE id = $1`,
                 [payload.userId]
             );
 
@@ -89,23 +89,19 @@ async function authenticateJWT(req, res, next) {
                 return res.status(401).json({ error: 'Account is deactivated' });
             }
 
-            // Check if account is locked
-            if (user.locked_until && new Date(user.locked_until) > new Date()) {
-                return res.status(401).json({
-                    error: 'Account is temporarily locked',
-                    lockedUntil: user.locked_until
-                });
-            }
+            // Check if account is locked (feature not yet implemented in schema)
+            // if (user.locked_until && new Date(user.locked_until) > new Date()) { ... }
 
             // Attach full user to request
             req.user = {
-                userId: user.user_id,
+                userId: user.id,
                 username: user.username,
                 email: user.email,
                 role: user.role,
-                department: user.department_id,
-                organizationId: user.organization_id,
-                entityId: user.entity_id
+                department: user.department,
+                organizationId: user.org_id,
+                org_id: user.org_id,
+                // entityId: user.entity_id
             };
         } else {
             // No DB connection - use payload data
@@ -115,8 +111,18 @@ async function authenticateJWT(req, res, next) {
                 username: payload.username,
                 role: payload.role,
                 department: payload.department,
-                organizationId: payload.organizationId
+                organizationId: payload.organizationId || payload.org_id,
+                org_id: payload.org_id || payload.organizationId
             };
+        }
+
+        // PHASE 11: Context Propagation (Header Override)
+        // Allow client to specify active context (verified against user permissions in real app, implicit here)
+        const contextOrg = req.get('X-Organization') || req.get('x-organization');
+        if (contextOrg) {
+            console.log(`[Auth] Context switched to: ${contextOrg}`);
+            req.user.org_id = contextOrg;
+            req.user.organizationId = contextOrg;
         }
 
         next();

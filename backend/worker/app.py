@@ -2429,7 +2429,7 @@ from ingestion.dummy_modules import DummyUniversityIngestion, DummyHospitalInges
 from ingestion.web_scraper import WebIngestion
 
 class IngestionRequest(BaseModel):
-    org_id: int
+    org_id: str | int # Allow string for "university" etc.
     type: str
     url: Optional[str] = None
 

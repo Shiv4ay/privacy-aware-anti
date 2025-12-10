@@ -7,10 +7,17 @@ import toast from 'react-hot-toast';
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { login } = useAuth();
+  const { login, user } = useAuth(); // Destructure user
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Redirect when user is authenticated
+  useEffect(() => {
+    if (user) {
+      navigate('/dashboard');
+    }
+  }, [user, navigate]);
 
   // ✅ HARD RESET OF BROWSER & AGENT AUTOFILL ON FIRST LOAD
   const emailRef = useRef(null);
@@ -30,8 +37,7 @@ export default function Login() {
 
     try {
       await login(email.trim(), password);
-      toast.success('Login successful!');
-      navigate('/dashboard');
+      // Navigation handled by useEffect when user state updates
     } catch (err) {
       console.error('Login error:', err);
       setError(err.response?.data?.error || err.message || 'Login failed');

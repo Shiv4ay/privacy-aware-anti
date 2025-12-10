@@ -47,7 +47,7 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     console.log('[Auth] Attempting login with fresh credentials:', email);
-    const res = await client.post('/simple-auth/login', { email, password });
+    const res = await client.post('/auth/login', { email, password });
 
     // Phase 4 backend returns: { accessToken, refreshToken, user }
     const { accessToken, refreshToken, user: userData } = res.data;

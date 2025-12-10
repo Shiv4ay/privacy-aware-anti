@@ -24,6 +24,8 @@ import './index.css'
 
 import { Toaster } from 'react-hot-toast';
 
+import OrgSelectionPage from './pages/OrgSelectionPage'
+
 function App() {
   return (
     <AuthProvider>
@@ -43,6 +45,13 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/otp-verify" element={<OtpVerification />} />
+
+            {/* Org Selection (Protected but No Org Required) */}
+            <Route path="/org-select" element={
+              <ProtectedRoute requireOrg={false}>
+                <OrgSelectionPage />
+              </ProtectedRoute>
+            } />
 
             {/* Protected routes */}
             <Route
