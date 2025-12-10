@@ -12,7 +12,7 @@ export default function Dashboard() {
   useEffect(() => {
     async function loadStats() {
       try {
-        const docsRes = await client.get('/api/documents').catch(() => null);
+        const docsRes = await client.get('/documents').catch(() => null);
         if (docsRes?.data) {
           setStats(prev => ({
             ...prev,

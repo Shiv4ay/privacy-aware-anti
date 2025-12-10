@@ -44,6 +44,22 @@ const client = axios.create({
 })
 
 /**
+ * Helper to parse JWT payload safely
+ */
+const parseJwt = (token) => {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function (c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+};
+
+/**
  * Interceptor: attach authentication headers
  */
 client.interceptors.request.use(
@@ -51,9 +67,34 @@ client.interceptors.request.use(
     try {
       const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
 
+      // PHASE 2: Strict Client-Side Token Validation
       if (token) {
+        const payload = parseJwt(token);
+
+        // If token is malformed OR missing "type: access", force logout immediately
+        if (!payload || payload.type !== 'access') {
+          console.warn('[Security] Invalid token format detected. Forcing logout.');
+          localStorage.removeItem('accessToken');
+          localStorage.removeItem('refreshToken');
+          localStorage.removeItem('token');
+          delete client.defaults.headers.common['Authorization'];
+          window.location.href = '/login';
+          // Cancel request
+          const controller = new AbortController();
+          cfg.signal = controller.signal;
+          controller.abort('Invalid token format');
+          return cfg;
+        }
+
+        const activeOrg = localStorage.getItem('active_org');
+
         cfg.headers = cfg.headers || {};
         cfg.headers.Authorization = `Bearer ${token}`;
+
+        // PHASE 11: Context Propagation
+        if (activeOrg) {
+          cfg.headers['X-Organization'] = activeOrg;
+        }
       }
     } catch (err) {
       console.error('Auth header error:', err);

@@ -147,29 +147,34 @@ app.use((req, res, next) => {
 // Routes
 // ==========================================
 
-console.log('🔐 Initializing Auth System...');
+// Standard Auth System
+const authRoutes = require('./routes/auth');
+app.use('/api/auth', (req, res, next) => { console.log('[DEBUG] Entering Auth Routes'); next(); }, authRoutes);
+console.log('✅ Auth System mounted at /api/auth');
 
-// Simple Auth (Fresh, minimal)
-const simpleAuthRoutes = require('./routes/simpleAuth');
-app.use('/api/simple-auth', simpleAuthRoutes);
-console.log('✅ Simple Auth mounted at /api/simple-auth');
+// User Setup Routes
+const userSetupRoutes = require('./routes/userSetup');
+app.use('/api/user', authenticateJWT, (req, res, next) => {
+    console.log(`[DEBUG] Handling User Route: ${req.url}`);
+    next();
+}, userSetupRoutes);
+console.log('✅ User Setup mounted at /api/user');
 
-// 0. Dev Auth (Development Only)
-if (process.env.NODE_ENV === 'development') {
-    try {
-        const devAuth = require('./routes/devAuth');
-        app.use('/api', (req, res, next) => { console.log('[DEBUG] Entering DevAuth'); next(); }, devAuth);
-        console.log('🚧 Dev Auth Routes enabled at /api/dev/token');
-    } catch (error) {
-        console.warn('⚠️ Could not load devAuth routes:', error.message);
-    }
-}
+// Session Routes (Phase 16)
+app.use('/api/session', require('./routes/session'));
+console.log('✅ Session Routes mounted at /api/session');
 
-// 1. Auth Routes (Phase 4) - REPLACED by SimpleAuth due to Schema Mismatch
-// simpleAuth matches 'init.sql' schema (id vs user_id)
-// const simpleAuthRoutes = require('./routes/simpleAuth'); // Reuse existing variable from line 153
-app.use('/api/auth', (req, res, next) => { console.log('[DEBUG] Entering Auth Routes (SimpleAuth)'); next(); }, simpleAuthRoutes);
-console.log('✅ SimpleAuth mounted at /api/auth (Schema Compatible)');
+// Dev Routes (for testing/token generation)
+const devAuthRoutes = require('./routes/devAuth');
+app.use('/api', devAuthRoutes);
+
+// Ingestion Routes (Phase 12 Fix)
+const ingestRoutes = require('./routes/ingest');
+app.use('/api/ingest', authenticateJWT, (req, res, next) => {
+    console.log(`[DEBUG] Handling Ingest Route: ${req.url}`);
+    next();
+}, ingestRoutes);
+console.log('✅ Ingestion Routes mounted at /api/ingest');
 
 // try {
 //     const authRoutes = require('./routes/auth');

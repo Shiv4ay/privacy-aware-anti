@@ -164,7 +164,7 @@ ON CONFLICT (name) DO NOTHING;
 
 -- Insert default admin user (password should be changed in production)
 INSERT INTO users (username, email, password_hash, role_id) VALUES 
-    ('admin', 'admin@privacy-aware-rag.local', '$2b$12$VizkJpM6PRMG7U9wGCw56uXLVB3abBstaqNCQIxx.e1gbg0T2W.Pv6', 1)
+    ('admin', 'admin@privacy-aware-rag.local', '$2b$10$MuEcUpt7WbIZv0eHDA.LAuhdfppWsm3A3oqQoaSYzu7bLqT3QV8Xu', 1)
 ON CONFLICT (username) DO UPDATE 
     SET password_hash = EXCLUDED.password_hash;
 
