@@ -12,6 +12,18 @@
 const rateLimit = require('express-rate-limit');
 
 /**
+ * Safely normalize IP address for use in keys
+ * Handles IPv6, IPv4, and edge cases
+ */
+function normalizeIP(ip) {
+    if (!ip) return 'unknown';
+    // Remove IPv6 prefix if present
+    const normalized = String(ip).replace(/^::ffff:/, '');
+    // Replace all special characters with underscores to avoid parsing issues
+    return normalized.replace(/[^a-zA-Z0-9]/g, '_');
+}
+
+/**
  * Login rate limiter - 5 attempts per 15 minutes
  */
 const loginLimiter = rateLimit({
@@ -24,7 +36,8 @@ const loginLimiter = rateLimit({
     keyGenerator: (req) => {
         // Rate limit by IP + email combination
         const email = (req.body && req.body.email) || 'unknown';
-        return `login_${req.ip}_${email}`; // Prefix to avoid IPv6 detection error
+        const safeIP = normalizeIP(req.ip);
+        return `login_${safeIP}_${email}`;
     },
     validate: {
         trustProxy: false
@@ -42,7 +55,8 @@ const passwordResetLimiter = rateLimit({
     legacyHeaders: false,
     keyGenerator: (req) => {
         const email = (req.body && req.body.email) || 'unknown';
-        return `pwd_reset_${req.ip}_${email}`;
+        const safeIP = normalizeIP(req.ip);
+        return `pwd_reset_${safeIP}_${email}`;
     }
 });
 
@@ -55,7 +69,7 @@ const registrationLimiter = rateLimit({
     message: 'Too many registration attempts, please try again later',
     // Default keyGenerator uses IP, which is fine if we don't override it
     // But if we want consistent prefixes:
-    keyGenerator: (req) => `register_${req.ip}`
+    keyGenerator: (req) => `register_${normalizeIP(req.ip)}`
 });
 
 /**
@@ -70,8 +84,9 @@ const apiLimiter = rateLimit({
     keyGenerator: (req) => {
         try {
             // Use user ID if authenticated, otherwise IP
-            console.log(`[DEBUG] RateLimit KeyGen: IP=${req.ip} User=${req.user?.userId}`);
-            return req.user?.userId ? `user_${req.user.userId}` : `ip_${req.ip}`;
+            const safeIP = normalizeIP(req.ip);
+            console.log(`[DEBUG] RateLimit KeyGen: IP=${safeIP} User=${req.user?.userId}`);
+            return req.user?.userId ? `user_${req.user.userId}` : `ip_${safeIP}`;
         } catch (e) {
             console.error('[DEBUG] RateLimit KeyGen Error:', e);
             throw e;
@@ -90,7 +105,7 @@ const strictLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 10,
     message: 'Too many requests for this sensitive operation',
-    keyGenerator: (req) => req.user?.userId ? `strict_user_${req.user.userId}` : `strict_ip_${req.ip}`
+    keyGenerator: (req) => req.user?.userId ? `strict_user_${req.user.userId}` : `strict_ip_${normalizeIP(req.ip)}`
 });
 
 /**
@@ -100,7 +115,7 @@ const mfaLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 5,
     message: 'Too many MFA setup attempts',
-    keyGenerator: (req) => req.user?.userId ? `mfa_${req.user.userId}` : `mfa_ip_${req.ip}`
+    keyGenerator: (req) => req.user?.userId ? `mfa_${req.user.userId}` : `mfa_ip_${normalizeIP(req.ip)}`
 });
 
 module.exports = {

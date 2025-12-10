@@ -25,17 +25,19 @@ const OrgSelection = ({ onSelect, onClose }) => {
                 if (res.data.token) {
                     console.log('[OrgSelection] Context switched. New Token received.');
 
-                    // 2. CRITICAL: Overwrite the main access token
-                    // This creates the "Re-Login" effect
+                    // 2. CRITICAL: Save token to BOTH locations for compatibility
                     localStorage.setItem('accessToken', res.data.token);
-
-                    // Legacy support (just in case)
                     localStorage.setItem('token', res.data.token);
                     localStorage.setItem('active_org', selectedId);
+
+                    console.log('[OrgSelection] Token saved. Reloading to /dashboard...');
 
                     // 3. Force a hard reload to reset AuthContext with the new identity
                     // This is the "Clean Slate" approach
                     window.location.href = '/dashboard';
+                } else {
+                    console.error('[OrgSelection] No token in response!', res.data);
+                    alert('Failed to set organization: No token received');
                 }
             } catch (err) {
                 console.error("Failed to set organization context", err);

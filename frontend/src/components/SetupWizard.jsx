@@ -18,23 +18,10 @@ export default function SetupWizard() {
     });
 
     useEffect(() => {
-        // Check if user needs setup
-        // We assume if 'user_category' is missing or 'employee' (default) AND they are just a 'user' role, they might need setup.
-        // Or strictly if user_category is null/empty. 
-        // Let's assume the backend migration set existing ones to 'employee'. 
-        // For NEW users, we want this to show. 
-        // Let's rely on a specific check: if user_category is 'employee' (default) but we want them to specify?
-        // Or better, let's assume we want to capture this for everyone who hasn't explicitly set it via this wizard.
-        // For now, let's show if user_category is 'employee' and they are in 'General' org (id 1 usually, or name 'General').
-        // A safer check for this demo: If user_category is 'employee' (the default from registration if not provided)
-
-        if (user && (!user.user_category || user.user_category === 'employee')) {
-            // Check if we should show it. 
-            // For the demo, let's show it if they haven't completed it.
-            // We can use a local storage flag to prevent annoying them, or check a specific DB field.
-            // For this phase, let's show it if user_category is 'employee'.
-            setIsOpen(true);
-        }
+        // DISABLED: SetupWizard auto-show
+        // The wizard modal was blocking dashboard access
+        // Keep this component for future use but don't show automatically
+        setIsOpen(false);
     }, [user]);
 
     const handleNext = () => setStep(step + 1);

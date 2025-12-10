@@ -15,7 +15,14 @@ export default function Login() {
   // Redirect when user is authenticated
   useEffect(() => {
     if (user) {
-      navigate('/dashboard');
+      // If user has no organization, send to org selection
+      if (!user.organization) {
+        console.log('[Login] User has no org, redirecting to /org-select');
+        navigate('/org-select');
+      } else {
+        console.log('[Login] User has org, redirecting to /dashboard');
+        navigate('/dashboard');
+      }
     }
   }, [user, navigate]);
 

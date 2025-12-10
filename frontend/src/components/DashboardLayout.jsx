@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
-import SetupWizard from './SetupWizard';
 
 export default function DashboardLayout({ children }) {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -30,7 +29,6 @@ export default function DashboardLayout({ children }) {
                         {children}
                     </div>
                 </main>
-                <SetupWizard />
             </div>
         </div>
     );

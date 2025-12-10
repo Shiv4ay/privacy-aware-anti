@@ -116,10 +116,12 @@ router.get('/me', async (req, res) => {
         const decoded = jwtManager.verifyAccessToken(token);
 
         // Get fresh user data from database (using correct 'id' column)
+        // Defensive: Check both possible field names from JWT
+        // Only select columns that actually exist in the table
         const result = await req.db.query(
-            `SELECT id AS user_id, username, email, role, org_id, department, is_active
+            `SELECT id AS user_id, username, email, role, org_id
              FROM users WHERE id = $1`,
-            [decoded.userId]
+            [decoded.user_id || decoded.userId]
         );
 
         if (result.rows.length === 0) {
@@ -131,9 +133,10 @@ router.get('/me', async (req, res) => {
         // PHASE 17 FIX: Respect Session Context
         // If the token has a specific organization claim (from /session/set-org),
         // we must return THAT context, not the default DB value.
-        // This ensures the frontend stays in the selected organization after reload.
-        if (decoded.organization || decoded.org_id) {
-            user.org_id = decoded.organization || decoded.org_id;
+        // Check ALL possible organization field names from JWT
+        const orgFromToken = decoded.organizationId || decoded.organization_id || decoded.organization || decoded.org_id;
+        if (orgFromToken) {
+            user.org_id = orgFromToken;
         }
 
         res.json({
@@ -143,13 +146,27 @@ router.get('/me', async (req, res) => {
                 email: user.email,
                 role: user.role,
                 org_id: user.org_id,
-                department: user.department
+                // CRITICAL: Map org_id to organization for frontend consistency
+                organization: user.org_id
             }
         });
 
     } catch (error) {
-        console.error('Get user error:', error);
-        res.status(401).json({ error: 'Invalid token' });
+        console.error('[/auth/me] Error occurred:');
+        console.error('  Error type:', error.name);
+        console.error('  Error message:', error.message);
+        console.error('  Stack:', error.stack);
+
+        // More specific error responses
+        if (error.name === 'TokenExpiredError') {
+            return res.status(401).json({ error: 'Token expired', details: error.message });
+        } else if (error.name === 'JsonWebTokenError') {
+            return res.status(401).json({ error: 'Invalid token format', details: error.message });
+        } else if (error.message && error.message.includes('not found')) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        res.status(401).json({ error: 'Invalid token', details: error.message });
     }
 });
 

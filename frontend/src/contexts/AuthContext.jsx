@@ -20,16 +20,21 @@ export function AuthProvider({ children }) {
           const res = await client.get('/auth/me').catch(() => null);
 
           if (mounted && res?.data?.user) {
-            setUser(res.data.user);
-            if (res.data.user.org_id) {
-              localStorage.setItem('organization', res.data.user.org_id);
-            }
+            // Map org_id to organization for consistency
+            const userData = {
+              ...res.data.user,
+              organization: res.data.user.org_id || res.data.user.organization
+            };
+            setUser(userData);
+            console.log('[AuthContext] User loaded:', userData.email, 'Org:', userData.organization);
           } else if (mounted && res?.data && !res.data.user) {
             // Backend might return user data directly without wrapping in { user }
-            setUser(res.data);
-            if (res.data.org_id) {
-              localStorage.setItem('organization', res.data.org_id);
-            }
+            const userData = {
+              ...res.data,
+              organization: res.data.org_id || res.data.organization
+            };
+            setUser(userData);
+            console.log('[AuthContext] User loaded (direct):', userData.email, 'Org:', userData.organization);
           }
         }
       } catch (e) {
@@ -65,13 +70,13 @@ export function AuthProvider({ children }) {
     // Set authorization header
     client.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
 
-    // Set user state
-    setUser(userData);
-
-    // Store organization if present
-    if (userData?.org_id) {
-      localStorage.setItem('organization', userData.org_id);
-    }
+    // Set user state with organization mapping
+    const user = {
+      ...userData,
+      organization: userData.org_id || userData.organization
+    };
+    setUser(user);
+    console.log('[AuthContext] Login successful:', user.email, 'Org:', user.organization);
 
     return res.data;
   };
