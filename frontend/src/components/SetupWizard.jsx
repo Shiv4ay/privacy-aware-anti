@@ -43,12 +43,16 @@ export default function SetupWizard() {
     const handleSubmit = async () => {
         setLoading(true);
         try {
-            const res = await client.post('/api/user/setup', formData);
+            const res = await client.post('/user/setup', formData);
             if (res.data.success) {
                 toast.success('Profile setup complete!');
                 setIsOpen(false);
-                // Ideally update auth context here, but a reload works for now to refresh claims if needed
-                window.location.reload();
+
+                // PHASE 3: Clean Reset to ensure no old/incompatible tokens persist
+                // This forces a fresh login with the new token structure 
+                import('../utils/resetSession').then(({ resetSession }) => {
+                    resetSession();
+                });
             }
         } catch (err) {
             console.error(err);

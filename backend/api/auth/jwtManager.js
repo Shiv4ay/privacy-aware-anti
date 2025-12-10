@@ -30,12 +30,12 @@ const tokenBlacklist = new Set();
  */
 function generateAccessToken(user) {
     const payload = {
-        userId: user.user_id,
+        userId: user.user_id || user.userId, // Allow snake_case or camelCase input
         email: user.email,
         username: user.username,
         role: user.role,
-        department: user.department_id,
-        organizationId: user.organization_id,
+        department: user.department_id || user.department,
+        organizationId: user.organization_id || user.organization || user.org_id, // Robust org check
         type: 'access'
     };
 

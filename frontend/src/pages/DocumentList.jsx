@@ -12,7 +12,7 @@ export default function DocumentList() {
   const loadDocuments = async () => {
     setLoading(true);
     try {
-      const res = await client.get('/api/documents');
+      const res = await client.get('/documents');
       const docs = res.data?.documents || res.data || [];
       setList(Array.isArray(docs) ? docs : []);
     } catch (err) {
@@ -83,9 +83,9 @@ export default function DocumentList() {
                 <div className="font-medium text-gray-200 truncate pr-4">{d.filename || d.name || `Document ${i + 1}`}</div>
                 {d.status && (
                   <span className={`text-xs px-2 py-0.5 rounded flex items-center gap-1 ${d.status === 'processed' ? 'bg-green-500/10 text-green-400' :
-                      d.status === 'processing' ? 'bg-yellow-500/10 text-yellow-400' :
-                        d.status === 'failed' ? 'bg-red-500/10 text-red-400' :
-                          'bg-gray-500/10 text-gray-400'
+                    d.status === 'processing' ? 'bg-yellow-500/10 text-yellow-400' :
+                      d.status === 'failed' ? 'bg-red-500/10 text-red-400' :
+                        'bg-gray-500/10 text-gray-400'
                     }`}>
                     {d.status === 'processed' && <CheckCircle className="w-3 h-3" />}
                     {d.status === 'processing' && <Loader2 className="w-3 h-3 animate-spin" />}

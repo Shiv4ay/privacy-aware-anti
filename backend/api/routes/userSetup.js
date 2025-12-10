@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { Pool } = require('pg');
-const { authMiddleware } = require('../middleware/authMiddleware');
+// const { authMiddleware } = require('../middleware/authMiddleware');
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -9,10 +9,10 @@ const pool = new Pool({
 });
 
 // POST /api/user/setup
-router.post('/setup', authMiddleware, async (req, res) => {
+router.post('/setup', async (req, res) => {
     const client = await pool.connect();
     try {
-        const userId = req.user.id;
+        const userId = req.user.userId || req.user.id;
         const { organizationType, organizationName, roleCategory, department } = req.body;
 
         if (!organizationType || !roleCategory) {
@@ -37,8 +37,7 @@ router.post('/setup', authMiddleware, async (req, res) => {
         const updateUserQuery = `
             UPDATE users 
             SET user_category = $1, 
-                department = $2,
-                updated_at = NOW()
+                department = $2
             WHERE id = $3
             RETURNING id, username, email, role, org_id, department, user_category
         `;

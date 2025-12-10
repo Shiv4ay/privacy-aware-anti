@@ -35,7 +35,7 @@ export default function DocumentUpload() {
       const fd = new FormData();
       fd.append('file', file);
 
-      const res = await client.post('/api/documents/upload', fd, {
+      const res = await client.post('/upload', fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 120000
       });
