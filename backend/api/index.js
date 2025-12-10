@@ -55,16 +55,22 @@ function parseMinio(raw) {
     raw = String(raw).trim();
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
         const p = url.parse(raw);
+        const port = p.port ? parseInt(p.port, 10) : (p.protocol === 'https:' ? 443 : 80);
         return {
             host: p.hostname,
-            port: p.port ? parseInt(p.port, 10) : (p.protocol === 'https:' ? 443 : 80),
+            port: (!isNaN(port) && port > 0 && port <= 65535) ? port : 9000,
             useSSL: p.protocol === 'https:'
         };
     }
     if (raw.includes('/')) raw = raw.split('/')[0];
     if (raw.includes(':')) {
         const parts = raw.split(':');
-        return { host: parts[0], port: parseInt(parts[1] || '9000', 10), useSSL: false };
+        const port = parseInt(parts[1] || '9000', 10);
+        return {
+            host: parts[0],
+            port: (!isNaN(port) && port > 0 && port <= 65535) ? port : 9000,
+            useSSL: false
+        };
     }
     return { host: raw, port: 9000, useSSL: false };
 }
@@ -73,7 +79,7 @@ const MINIO_RAW = process.env.MINIO_ENDPOINT || `${process.env.MINIO_HOST || 'mi
 const _m = parseMinio(MINIO_RAW);
 const minioClient = new Minio.Client({
     endPoint: _m.host,
-    port: Number(_m.port),
+    port: Number(_m.port) || 9000,
     useSSL: !!_m.useSSL,
     accessKey: process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || 'minioadmin',
     secretKey: process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || 'minioadmin123'
