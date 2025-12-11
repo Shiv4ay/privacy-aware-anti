@@ -189,6 +189,16 @@ app.use('/api/ingest', authenticateJWT, (req, res, next) => {
 }, ingestRoutes);
 console.log('✅ Ingestion Routes mounted at /api/ingest');
 
+// Documents Upload Routes (University Dataset Integration)
+const documentsRoutes = require('./routes/documents');
+app.use('/api/documents', authenticateJWT, documentsRoutes);
+console.log('✅ Documents Routes mounted at /api/documents');
+
+// Organizations Routes (Super Admin)
+const orgsRoutes = require('./routes/orgs');
+app.use('/api/orgs', authenticateJWT, orgsRoutes);
+console.log('✅ Organizations Routes mounted at /api/orgs');
+
 // try {
 //     const authRoutes = require('./routes/auth');
 //     app.use('/api/auth', (req, res, next) => { console.log('[DEBUG] Entering Auth Routes'); next(); }, authRoutes);
