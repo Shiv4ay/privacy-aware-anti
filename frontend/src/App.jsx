@@ -11,7 +11,7 @@ import AdminDashboard from './pages/AdminDashboard'
 import AuditDashboard from './pages/AuditDashboard'
 import DataDashboard from './pages/DataDashboard'
 import DocumentUpload from './pages/DocumentUpload'
-import DocumentList from './pages/DocumentList'
+import Documents from './pages/Documents'
 import Search from './pages/Search'
 import Chat from './pages/Chat'
 import Settings from './pages/Settings'
@@ -87,7 +87,7 @@ function App() {
                       } />
                       <Route path="/search" element={<Search />} />
                       <Route path="/chat" element={<Chat />} />
-                      <Route path="/documents" element={<DocumentList />} />
+                      <Route path="/documents" element={<Documents />} />
                       <Route path="/documents/upload" element={<DocumentUpload />} />
                       <Route path="/settings" element={<Settings />} />
                     </Routes>
