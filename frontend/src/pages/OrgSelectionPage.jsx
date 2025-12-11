@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import OrgSelection from '../components/OrgSelection';
 
 // Simple Error Boundary to catch render crashes
@@ -47,6 +48,22 @@ class ErrorBoundary extends React.Component {
 
 // Simplified Page - OrgSelection component handles the heavy lifting & redirect
 const OrgSelectionPage = () => {
+    const navigate = useNavigate();
+    const { user } = useAuth();
+
+    // ✅ SUPER ADMIN GUARD: Super admin should never see org selection
+    React.useEffect(() => {
+        if (user?.role === 'super_admin') {
+            console.log('[OrgSelectionPage] Super admin detected, redirecting to /super-admin');
+            navigate('/super-admin', { replace: true });
+        }
+    }, [user, navigate]);
+
+    // Don't render org selection for super admin
+    if (user?.role === 'super_admin') {
+        return <div className="flex items-center justify-center min-h-screen bg-gray-900 text-white">Redirecting...</div>;
+    }
+
     return (
         <div className="relative min-h-screen bg-premium-black text-white overflow-hidden font-sans selection:bg-premium-gold/30 selection:text-premium-gold">
             <ErrorBoundary>

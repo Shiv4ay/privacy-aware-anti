@@ -25,6 +25,7 @@ import './index.css'
 import { Toaster } from 'react-hot-toast';
 
 import OrgSelectionPage from './pages/OrgSelectionPage'
+import LandingPage from './pages/LandingPage'
 
 function App() {
   return (
@@ -39,6 +40,9 @@ function App() {
       <DocumentProvider>
         <Router>
           <Routes>
+            {/* Root - Smart redirect based on auth */}
+            <Route path="/" element={<LandingPage />} />
+
             {/* Public routes */}
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
@@ -60,7 +64,6 @@ function App() {
                 <ProtectedRoute>
                   <DashboardLayout>
                     <Routes>
-                      <Route path="/" element={<Navigate to="/dashboard" replace />} />
                       <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/super-admin" element={
                         <ProtectedRoute roles={['super_admin']}>

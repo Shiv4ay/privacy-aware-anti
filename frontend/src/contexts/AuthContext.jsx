@@ -8,46 +8,52 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let mounted = true;
-    async function load() {
-      setLoading(true);
+    const loadUser = async () => {
+      // ✅ FIX: Don't load tokens if user is on /login page  
+      // This prevents old tokens from redirecting users away from login
+      const isOnLoginPage = window.location.pathname === '/login';
+      if (isOnLoginPage) {
+        console.log('[AuthContext] On login page, skipping token load');
+        setLoading(false);
+        return;
+      }
+
+      const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
+      if (!token) {
+        console.log('[AuthContext] No token found');
+        setLoading(false);
+        return;
+      }
+
       try {
-        const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
-        if (token) {
-          client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        // Set authorization header before making the request
+        client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        const response = await client.get('/auth/me');
+        const userData = response.data.user;
 
-          // Try to get user profile from /auth/me
-          const res = await client.get('/auth/me').catch(() => null);
+        console.log('[AuthContext] User loaded:', userData.email, 'Org:', userData.organization);
 
-          if (mounted && res?.data?.user) {
-            // Map org_id to organization for consistency
-            const userData = {
-              ...res.data.user,
-              organization: res.data.user.org_id || res.data.user.organization
-            };
-            setUser(userData);
-            console.log('[AuthContext] User loaded:', userData.email, 'Org:', userData.organization);
-          } else if (mounted && res?.data && !res.data.user) {
-            // Backend might return user data directly without wrapping in { user }
-            const userData = {
-              ...res.data,
-              organization: res.data.org_id || res.data.organization
-            };
-            setUser(userData);
-            console.log('[AuthContext] User loaded (direct):', userData.email, 'Org:', userData.organization);
-          }
-        }
-      } catch (e) {
-        console.error("Auth load error", e);
+        setUser({
+          userId: userData.userId,
+          username: userData.username,
+          email: userData.email,
+          role: userData.role,
+          // Map org_id to organization for consistency
+          organization: userData.organization || userData.org_id
+        });
+      } catch (error) {
+        console.error('[AuthContext] Failed to load user:', error.message);
+        // Clear invalid token
         localStorage.removeItem('accessToken');
         localStorage.removeItem('token');
-        delete client.defaults.headers.common['Authorization'];
+        delete client.defaults.headers.common['Authorization']; // Clear header on error
+        setUser(null);
       } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
-    }
-    load();
-    return () => { mounted = false };
+    };
+
+    loadUser();
   }, []);
 
   const login = async (email, password) => {
