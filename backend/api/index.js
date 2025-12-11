@@ -172,10 +172,7 @@ console.log('✅ Session Routes mounted at /api/session');
 
 // Admin Routes (for user management)
 const adminRoutes = require('./routes/admin');
-app.use('/api/admin', authenticateJWT, (req, res, next) => {
-    console.log(`[DEBUG] Handling Admin Route: ${req.url}`);
-    next();
-}, adminRoutes);
+app.use('/api/admin', authenticateJWT, adminRoutes);
 console.log('✅ Admin Routes mounted at /api/admin');
 
 // Dev Routes (for testing/token generation)

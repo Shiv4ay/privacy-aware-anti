@@ -59,22 +59,30 @@ router.post('/login', async (req, res) => {
         }
 
         // Generate JWT tokens using consistent JWT Manager
-        const accessToken = jwtManager.generateAccessToken({
-            user_id: user.user_id, // Map database alias back to expected param
+        // SUPER ADMIN FIX: Super admin should NEVER have org_id in JWT
+        const tokenPayload = {
+            user_id: user.user_id,
             email: user.email,
             username: user.username,
             role: user.role,
-            organization_id: user.org_id,
             department_id: user.department
-        });
+        };
+
+        // Only include organization_id for non-super-admin users
+        if (user.role !== 'super_admin') {
+            tokenPayload.organization_id = user.org_id;
+        }
+
+        const accessToken = jwtManager.generateAccessToken(tokenPayload);
 
         const refreshToken = jwtManager.generateRefreshToken({
             user_id: user.user_id
         });
 
-        console.log('✅ Login successful:', email);
+        console.log('✅ Login successful:', email, '| Role:', user.role);
 
         // Return success response
+        // For super admin, org_id should be null/undefined
         res.json({
             accessToken,
             refreshToken,
@@ -83,7 +91,7 @@ router.post('/login', async (req, res) => {
                 username: user.username,
                 email: user.email,
                 role: user.role,
-                org_id: user.org_id,
+                org_id: user.role === 'super_admin' ? null : user.org_id,
                 department: user.department
             }
         });
@@ -139,6 +147,12 @@ router.get('/me', async (req, res) => {
             user.org_id = orgFromToken;
         }
 
+        // SUPER ADMIN FIX: super_admin should never have org_id
+        const isSuperAdmin = user.role === 'super_admin';
+        if (isSuperAdmin) {
+            user.org_id = null;
+        }
+
         res.json({
             user: {
                 userId: user.user_id,
@@ -147,6 +161,7 @@ router.get('/me', async (req, res) => {
                 role: user.role,
                 org_id: user.org_id,
                 // CRITICAL: Map org_id to organization for frontend consistency
+                // For super admin, organization should be null
                 organization: user.org_id
             }
         });

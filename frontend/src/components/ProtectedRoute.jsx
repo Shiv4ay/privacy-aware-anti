@@ -10,9 +10,9 @@ export default function ProtectedRoute({ children, roles = [], requireOrg = true
     loading,
     hasToken: !!token,
     hasUser: !!user,
+    userRole: user?.role,
     userOrg: user?.organization,
     requireOrg,
-    userRole: user?.role,
     requiredRoles: roles
   });
 
@@ -32,7 +32,18 @@ export default function ProtectedRoute({ children, roles = [], requireOrg = true
     return <div className="flex items-center justify-center h-screen bg-gray-900 text-white">Syncing Profile...</div>
   }
 
-  // STRICT CHECK: The User Context MUST have an organization (if required)
+  // ✅ SUPER ADMIN BYPASS: Super admin never needs org_id
+  if (user?.role === 'super_admin') {
+    console.log('[ProtectedRoute] Super admin detected - bypassing org check');
+    // Check role-specific access if required
+    if (roles.length > 0 && !roles.includes(user.role)) {
+      console.log('[ProtectedRoute] Super admin denied access to role-specific route');
+      return <Navigate to="/super-admin" replace />
+    }
+    return children;
+  }
+
+  // For non-super-admin users: STRICT CHECK for organization
   if (requireOrg && user && !user.organization) {
     console.log('[ProtectedRoute] User has no org context. Redirecting to selection.');
     return <Navigate to="/org-select" replace />
