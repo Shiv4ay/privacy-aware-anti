@@ -1,17 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/index';
 import { useAuth } from '../contexts/AuthContext';
-import { Users, UserPlus, Database, Globe, Activity, Search, RefreshCw, LogOut } from 'lucide-react';
+import { Users, UserPlus, Database, Globe, Activity, Search, RefreshCw, LogOut, FileText, Building2, TrendingUp } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function AdminDashboard() {
     const { user, logout } = useAuth();
     const [users, setUsers] = useState([]);
+    const [stats, setStats] = useState(null);
+    const [uploads, setUploads] = useState([]);
     const [loading, setLoading] = useState(true);
     const [newUser, setNewUser] = useState({ name: '', email: '', password: '', department: '', user_category: 'employee' });
 
     useEffect(() => {
         fetchUsers();
+        fetchStats();
+        fetchUploads();
+
+        // Auto-refresh stats every 30 seconds
+        const interval = setInterval(() => {
+            fetchStats();
+            fetchUploads();
+        }, 30000);
+
+        return () => clearInterval(interval);
     }, []);
 
     const fetchUsers = async () => {
@@ -25,6 +37,28 @@ export default function AdminDashboard() {
             console.error(err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchStats = async () => {
+        try {
+            const res = await client.get('/admin/stats');
+            if (res.data.success) {
+                setStats(res.data.stats);
+            }
+        } catch (err) {
+            console.error('Failed to fetch stats:', err);
+        }
+    };
+
+    const fetchUploads = async () => {
+        try {
+            const res = await client.get('/admin/uploads');
+            if (res.data.success) {
+                setUploads(res.data.uploads);
+            }
+        } catch (err) {
+            console.error('Failed to fetch uploads:', err);
         }
     };
 
@@ -70,12 +104,40 @@ export default function AdminDashboard() {
     return (
         <div className="space-y-8">
             <div className="max-w-7xl mx-auto space-y-8">
-                {/* Header - Removed as it's now in Navbar/Sidebar */}
+                {/* Header */}
                 <div className="flex justify-between items-center mb-6">
                     <div>
                         <h1 className="text-3xl font-bold text-white mb-1">Admin Dashboard</h1>
-                        <p className="text-gray-400">Manage organization: <span className="text-premium-gold font-semibold">{user?.organization}</span></p>
+                        <p className="text-gray-400">Manage organization: <span className="text-premium-gold font-semibold">{stats?.organizationName || user?.organization}</span></p>
                     </div>
+                </div>
+
+                {/* Metrics Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <MetricCard
+                        icon={FileText}
+                        title="Total Documents"
+                        value={stats?.totalDocuments?.toLocaleString() || '0'}
+                        subtitle={stats?.recentUploads ? `+${stats.recentUploads} new today` : 'No recent uploads'}
+                        iconColor="text-purple-400"
+                        bgColor="bg-purple-500/10"
+                    />
+                    <MetricCard
+                        icon={Database}
+                        title="Data Sources"
+                        value={stats?.dataSourcesCount || '0'}
+                        subtitle={`${stats?.dataSources?.length || 0} files uploaded`}
+                        iconColor="text-blue-400"
+                        bgColor="bg-blue-500/10"
+                    />
+                    <MetricCard
+                        icon={Users}
+                        title="Organization Users"
+                        value={stats?.totalUsers || '0'}
+                        subtitle="Active members"
+                        iconColor="text-green-400"
+                        bgColor="bg-green-500/10"
+                    />
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -188,47 +250,41 @@ export default function AdminDashboard() {
                                 <h2 className="text-xl font-semibold text-white">Data Ingestion</h2>
                             </div>
 
-                            <div className="space-y-6">
+                            <div className="space-y-4">
                                 <div>
-                                    <h3 className="text-sm font-medium text-gray-400 mb-3">Dummy Data Sources</h3>
-                                    <div className="grid grid-cols-1 gap-2">
-                                        <button onClick={() => triggerIngestion('dummy_university')} className="btn-secondary py-2 rounded-lg text-sm">
-                                            Ingest University Data
-                                        </button>
-                                        <button onClick={() => triggerIngestion('dummy_hospital')} className="btn-secondary py-2 rounded-lg text-sm">
-                                            Ingest Hospital Data
-                                        </button>
-                                        <button onClick={() => triggerIngestion('dummy_finance')} className="btn-secondary py-2 rounded-lg text-sm">
-                                            Ingest Finance Data
-                                        </button>
+                                    <h3 className="text-sm font-medium text-gray-400 mb-3">Data Sources Status</h3>
+                                    <div className="space-y-2">
+                                        {stats?.dataSources?.map((source, idx) => (
+                                            <div key={idx} className="bg-white/5 p-3 rounded-lg border border-green-500/20">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                                                        <span className="text-sm font-medium text-white">{source.filename}</span>
+                                                    </div>
+                                                    <span className="text-xs text-gray-400">{parseInt(source.count).toLocaleString()} docs</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {(!stats?.dataSources || stats.dataSources.length === 0) && (
+                                            <div className="text-center text-gray-500 py-4 text-sm">
+                                                No data sources uploaded yet
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 
                                 <div>
-                                    <h3 className="text-sm font-medium text-gray-400 mb-3">Public Web Source</h3>
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="url"
-                                            placeholder="https://example.com"
-                                            className="glass-input flex-1 px-3 py-2 rounded-lg text-sm"
-                                            id="web-ingest-url"
-                                        />
-                                        <button
-                                            onClick={() => {
-                                                const url = document.getElementById('web-ingest-url').value;
-                                                if (url) triggerIngestion('web', url);
-                                            }}
-                                            className="btn-primary px-3 py-2 rounded-lg"
-                                        >
-                                            <Globe className="w-4 h-4" />
-                                        </button>
+                                    <h3 className="text-sm font-medium text-gray-400 mb-3">Upload New Data</h3>
+                                    <div className="text-center py-4 bg-white/5 rounded-lg border border-dashed border-gray-700">
+                                        <Database className="w-8 h-8 text-gray-500 mx-auto mb-2" />
+                                        <p className="text-xs text-gray-500">Use Documents page to upload</p>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Ingestion Logs */}
-                        <IngestionLogs />
+                        {/* Recent Uploads Activity */}
+                        <ActivityLogs uploads={uploads} />
                     </div>
                 </div>
             </div>
@@ -236,24 +292,36 @@ export default function AdminDashboard() {
     );
 }
 
-function IngestionLogs() {
-    const [logs, setLogs] = useState([]);
+// Metric Card Component
+function MetricCard({ icon: Icon, title, value, subtitle, iconColor, bgColor }) {
+    return (
+        <div className="glass-panel p-6 rounded-2xl">
+            <div className="flex items-center gap-4">
+                <div className={`p-3 ${bgColor} rounded-xl`}>
+                    <Icon className={`w-6 h-6 ${iconColor}`} />
+                </div>
+                <div className="flex-1">
+                    <p className="text-sm text-gray-400 mb-1">{title}</p>
+                    <p className="text-2xl font-bold text-white">{value}</p>
+                    <p className="text-xs text-gray-500 mt-1">{subtitle}</p>
+                </div>
+            </div>
+        </div>
+    );
+}
 
-    useEffect(() => {
-        fetchLogs();
-        const interval = setInterval(fetchLogs, 5000);
-        return () => clearInterval(interval);
-    }, []);
+// Activity Logs Component
+function ActivityLogs({ uploads }) {
+    const formatTimeAgo = (dateString) => {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
 
-    const fetchLogs = async () => {
-        try {
-            const res = await client.get('/ingest/logs');
-            if (res.data.success) {
-                setLogs(res.data.logs);
-            }
-        } catch (err) {
-            console.error("Failed to fetch logs", err);
-        }
+        if (diffMins < 60) return `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
+        if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+        return date.toLocaleDateString();
     };
 
     return (
@@ -267,26 +335,27 @@ function IngestionLogs() {
 
             <div className="overflow-y-auto flex-1 pr-2 custom-scrollbar">
                 <div className="space-y-3">
-                    {logs.map((log) => (
-                        <div key={log.id} className="bg-white/5 p-3 rounded-lg border border-white/5 text-sm">
-                            <div className="flex justify-between items-start mb-1">
-                                <span className="font-medium text-premium-gold">{log.type}</span>
-                                <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wider ${log.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                                    log.status === 'failed' ? 'bg-red-500/20 text-red-400' :
-                                        'bg-yellow-500/20 text-yellow-400'
-                                    }`}>
-                                    {log.status}
-                                </span>
-                            </div>
-                            <div className="text-gray-400 text-xs mb-1 truncate">{log.url || 'Internal Source'}</div>
-                            <div className="text-gray-500 text-[10px] flex justify-between">
-                                <span>{new Date(log.created_at).toLocaleTimeString()}</span>
-                                <span>{log.details?.chunks ? `${log.details.chunks} chunks` : ''}</span>
+                    {uploads.map((upload, idx) => (
+                        <div key={idx} className="bg-white/5 p-3 rounded-lg border border-white/5 text-sm hover:bg-white/10 transition-colors">
+                            <div className="flex items-start gap-2">
+                                <div className="w-2 h-2 bg-green-400 rounded-full mt-1.5"></div>
+                                <div className="flex-1">
+                                    <div className="flex justify-between items-start mb-1">
+                                        <span className="font-medium text-white">{upload.filename}</span>
+                                        <span className="text-xs text-gray-500">{formatTimeAgo(upload.uploaded_at)}</span>
+                                    </div>
+                                    <div className="text-xs text-gray-400">
+                                        {parseInt(upload.document_count).toLocaleString()} documents uploaded
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     ))}
-                    {logs.length === 0 && (
-                        <div className="text-center text-gray-500 py-4">No activity recorded</div>
+                    {uploads.length === 0 && (
+                        <div className="text-center text-gray-500 py-8">
+                            <Database className="w-12 h-12 text-gray-700 mx-auto mb-2" />
+                            <p>No activity recorded</p>
+                        </div>
                     )}
                 </div>
             </div>
