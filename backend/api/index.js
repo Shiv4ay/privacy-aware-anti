@@ -170,12 +170,22 @@ console.log('✅ User Setup mounted at /api/user');
 app.use('/api/session', require('./routes/session'));
 console.log('✅ Session Routes mounted at /api/session');
 
+// Admin Routes (for user management)
+const adminRoutes = require('./routes/admin');
+app.use('/api/admin', authenticateJWT, (req, res, next) => {
+    console.log(`[DEBUG] Handling Admin Route: ${req.url}`);
+    next();
+}, adminRoutes);
+console.log('✅ Admin Routes mounted at /api/admin');
+
 // Dev Routes (for testing/token generation)
 const devAuthRoutes = require('./routes/devAuth');
 app.use('/api', devAuthRoutes);
 
 // Ingestion Routes (Phase 12 Fix)
 const ingestRoutes = require('./routes/ingest');
+// Make DB pool available to ingest routes
+app.set('pool', pool);
 app.use('/api/ingest', authenticateJWT, (req, res, next) => {
     console.log(`[DEBUG] Handling Ingest Route: ${req.url}`);
     next();
