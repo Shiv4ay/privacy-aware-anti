@@ -15,7 +15,14 @@ export default function Login() {
   // Redirect when user is authenticated
   useEffect(() => {
     if (user) {
-      // If user has no organization, send to org selection
+      // ✅ SUPER ADMIN FIX: Route super admin directly to their dashboard
+      if (user.role === 'super_admin') {
+        console.log('[Login] Super admin detected, redirecting to /super-admin');
+        navigate('/super-admin');
+        return;
+      }
+
+      // For non-super-admin users: check organization
       if (!user.organization) {
         console.log('[Login] User has no org, redirecting to /org-select');
         navigate('/org-select');

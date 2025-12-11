@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
-const { authMiddleware } = require('../middleware/authMiddleware');
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -18,7 +17,8 @@ const requireAdmin = (req, res, next) => {
 };
 
 // Create User in own Org
-router.post('/users/create', authMiddleware, requireAdmin, async (req, res) => {
+// Note: Authentication is handled at mount level in index.js via authenticateJWT
+router.post('/users/create', requireAdmin, async (req, res) => {
     const { name, email, password, department, user_category } = req.body;
     const org_id = req.user.org_id;
 
@@ -44,7 +44,7 @@ router.post('/users/create', authMiddleware, requireAdmin, async (req, res) => {
 });
 
 // List Users in own Org
-router.get('/users', authMiddleware, requireAdmin, async (req, res) => {
+router.get('/users', requireAdmin, async (req, res) => {
     const org_id = req.user.org_id;
     try {
         const result = await pool.query(
