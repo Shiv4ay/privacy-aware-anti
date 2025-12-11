@@ -222,13 +222,26 @@ export default function Documents() {
                                     </td>
                                     <td className="p-4 max-w-md">
                                         <div className="text-xs text-gray-400 truncate">
-                                            {doc.metadata ? Object.entries(JSON.parse(doc.metadata)).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(', ') : 'No preview'}
+                                            {(() => {
+                                                try {
+                                                    const metadata = typeof doc.metadata === 'string'
+                                                        ? JSON.parse(doc.metadata)
+                                                        : doc.metadata;
+                                                    if (!metadata) return 'No preview';
+                                                    return Object.entries(metadata)
+                                                        .slice(0, 3)
+                                                        .map(([k, v]) => `${k}: ${v}`)
+                                                        .join(', ');
+                                                } catch (err) {
+                                                    return 'No preview';
+                                                }
+                                            })()}
                                         </div>
                                     </td>
                                     <td className="p-4">
                                         <span className={`px-2 py-1 rounded-full text-xs ${doc.status === 'completed' ? 'bg-green-500/10 text-green-400' :
-                                                doc.status === 'pending' ? 'bg-yellow-500/10 text-yellow-400' :
-                                                    'bg-gray-500/10 text-gray-400'
+                                            doc.status === 'pending' ? 'bg-yellow-500/10 text-yellow-400' :
+                                                'bg-gray-500/10 text-gray-400'
                                             }`}>
                                             {doc.status}
                                         </span>
@@ -262,8 +275,8 @@ export default function Documents() {
                                     onClick={() => handlePageChange(pagination.page - 1)}
                                     disabled={pagination.page === 1}
                                     className={`p-2 rounded-lg transition-colors ${pagination.page === 1
-                                            ? 'text-gray-600 cursor-not-allowed'
-                                            : 'text-white hover:bg-white/10'
+                                        ? 'text-gray-600 cursor-not-allowed'
+                                        : 'text-white hover:bg-white/10'
                                         }`}
                                 >
                                     <ChevronLeft className="w-5 h-5" />
@@ -277,8 +290,8 @@ export default function Documents() {
                                     onClick={() => handlePageChange(pagination.page + 1)}
                                     disabled={pagination.page === pagination.totalPages}
                                     className={`p-2 rounded-lg transition-colors ${pagination.page === pagination.totalPages
-                                            ? 'text-gray-600 cursor-not-allowed'
-                                            : 'text-white hover:bg-white/10'
+                                        ? 'text-gray-600 cursor-not-allowed'
+                                        : 'text-white hover:bg-white/10'
                                         }`}
                                 >
                                     <ChevronRight className="w-5 h-5" />
@@ -339,8 +352,8 @@ function renderPageNumbers(currentPage, totalPages, onPageChange) {
                 key={i}
                 onClick={() => onPageChange(i)}
                 className={`px-3 py-1 rounded-lg text-sm transition-colors ${i === currentPage
-                        ? 'bg-premium-gold text-black font-semibold'
-                        : 'text-white hover:bg-white/10'
+                    ? 'bg-premium-gold text-black font-semibold'
+                    : 'text-white hover:bg-white/10'
                     }`}
             >
                 {i}
