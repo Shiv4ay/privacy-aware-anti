@@ -221,6 +221,55 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 });
 
 /**
+ * GET /api/documents/stats
+ * Get document statistics for current user/org
+ */
+router.get('/stats', async (req, res) => {
+    try {
+        const userOrgId = req.user.organization || req.user.org_id;
+
+        if (!userOrgId && req.user.role !== 'super_admin') {
+            return res.status(400).json({ error: 'User has no organization' });
+        }
+
+        let query;
+        let params;
+
+        if (req.user.role === 'super_admin') {
+            query = 'SELECT COUNT(*) as count FROM documents';
+            params = [];
+        } else {
+            query = 'SELECT COUNT(*) as count FROM documents WHERE org_id = $1';
+            params = [userOrgId];
+        }
+
+        const result = await pool.query(query, params);
+
+        // Also try to get search count from audit_log
+        let searchCount = 0;
+        try {
+            const searchRes = await pool.query(
+                "SELECT COUNT(*) as count FROM audit_log WHERE action = 'search' AND user_id = $1",
+                [req.user.userId]
+            );
+            searchCount = parseInt(searchRes.rows[0]?.count || 0);
+        } catch (e) {
+            // Ignore audit log errors
+        }
+
+        res.json({
+            success: true,
+            total_documents: parseInt(result.rows[0].count),
+            total_searches: searchCount
+        });
+
+    } catch (error) {
+        console.error('[Documents] Stats error:', error);
+        res.status(500).json({ error: 'Failed to fetch stats' });
+    }
+});
+
+/**
  * GET /api/documents
  * List documents for current user's organization
  */

@@ -5,31 +5,54 @@ import { useDocuments } from '../contexts/DocumentContext';
 import { UploadCloud, File, X, FileText, Loader2, Shield, CheckCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+
 export default function DocumentUpload() {
-  const [file, setFile] = useState(null);
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  // ... existing code ...
+
+  useEffect(() => {
+    if (user) {
+      const canUpload = (user.role !== 'student' && user.role !== 'guest') || user.organization_type === 'Personal';
+      if (!canUpload) {
+        navigate('/dashboard');
+      }
+    }
+  }, [user, navigate]);
   const [loading, setLoading] = useState(false);
   const { addDocument } = useDocuments();
-  const navigate = useNavigate();
 
   const handleFileChange = (e) => {
+    console.log('[Upload] File input changed', e.target.files);
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      const maxSize = 10 * 1024 * 1024; // 10MB
+      console.log('[Upload] File selected:', selectedFile.name, selectedFile.size);
+      const maxSize = 50 * 1024 * 1024; // 50MB
       if (selectedFile.size > maxSize) {
-        toast.error('File size exceeds 10MB limit');
+        console.error('[Upload] File too large:', selectedFile.size);
+        toast.error('File size exceeds 50MB limit');
         setFile(null);
         return;
       }
       setFile(selectedFile);
+      console.log('[Upload] File set successfully');
       toast.success(`Selected: ${selectedFile.name}`);
+    } else {
+      console.log('[Upload] No file selected');
     }
   };
 
   const handleUpload = async (e) => {
     e.preventDefault();
-    if (!file) return;
+    console.log('[Upload] Form submitted, file:', file);
+    if (!file) {
+      console.error('[Upload] No file to upload');
+      toast.error('Please select a file first');
+      return;
+    }
 
     setLoading(true);
+    console.log('[Upload] Starting upload...');
 
     try {
       const fd = new FormData();
@@ -92,12 +115,22 @@ export default function DocumentUpload() {
 
         {/* Upload Area */}
         <form onSubmit={handleUpload}>
-          <div className="glass-panel-strong p-12 rounded-2xl border-2 border-dashed border-white/20 hover:border-premium-gold/40 transition-all duration-300 relative">
+          <div
+            className="glass-panel-strong p-12 rounded-2xl border-2 border-dashed border-white/20 hover:border-premium-gold/40 transition-all duration-300 relative cursor-pointer"
+            onClick={() => {
+              const input = document.getElementById('file-upload-input');
+              if (input && !loading) {
+                console.log('[Upload] Triggering file input click');
+                input.click();
+              }
+            }}
+          >
             <input
+              id="file-upload-input"
               type="file"
               onChange={handleFileChange}
-              accept=".pdf,.txt,.doc,.docx,.md"
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              accept=".pdf,.txt,.doc,.docx,.md,.csv,.html,.htm"
+              className="hidden"
               disabled={loading}
             />
 
@@ -109,12 +142,32 @@ export default function DocumentUpload() {
                 <h3 className="text-xl font-semibold text-white mb-2">
                   Drop files here or click to browse
                 </h3>
-                <p className="text-gray-400 mb-6">
-                  Support for PDF, TXT, DOC, DOCX, MD
+                <p className="text-gray-400 mb-8">
+                  Support for PDF, TXT, DOC, DOCX, MD, CSV, HTML
                 </p>
-                <div className="inline-flex items-center gap-2 text-sm text-gray-500">
+                <div className="flex justify-center mb-6">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      console.log('[Upload] Browse button clicked!');
+                      const input = document.getElementById('file-upload-input');
+                      console.log('[Upload] Input element:', input);
+                      if (input) {
+                        input.click();
+                        console.log('[Upload] File picker triggered');
+                      } else {
+                        console.error('[Upload] Input element not found!');
+                      }
+                    }}
+                    disabled={loading}
+                    className="px-8 py-4 bg-premium-gold text-black rounded-xl font-bold text-lg hover:bg-yellow-400 active:scale-95 transition-all duration-200 shadow-lg shadow-premium-gold/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    📁 Browse Files
+                  </button>
+                </div>
+                <div className="flex justify-center items-center gap-2 text-sm text-gray-500">
                   <FileText className="w-4 h-4" />
-                  <span>Maximum file size: 10MB</span>
+                  <span>Maximum file size: 50MB</span>
                 </div>
               </div>
             ) : (

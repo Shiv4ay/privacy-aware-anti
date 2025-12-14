@@ -40,7 +40,7 @@ const client = axios.create({
   baseURL,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 30000
+  timeout: 120000
 })
 
 /**

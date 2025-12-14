@@ -199,6 +199,11 @@ const orgsRoutes = require('./routes/orgs');
 app.use('/api/orgs', authenticateJWT, orgsRoutes);
 console.log('✅ Organizations Routes mounted at /api/orgs');
 
+// Chat & Search Routes (Phase 10 Fix)
+const chatRoutes = require('./routes/chat');
+app.use('/api', chatRoutes); // Mounts /search and /chat
+console.log('✅ Chat Routes mounted at /api');
+
 // try {
 //     const authRoutes = require('./routes/auth');
 //     app.use('/api/auth', (req, res, next) => { console.log('[DEBUG] Entering Auth Routes'); next(); }, authRoutes);
@@ -308,6 +313,9 @@ app.get('/api/download/:id', authenticateJWT, anomalyDetectionMiddleware, async 
     }
 });
 
+// 6. Search and Chat routes are now handled by routes/chat.js (mounted at line 204)
+// Commenting out duplicate inline definitions to prevent routing conflicts
+/*
 // 6. Search (ABAC Protected)
 app.post('/api/search', authenticateJWT, abacMiddleware('search'), anomalyDetectionMiddleware, async (req, res, next) => {
     try {
@@ -361,6 +369,7 @@ app.post('/api/chat', authenticateJWT, anomalyDetectionMiddleware, async (req, r
         next(error);
     }
 });
+*/
 
 // Error Handling
 app.use((error, req, res, next) => {

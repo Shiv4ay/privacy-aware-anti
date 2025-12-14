@@ -12,7 +12,8 @@ export default {
           DEFAULT: '#FFD86B',
           hover: '#E5BC43',
           dim: 'rgba(255, 216, 107, 0.1)',
-        }
+        },
+        'premium-gold': '#FFD86B',
       },
       fontFamily: {
         sans: ['Inter', 'sans-serif'], // Ensure Inter is used if available, or add to index.html
