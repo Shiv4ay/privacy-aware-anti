@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import client from '../api/index';
-import { Search as SearchIcon, Sparkles, Loader2, FileText, ChevronRight } from 'lucide-react';
+import { Search as SearchIcon, Sparkles, Loader2, FileText, ChevronRight, AlertTriangle, Shield, Eye, Lock } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+// Robust auth import handling to match other pages
 let useAuth;
 try {
   const mod = require('../contexts/AuthContext');
@@ -55,7 +56,7 @@ export default function Search() {
     }
 
     try {
-      const res = await client.post('/api/search', { query: q.trim() });
+      const res = await client.post('/search', { query: q.trim() });
 
       if (res.data?.query_redacted) {
         setPrivacyInfo(prev => ({
@@ -96,168 +97,167 @@ export default function Search() {
   return (
     <div className="min-h-screen animated-gradient-bg">
       <div className="max-w-6xl mx-auto px-6 py-12">
-        {/* Header */}
-        <div className="text-center mb-12 animate-fade-in">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-premium-gold/10 mb-4">
-            <Sparkles className="w-8 h-8 text-premium-gold" />
+
+        {/* Header Section */}
+        <div className="text-center mb-10 animate-fade-in">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-premium-gold/10 mb-6 shadow-lg backdrop-blur-sm border border-premium-gold/20">
+            <SearchIcon className="w-10 h-10 text-premium-gold" />
           </div>
-          <h1 className="text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-300">
+          <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-premium-gold to-white drop-shadow-sm">
             Semantic Search
           </h1>
-          <p className="text-gray-400">AI-powered document search with privacy protection</p>
+          <p className="text-gray-400 text-lg flex items-center justify-center gap-2 max-w-2xl mx-auto">
+            <Sparkles className="w-4 h-4 text-premium-gold" />
+            Find exactly what you need with AI-powered context understanding
+            <Sparkles className="w-4 h-4 text-premium-gold" />
+          </p>
         </div>
 
-        {/* Privacy Notice */}
-        <div className="glass-panel p-4 rounded-xl mb-6 animate-fade-in">
-          <div className="flex items-start gap-3">
-            <div className="w-5 h-5 mt-0.5 flex-shrink-0 text-blue-400">
-              <svg fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <div className="text-sm text-gray-300">
-              <strong className="text-white">Privacy & Security:</strong> Queries are automatically redacted for PII, hashed for audit logs,
-              and access is controlled by role-based permissions (RBAC).
-            </div>
+        {/* Privacy & Security Notice Pill */}
+        <div className="flex justify-center mb-8 animate-fade-in">
+          <div className="glass-panel px-4 py-2 rounded-full flex items-center gap-2 text-xs md:text-sm text-gray-300 border border-white/5 hover:bg-white/5 transition-colors">
+            <Shield className="w-4 h-4 text-blue-400" />
+            <span>Secure RBAC & PII Redaction Active</span>
           </div>
         </div>
 
-        {/* Primary Warnings */}
-        {privacyInfo && (
-          <div className="glass-panel-strong p-4 rounded-xl mb-6 border-yellow-500/20 animate-fade-in">
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 mt-0.5 flex-shrink-0 text-yellow-400">
-                <svg fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <div className="text-sm">
-                <p className="text-yellow-200">{privacyInfo.message}</p>
-                {privacyInfo.redacted && privacyInfo.original && (
-                  <div className="mt-2 space-y-1 text-xs text-gray-400">
-                    <div><strong className="text-gray-300">Original:</strong> {privacyInfo.original}</div>
-                    <div><strong className="text-gray-300">Redacted:</strong> {privacyInfo.redacted}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {rbacWarning && (
-          <div className="glass-panel-strong p-4 rounded-xl mb-6 border-red-500/20 animate-fade-in">
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 mt-0.5 flex-shrink-0 text-red-400">
-                <svg fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <div className="text-sm">
-                <p className="text-red-200"><strong>Access Denied:</strong> {rbacWarning.message}</p>
-                {rbacWarning.policy && (
-                  <div className="text-xs mt-1 text-gray-400">Policy ID: {rbacWarning.policy}</div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Search Form */}
-        <form onSubmit={doSearch} className="mb-8">
-          <div className="glass-panel-strong p-6 rounded-2xl">
-            <div className="flex gap-4">
-              <div className="relative flex-1">
-                <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+        {/* Search Input Area */}
+        <div className="max-w-3xl mx-auto mb-12 relative z-20">
+          <form onSubmit={doSearch} className="relative group">
+            <div className="absolute -inset-1 bg-gradient-to-r from-premium-gold/50 to-purple-600/50 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
+            <div className="relative glass-panel-strong p-2 rounded-2xl flex items-center gap-2 shadow-2xl">
+              <div className="flex-1 relative">
+                <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-premium-gold transition-colors" />
                 <input
+                  type="text"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search documents... (e.g., 'artificial intelligence', 'security policy')"
-                  className="glass-input w-full pl-12 pr-4 py-4 rounded-xl text-lg"
+                  placeholder="Search across all your documents..."
+                  className="w-full bg-transparent border-none text-white placeholder-gray-500 text-lg py-4 pl-12 pr-4 focus:ring-0 focus:outline-none"
                   disabled={loading}
                 />
               </div>
               <button
                 type="submit"
                 disabled={loading || !q.trim()}
-                className="btn-primary px-8 py-4 rounded-xl flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="bg-gradient-to-r from-premium-gold to-yellow-500 text-black font-bold py-3 px-8 rounded-xl hover:shadow-lg hover:shadow-premium-gold/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
-                {loading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Searching...
-                  </>
-                ) : (
-                  <>
-                    Search
-                    <ChevronRight className="w-5 h-5" />
-                  </>
-                )}
+                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ChevronRight className="w-5 h-5" />}
+                <span className="hidden md:inline">Search</span>
               </button>
             </div>
-          </div>
-        </form>
+          </form>
+        </div>
 
-        {/* Loading State */}
-        {loading && (
-          <div className="text-center py-12">
-            <div className="inline-flex gap-2 mb-3">
-              <div className="w-3 h-3 bg-premium-gold rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-              <div className="w-3 h-3 bg-premium-gold rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-              <div className="w-3 h-3 bg-premium-gold rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+        {/* Alerts & Warnings Area */}
+        <div className="max-w-3xl mx-auto space-y-4 mb-8">
+          {/* Privacy Alert */}
+          {privacyInfo && (
+            <div className="glass-panel border-l-4 border-l-yellow-500 p-4 rounded-xl animate-fade-in flex items-start gap-4 bg-yellow-500/5">
+              <div className="p-2 bg-yellow-500/20 rounded-lg">
+                <Eye className="w-5 h-5 text-yellow-500" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-yellow-100 mb-1">Privacy Notice</h3>
+                <p className="text-sm text-yellow-200/80 mb-2">{privacyInfo.message}</p>
+                {privacyInfo.redacted && (
+                  <div className="text-xs font-mono bg-black/30 p-2 rounded border border-white/10 text-gray-400">
+                    <span className="text-gray-500">Query Redacted:</span> {privacyInfo.redacted}
+                  </div>
+                )}
+              </div>
             </div>
-            <p className="text-gray-400">Searching through documents...</p>
+          )}
+
+          {/* RBAC Warning */}
+          {rbacWarning && (
+            <div className="glass-panel border-l-4 border-l-red-500 p-4 rounded-xl animate-fade-in flex items-start gap-4 bg-red-500/5">
+              <div className="p-2 bg-red-500/20 rounded-lg">
+                <Lock className="w-5 h-5 text-red-500" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-red-100 mb-1">Access Denied</h3>
+                <p className="text-sm text-red-200/80">{rbacWarning.message}</p>
+                {rbacWarning.policy && (
+                  <p className="text-xs mt-1 text-gray-500">Policy Violation: {rbacWarning.policy}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* General Error */}
+          {error && !rbacWarning && (
+            <div className="glass-panel border-l-4 border-l-red-500 p-4 rounded-xl animate-fade-in flex items-center gap-4 bg-red-500/5">
+              <AlertTriangle className="w-5 h-5 text-red-500" />
+              <p className="text-red-200">{error}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Helper State: Loading */}
+        {loading && (
+          <div className="text-center py-16 animate-fade-in">
+            <div className="relative w-16 h-16 mx-auto mb-6">
+              <div className="absolute inset-0 border-4 border-gray-700/50 rounded-full"></div>
+              <div className="absolute inset-0 border-4 border-premium-gold/50 rounded-full border-t-transparent animate-spin"></div>
+              <Sparkles className="absolute inset-0 m-auto w-6 h-6 text-premium-gold animate-pulse" />
+            </div>
+            <p className="text-gray-400 text-lg">Analyzing documents...</p>
           </div>
         )}
 
-        {/* Error State */}
-        {error && !rbacWarning && (
-          <div className="glass-panel-strong p-4 rounded-xl border-red-500/20 text-red-200 text-sm">
-            {error}
+        {/* Helper State: No Results */}
+        {!loading && results.length === 0 && q && !error && (
+          <div className="text-center py-16 animate-fade-in">
+            <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
+              <FileText className="w-10 h-10 text-gray-600" />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-300 mb-2">No results found</h3>
+            <p className="text-gray-500">Try adjusting your search terms or checking different keywords.</p>
           </div>
         )}
 
-        {/* No Results */}
-        {!loading && results.length === 0 && !error && q && (
-          <div className="text-center py-12">
-            <FileText className="w-16 h-16 text-gray-600 mx-auto mb-4" />
-            <p className="text-gray-400">No results found. Try a different query.</p>
-          </div>
-        )}
-
-        {/* Results */}
-        <div className="space-y-4 custom-scrollbar">
+        {/* Results Grid */}
+        <div className="space-y-4">
           {results.map((r, i) => (
-            <div key={i} className="premium-card animate-fade-in" style={{ animationDelay: `${i * 50}ms` }}>
-              <div className="flex justify-between items-start mb-3">
-                {r.source && (
-                  <div className="text-xs px-3 py-1 bg-premium-gold/10 rounded-full text-premium-gold font-medium">
-                    {r.source}
+            <div
+              key={i}
+              className="premium-card p-6 rounded-xl animate-fade-in group hover:bg-white/5 transition-all duration-300 border-l-2 border-l-transparent hover:border-l-premium-gold"
+              style={{ animationDelay: `${i * 100}ms` }}
+            >
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex gap-3 items-center">
+                  <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400 group-hover:text-blue-300 transition-colors">
+                    <FileText className="w-5 h-5" />
                   </div>
-                )}
-                {r.score && (
-                  <div className="text-xs text-gray-500 font-mono">
-                    {(r.score * 100).toFixed(1)}% match
-                  </div>
-                )}
-              </div>
-              <div className="text-gray-200 leading-relaxed mb-3">
-                {r.text || r.content || r.snippet || JSON.stringify(r)}
-              </div>
-              {r.id && (
-                <div className="text-xs text-gray-500 font-mono">
-                  ID: {r.id}
+                  {r.source && (
+                    <span className="px-3 py-1 text-xs font-medium rounded-full bg-white/5 border border-white/10 text-gray-300">
+                      {r.source}
+                    </span>
+                  )}
                 </div>
-              )}
+                {r.score && (
+                  <div className="flex items-center gap-1.5 px-3 py-1 bg-premium-gold/10 rounded-full border border-premium-gold/20">
+                    <Sparkles className="w-3 h-3 text-premium-gold" />
+                    <span className="text-xs font-bold text-premium-gold">{(r.score * 100).toFixed(0)}% Match</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="pl-14">
+                <p className="text-gray-200 leading-relaxed font-light text-lg">
+                  {r.text || r.content || r.snippet || JSON.stringify(r)}
+                </p>
+                {r.id && (
+                  <p className="mt-4 text-xs font-mono text-gray-600 group-hover:text-gray-500 transition-colors">
+                    ID: {r.id}
+                  </p>
+                )}
+              </div>
             </div>
           ))}
         </div>
 
-        {/* Results Summary */}
-        {results.length > 0 && (
-          <div className="mt-6 text-center text-sm text-gray-400">
-            Found <span className="text-premium-gold font-semibold">{results.length}</span> result{results.length !== 1 ? 's' : ''}
-          </div>
-        )}
       </div>
     </div>
   );

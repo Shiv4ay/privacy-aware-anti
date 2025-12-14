@@ -12,7 +12,7 @@ export default function Register() {
     password: '',
     org_id: '',
     department: '',
-    user_category: 'employee'
+    role: 'user'
   });
   const [organizations, setOrganizations] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -42,15 +42,41 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+
+    // 1. Prepare Payload
+    const payload = {
+      ...formData,
+      username: formData.name // Map frontend 'name' to backend 'username'
+    };
+
     try {
-      const res = await client.post('/auth/register', formData);
+      // 2. Register
+      const res = await client.post('/auth/register', payload);
+
       if (res.data.success) {
-        toast.success('Registration successful! Logging in...');
-        await login(formData.email, formData.password);
-        navigate('/dashboard', { replace: true });
+        toast.success('Account created! Logging you in...');
+
+        try {
+          // 3. Auto-Login
+          await login(formData.email, formData.password);
+
+          // 4. Redirect to Dashboard
+          navigate('/dashboard', { replace: true });
+        } catch (loginErr) {
+          console.error("Auto-login failed:", loginErr);
+          toast.error("Auto-login failed. Please sign in manually.");
+          navigate('/login');
+        }
       }
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Registration failed');
+      console.error("Registration error:", err);
+      // Handle 409 Conflict specifically
+      if (err.response && err.response.status === 409) {
+        toast.error("Account already exists. Redirecting to login...");
+        setTimeout(() => navigate('/login'), 1500);
+      } else {
+        toast.error(err.response?.data?.error || 'Registration failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -81,7 +107,7 @@ export default function Register() {
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className="glass-input w-full pl-10 pr-4 py-3 rounded-xl"
-                placeholder="John Doe"
+                placeholder="Enter your name"
                 required
               />
             </div>
@@ -96,7 +122,7 @@ export default function Register() {
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 className="glass-input w-full pl-10 pr-4 py-3 rounded-xl"
-                placeholder="name@company.com"
+                placeholder="Enter your email"
                 required
               />
             </div>
@@ -137,30 +163,35 @@ export default function Register() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-300 ml-1">Department</label>
-              <input
-                type="text"
-                value={formData.department}
-                onChange={(e) => setFormData({ ...formData, department: e.target.value })}
-                className="glass-input w-full px-4 py-3 rounded-xl"
-                placeholder="Engineering"
-              />
+          {organizations.find(o => parseInt(o.id) === parseInt(formData.org_id))?.type !== 'Personal' && (
+            <div className="grid grid-cols-2 gap-4 animate-fade-in">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-300 ml-1">Department</label>
+                <input
+                  type="text"
+                  value={formData.department}
+                  onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                  className="glass-input w-full px-4 py-3 rounded-xl"
+                  placeholder="Engineering"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-300 ml-1">Role</label>
+                <select
+                  value={formData.role}
+                  onChange={(e) => setFormData({ ...formData, role: e.target.value })}
+                  className="glass-input w-full px-4 py-3 rounded-xl appearance-none"
+                >
+                  <option value="user" className="text-black">Member</option>
+                  <option value="student" className="text-black">Student</option>
+                  <option value="faculty" className="text-black">Faculty</option>
+                  <option value="researcher" className="text-black">Researcher</option>
+                  <option value="employee" className="text-black">Employee</option>
+                  <option value="guest" className="text-black">Guest</option>
+                </select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-gray-300 ml-1">Category</label>
-              <select
-                value={formData.user_category}
-                onChange={(e) => setFormData({ ...formData, user_category: e.target.value })}
-                className="glass-input w-full px-4 py-3 rounded-xl appearance-none"
-              >
-                <option value="employee" className="text-black">Employee</option>
-                <option value="contractor" className="text-black">Contractor</option>
-                <option value="guest" className="text-black">Guest</option>
-              </select>
-            </div>
-          </div>
+          )}
 
           <button
             type="submit"

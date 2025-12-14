@@ -12,12 +12,12 @@ export default function Dashboard() {
   useEffect(() => {
     async function loadStats() {
       try {
-        const docsRes = await client.get('/documents').catch(() => null);
-        if (docsRes?.data) {
-          setStats(prev => ({
-            ...prev,
-            documents: Array.isArray(docsRes.data) ? docsRes.data.length : 0
-          }));
+        const statsRes = await client.get('/documents/stats').catch(() => null);
+        if (statsRes?.data?.success) {
+          setStats({
+            documents: statsRes.data.total_documents || 0,
+            searches: statsRes.data.total_searches || 0
+          });
         }
       } catch (err) {
         console.error('Failed to load stats', err);
@@ -40,22 +40,33 @@ export default function Dashboard() {
     <div className="space-y-8">
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Header - Removed as it's now in Navbar/Sidebar */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-white">Welcome back, {user?.name || 'User'}</h1>
-          <p className="text-gray-400 text-sm">
-            {user?.organization} • {user?.role}
+        {/* Stylish Header */}
+        <div className="mb-8">
+          <h1 className="text-4xl font-bold text-white mb-2">
+            <span className="bg-clip-text text-transparent bg-gradient-to-r from-premium-gold via-yellow-200 to-premium-gold">
+              Welcome Back, {user?.username ? user.username.split(' ')[0] : 'User'}
+            </span>
+          </h1>
+          <p className="text-gray-400 flex items-center gap-2">
+            <span className="px-3 py-1 bg-white/5 rounded-full text-xs uppercase tracking-wider font-semibold text-premium-gold border border-premium-gold/20">
+              {user?.role || 'Guest'}
+            </span>
+            <span className="text-gray-600">•</span>
+            <span>{user?.organization || 'Personal Workspace'}</span>
           </p>
         </div>
 
         {/* Quick Actions */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Link to="/documents/upload" className="glass-panel p-6 rounded-2xl hover:bg-white/5 transition-all group border border-white/5 hover:border-premium-gold/30">
-            <div className="w-12 h-12 bg-blue-500/10 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-              <UploadCloud className="w-6 h-6 text-blue-400" />
-            </div>
-            <h3 className="text-lg font-semibold text-white mb-1">Upload Document</h3>
-            <p className="text-sm text-gray-400">Securely upload and process new files</p>
-          </Link>
+          {((user?.role !== 'student' && user?.role !== 'guest') || user?.organization_type === 'Personal') && (
+            <Link to="/documents/upload" className="glass-panel p-6 rounded-2xl hover:bg-white/5 transition-all group border border-white/5 hover:border-premium-gold/30">
+              <div className="w-12 h-12 bg-blue-500/10 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <UploadCloud className="w-6 h-6 text-blue-400" />
+              </div>
+              <h3 className="text-lg font-semibold text-white mb-1">Upload Document</h3>
+              <p className="text-sm text-gray-400">Securely upload and process new files</p>
+            </Link>
+          )}
 
           <Link to="/search" className="glass-panel p-6 rounded-2xl hover:bg-white/5 transition-all group border border-white/5 hover:border-premium-gold/30">
             <div className="w-12 h-12 bg-green-500/10 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">

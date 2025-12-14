@@ -1,0 +1,4 @@
+name,department,email,role
+Test Student,Computer Science,test@example.com,Student
+John Doe,Electrical Engineering,john@example.com,Professor
+Jane Smith,Mathematics,jane@example.com,Student

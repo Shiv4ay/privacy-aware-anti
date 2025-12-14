@@ -574,7 +574,7 @@ Please provide a helpful and accurate response based on the context provided. If
                 "prompt": prompt,
                 "stream": False
             },
-            timeout=120
+            timeout=180  # Increased timeout for initial model loading
         )
         response.raise_for_status()
         # Many Ollama responses contain structured data — try multiple shapes
@@ -885,19 +885,62 @@ def process_document_job(job_data: Dict[str, Any]):
 
             temp_file_path = f"/tmp/{os.path.basename(file_key)}"
             
-            # Download file from MinIO
-            minio_client.fget_object(MINIO_BUCKET, file_key, temp_file_path)
-            logger.info(f"Downloaded {file_key} for processing")
-
-            # Extract text
-            text_content = extract_text_from_file(temp_file_path)
-            source_info = file_key
-            
-            # Clean up temp file immediately after extraction
             try:
-                os.remove(temp_file_path)
-            except:
-                pass
+                # Download file from MinIO
+                minio_client.fget_object(MINIO_BUCKET, file_key, temp_file_path)
+                logger.info(f"Downloaded {file_key} for processing")
+
+                # Extract text
+                text_content = extract_text_from_file(temp_file_path)
+                source_info = file_key
+                
+                # Clean up temp file immediately after extraction
+                try:
+                    os.remove(temp_file_path)
+                except:
+                    pass
+            except Exception as e:
+                # Fallback: check if metadata exists in DB (for CSV rows that are metadata-only)
+                logger.warning(f"MinIO download failed for {file_key}: {e}. Checking DB metadata...")
+                try:
+                    # Try to use document_id if available for faster lookup
+                    doc_id = job_data.get("document_id")
+                    conn = get_conn()
+                    with conn.cursor() as cur:
+                        if doc_id:
+                            cur.execute("SELECT metadata, filename FROM documents WHERE id = %s", (doc_id,))
+                        else:
+                            cur.execute("SELECT metadata, filename FROM documents WHERE file_key = %s", (file_key,))
+                        
+                        row = cur.fetchone()
+                        
+                        if row and row[0]:
+                            metadata = row[0]
+                            filename = row[1]
+                            logger.info(f"Found metadata for {file_key}, reconstructing content")
+                            
+                            if isinstance(metadata, str):
+                                import json
+                                metadata_dict = json.loads(metadata)
+                            else:
+                                metadata_dict = metadata
+                            
+                            # Construct meaningful text from metadata
+                            text_parts = [f"{k}: {v}" for k, v in metadata_dict.items() if v and k not in ['record_type', 'source', 'row_index']]
+                            text_content = " | ".join(text_parts)
+                            if not text_content:
+                                text_content = f"Document entry for {filename}"
+                            source_info = f"DB Metadata: {filename}"
+                        else:
+                            logger.error(f"No metadata found for {file_key}, cannot recover")
+                            return
+                except Exception as db_e:
+                    logger.error(f"Failed to fetch metadata fallback: {db_e}")
+                    # If we can't get metadata, we can't process
+                    return
+                finally:
+                    if conn:
+                        put_conn(conn)
 
         if not text_content:
             logger.warning(f"No text extracted from {source_info}")
@@ -1016,9 +1059,12 @@ def background_worker():
             time.sleep(5)
 
 def start_background_worker():
-    """Start background worker thread"""
-    worker_thread = Thread(target=background_worker, daemon=True)
-    worker_thread.start()
+    """Start background worker threads"""
+    # Start 4 concurrent workers to speed up processing
+    for i in range(4):
+        logger.info(f"Starting background worker thread {i+1}")
+        worker_thread = Thread(target=background_worker, daemon=True)
+        worker_thread.start()
 
 # -----------------------------
 # API Endpoints
@@ -2541,6 +2587,138 @@ async def trigger_ingestion(request: IngestionRequest, background_tasks: Backgro
     background_tasks.add_task(run_ingestion_task, request.org_id, request.type, request.url)
     return {"status": "accepted", "message": f"Ingestion started for {request.type}"}
 
+# ============================================================================
+# BATCH PROCESSING - Process pending documents with embeddings
+# ============================================================================
+
+@app.post("/process-batch")
+async def process_documents_batch(org_id: int, batch_size: int = 100, max_documents: Optional[int] = None):
+    """Process pending documents in batches to generate embeddings."""
+    logger.info(f"Batch processing started: org_id={org_id}, batch_size={batch_size}")
+    
+    total_processed = 0
+    total_failed = 0
+    failed_docs = []
+    
+    try:
+        collection = get_org_collection(org_id=org_id)
+        conn = get_conn()
+        cursor = conn.cursor()
+        
+        while True:
+            cursor.execute("""
+                SELECT id, filename, metadata, file_key
+                FROM documents
+                WHERE org_id = %s AND status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT %s
+            """, (org_id, batch_size))
+            
+            docs = cursor.fetchall()
+            if not docs:
+                break
+            
+            for doc_id, filename, metadata, file_key in docs:
+                try:
+                    if isinstance(metadata, str):
+                        import json
+                        metadata_dict = json.loads(metadata)
+                    else:
+                        metadata_dict = metadata or {}
+                    
+                    text_parts = [f"{k}: {v}" for k, v in metadata_dict.items() if v]
+                    text = " | ".join(text_parts) if text_parts else f"Document from {filename}"
+                    
+                    if len(text.strip()) < 3:
+                        failed_docs.append({"id": doc_id, "error": "No text"})
+                        total_failed += 1
+                        continue
+                    
+                    embedding = None
+                    for attempt in range(3):
+                        try:
+                            embedding = get_embedding(text)
+                            if embedding and len(embedding) > 0:
+                                break
+                        except Exception as e:
+                            if attempt < 2:
+                                import time
+                                time.sleep(2 ** attempt)
+                    
+                    if not embedding:
+                        failed_docs.append({"id": doc_id, "error": "Embedding failed"})
+                        total_failed += 1
+                        continue
+                    
+                    chromadb_add(
+                        ids=[f"doc_{org_id}_{doc_id}"],
+                        documents=[text],
+                        embeddings=[embedding],
+                        metadatas=[{"org_id": org_id, "doc_id": doc_id, "filename": filename}],
+                        collection=collection
+                    )
+                    
+                    cursor.execute("UPDATE documents SET status = 'processed' WHERE id = %s", (doc_id,))
+                    total_processed += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error processing doc {doc_id}: {e}")
+                    failed_docs.append({"id": doc_id, "error": str(e)})
+                    total_failed += 1
+            
+            conn.commit()
+            if max_documents and total_processed >= max_documents:
+                break
+        
+        cursor.close()
+        put_conn(conn)
+        
+        conn_check = get_conn()
+        cursor_check = conn_check.cursor()
+        cursor_check.execute("SELECT COUNT(*) FROM documents WHERE org_id = %s AND status = 'pending'", (org_id,))
+        remaining = cursor_check.fetchone()[0]
+        cursor_check.close()
+        put_conn(conn_check)
+        
+        return {
+            "success": True,
+            "processed": total_processed,
+            "failed": total_failed,
+            "remaining": remaining,
+            "progress_percentage": round((total_processed / (total_processed + remaining)) * 100, 2) if (total_processed + remaining) > 0 else 0
+        }
+    except Exception as e:
+        logger.exception(f"Batch processing error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/processing-status")
+async def get_processing_status(org_id: int):
+    """Get processing status for an organization."""
+    try:
+        conn = get_conn()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT status, COUNT(*) as count
+            FROM documents WHERE org_id = %s
+            GROUP BY status
+        """, (org_id,))
+        status_counts = {row[0]: row[1] for row in cursor.fetchall()}
+        cursor.close()
+        put_conn(conn)
+        
+        total = sum(status_counts.values())
+        completed = status_counts.get('processed', 0)
+        
+        return {
+            "org_id": org_id,
+            "total_documents": total,
+            "pending": status_counts.get('pending', 0),
+            "processed": completed,
+            "progress_percentage": round((completed / total) * 100, 2) if total > 0 else 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # -----------------------------
 # Startup
 # -----------------------------
@@ -2560,14 +2738,7 @@ def startup():
         logger.exception("ensure_database_tables failed during startup: %s", e)
 
     minio_client = get_minio_client()
-    # start_background_worker() # Assuming this function exists elsewhere or was removed/commented out in previous edits? 
-    # I see start_background_worker() call in the viewed file but not the definition. 
-    # I will assume it exists in the file (I only viewed chunks).
-    # Wait, I should check if start_background_worker is defined. 
-    # If not, I might break it. But I am just replacing the end of the file.
-    # The viewed file had start_background_worker() call in the commented out startup block.
-    # I will uncomment the startup block and assume start_background_worker is defined earlier in the file.
-    # Actually, looking at previous view, start_background_worker was called.
+    start_background_worker()
     
     # Log which embed models were configured
     logger.info("Configured Ollama embed models (in preference order): %s", OLLAMA_EMBED_MODELS)
