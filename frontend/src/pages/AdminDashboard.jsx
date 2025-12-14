@@ -1,64 +1,46 @@
 import React, { useState, useEffect } from 'react';
 import client from '../api/index';
 import { useAuth } from '../contexts/AuthContext';
-import { Users, UserPlus, Database, Globe, Activity, Search, RefreshCw, LogOut, FileText, Building2, TrendingUp } from 'lucide-react';
+import {
+    Users, UserPlus, Database, Activity, FileText,
+    Server, Shield, AlertTriangle, CheckCircle2, XCircle,
+    RefreshCw, Lock
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function AdminDashboard() {
-    const { user, logout } = useAuth();
+    const { user } = useAuth();
     const [users, setUsers] = useState([]);
     const [stats, setStats] = useState(null);
     const [uploads, setUploads] = useState([]);
+    const [systemHealth, setSystemHealth] = useState(null);
     const [loading, setLoading] = useState(true);
     const [newUser, setNewUser] = useState({ name: '', email: '', password: '', department: '', user_category: 'employee' });
 
     useEffect(() => {
-        fetchUsers();
-        fetchStats();
-        fetchUploads();
-
-        // Auto-refresh stats every 30 seconds
-        const interval = setInterval(() => {
-            fetchStats();
-            fetchUploads();
-        }, 30000);
-
+        fetchData();
+        const interval = setInterval(fetchData, 30000); // Refresh every 30s
         return () => clearInterval(interval);
     }, []);
 
-    const fetchUsers = async () => {
+    const fetchData = async () => {
         try {
-            const res = await client.get('/admin/users');
-            if (res.data.success) {
-                setUsers(res.data.users);
-            }
-        } catch (err) {
-            toast.error('Failed to fetch users');
-            console.error(err);
-        } finally {
+            const [usersRes, statsRes, uploadsRes, healthRes] = await Promise.all([
+                client.get('/admin/users').catch(e => ({ data: { users: [] } })),
+                client.get('/admin/stats').catch(e => ({ data: { stats: {} } })),
+                client.get('/admin/uploads').catch(e => ({ data: { uploads: [] } })),
+                client.get('/health').catch(e => ({ data: { services: {} } }))
+            ]);
+
+            if (usersRes?.data?.success) setUsers(usersRes.data.users || []);
+            if (statsRes?.data?.success) setStats(statsRes.data.stats || {});
+            if (uploadsRes?.data?.success) setUploads(uploadsRes.data.uploads || []);
+            setSystemHealth(healthRes?.data?.services || {});
+
             setLoading(false);
-        }
-    };
-
-    const fetchStats = async () => {
-        try {
-            const res = await client.get('/admin/stats');
-            if (res.data.success) {
-                setStats(res.data.stats);
-            }
         } catch (err) {
-            console.error('Failed to fetch stats:', err);
-        }
-    };
-
-    const fetchUploads = async () => {
-        try {
-            const res = await client.get('/admin/uploads');
-            if (res.data.success) {
-                setUploads(res.data.uploads);
-            }
-        } catch (err) {
-            console.error('Failed to fetch uploads:', err);
+            console.error(err);
+            setLoading(false);
         }
     };
 
@@ -69,167 +51,182 @@ export default function AdminDashboard() {
             if (res.data.success) {
                 toast.success('User created successfully');
                 setNewUser({ name: '', email: '', password: '', department: '', user_category: 'employee' });
-                fetchUsers();
+                fetchData();
             }
         } catch (err) {
             toast.error(err.response?.data?.error || 'Failed to create user');
         }
     };
 
-    const triggerIngestion = async (type, url = null) => {
-        try {
-            let res;
-            if (type === 'web') {
-                res = await client.post('/ingest/web', { url });
-            } else {
-                const dummyType = type.replace('dummy_', '');
-                res = await client.post(`/ingest/dummy/${dummyType}`);
-            }
-
-            if (res.data.success) {
-                toast.success(res.data.message);
-            }
-        } catch (err) {
-            console.error(err);
-            toast.error(err.response?.data?.error || 'Ingestion trigger failed');
-        }
-    };
-
     if (loading) return (
-        <div className="flex items-center justify-center min-h-screen bg-premium-black">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-premium-gold"></div>
+        <div className="flex items-center justify-center min-h-screen animated-gradient-bg">
+            <div className="relative">
+                <div className="w-16 h-16 border-4 border-premium-gold/30 rounded-full animate-spin border-t-premium-gold"></div>
+            </div>
         </div>
     );
 
     return (
-        <div className="space-y-8">
-            <div className="max-w-7xl mx-auto space-y-8">
-                {/* Header */}
-                <div className="flex justify-between items-center mb-6">
+        <div className="min-h-screen animated-gradient-bg p-6 lg:p-12">
+            <div className="max-w-7xl mx-auto space-y-8 relative z-10">
+
+                {/* Header Section */}
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 animate-fade-in">
                     <div>
-                        <h1 className="text-3xl font-bold text-white mb-1">Admin Dashboard</h1>
-                        <p className="text-gray-400">Manage organization: <span className="text-premium-gold font-semibold">{stats?.organizationName || user?.organization}</span></p>
+                        <div className="flex items-center gap-3 mb-2">
+                            <div className="p-2 bg-premium-gold/10 rounded-lg border border-premium-gold/20">
+                                <Shield className="w-6 h-6 text-premium-gold" />
+                            </div>
+                            <h1 className="text-3xl font-bold text-white bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
+                                Admin Command Center
+                            </h1>
+                        </div>
+                        <p className="text-gray-400 font-light">
+                            Managing <span className="text-premium-gold font-semibold">{stats?.organizationName || 'Global System'}</span>
+                        </p>
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={fetchData} className="glass-panel px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-white/10 transition-colors">
+                            <RefreshCw className="w-4 h-4 text-gray-300" />
+                            <span className="text-sm text-gray-300">Refresh Data</span>
+                        </button>
                     </div>
                 </div>
 
-                {/* Metrics Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* System Health Panel */}
+                <div className="glass-panel-strong p-6 rounded-2xl animate-fade-in border-t border-white/10 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                        <Server className="w-24 h-24 text-white" />
+                    </div>
+
+                    <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                        <Activity className="w-5 h-5 text-green-400" />
+                        System Health Status
+                    </h2>
+
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <HealthIndicator name="Database" status={systemHealth?.postgres} />
+                        <HealthIndicator name="Redis Cache" status={systemHealth?.redis} />
+                        <HealthIndicator name="AI Worker" status={systemHealth?.worker} />
+                        <HealthIndicator name="Storage" status={systemHealth?.minio} />
+                    </div>
+                </div>
+
+                {/* Core Metrics */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in" style={{ animationDelay: '100ms' }}>
                     <MetricCard
                         icon={FileText}
-                        title="Total Documents"
-                        value={stats?.totalDocuments?.toLocaleString() || '0'}
-                        subtitle={stats?.recentUploads ? `+${stats.recentUploads} new today` : 'No recent uploads'}
-                        iconColor="text-purple-400"
-                        bgColor="bg-purple-500/10"
-                    />
-                    <MetricCard
-                        icon={Database}
-                        title="Data Sources"
-                        value={stats?.dataSourcesCount || '0'}
-                        subtitle={`${stats?.dataSources?.length || 0} files uploaded`}
-                        iconColor="text-blue-400"
-                        bgColor="bg-blue-500/10"
+                        label="Total Documents"
+                        value={stats?.totalDocuments || 0}
+                        subtext={stats?.recentUploads ? `+${stats.recentUploads} in last 24h` : "No recent uploads"}
+                        color="text-purple-400"
+                        bg="bg-purple-500/10"
                     />
                     <MetricCard
                         icon={Users}
-                        title="Organization Users"
-                        value={stats?.totalUsers || '0'}
-                        subtitle="Active members"
-                        iconColor="text-green-400"
-                        bgColor="bg-green-500/10"
+                        label="Active Users"
+                        value={stats?.totalUsers || 0}
+                        subtext="Organization members"
+                        color="text-blue-400"
+                        bg="bg-blue-500/10"
+                    />
+                    <MetricCard
+                        icon={Database}
+                        label="Data Sources"
+                        value={stats?.dataSourcesCount || 0}
+                        subtext="Indexed files"
+                        color="text-premium-gold"
+                        bg="bg-premium-gold/10"
                     />
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    {/* Left Column: User Management */}
-                    <div className="lg:col-span-2 space-y-8">
-                        {/* Create User */}
-                        <div className="glass-panel p-6 rounded-2xl">
-                            <div className="flex items-center gap-3 mb-6">
-                                <div className="p-2 bg-premium-gold/10 rounded-lg">
-                                    <UserPlus className="w-6 h-6 text-premium-gold" />
-                                </div>
-                                <h2 className="text-xl font-semibold text-white">Add New User</h2>
-                            </div>
 
+                    {/* Left Col: User Management */}
+                    <div className="lg:col-span-2 space-y-6 animate-fade-in" style={{ animationDelay: '200ms' }}>
+
+                        {/* Add User Form */}
+                        <div className="glass-panel p-6 rounded-2xl">
+                            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                                <UserPlus className="w-5 h-5 text-premium-gold" />
+                                Provision New User
+                            </h3>
                             <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <input
-                                    type="text"
+                                    className="glass-input px-4 py-3 rounded-xl"
                                     placeholder="Full Name"
                                     value={newUser.name}
-                                    onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-                                    className="glass-input px-4 py-2 rounded-lg"
+                                    onChange={e => setNewUser({ ...newUser, name: e.target.value })}
                                     required
                                 />
                                 <input
-                                    type="email"
+                                    className="glass-input px-4 py-3 rounded-xl"
                                     placeholder="Email Address"
+                                    type="email"
                                     value={newUser.email}
-                                    onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                                    className="glass-input px-4 py-2 rounded-lg"
+                                    onChange={e => setNewUser({ ...newUser, email: e.target.value })}
                                     required
                                 />
                                 <input
-                                    type="password"
+                                    className="glass-input px-4 py-3 rounded-xl"
                                     placeholder="Password"
+                                    type="password"
                                     value={newUser.password}
-                                    onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                                    className="glass-input px-4 py-2 rounded-lg"
+                                    onChange={e => setNewUser({ ...newUser, password: e.target.value })}
                                     required
                                 />
                                 <input
-                                    type="text"
+                                    className="glass-input px-4 py-3 rounded-xl"
                                     placeholder="Department"
                                     value={newUser.department}
-                                    onChange={(e) => setNewUser({ ...newUser, department: e.target.value })}
-                                    className="glass-input px-4 py-2 rounded-lg"
+                                    onChange={e => setNewUser({ ...newUser, department: e.target.value })}
                                 />
                                 <select
+                                    className="glass-input px-4 py-3 rounded-xl md:col-span-2 text-gray-300"
                                     value={newUser.user_category}
-                                    onChange={(e) => setNewUser({ ...newUser, user_category: e.target.value })}
-                                    className="glass-input px-4 py-2 rounded-lg appearance-none md:col-span-2"
+                                    onChange={e => setNewUser({ ...newUser, user_category: e.target.value })}
                                 >
-                                    <option value="employee" className="text-black">Employee</option>
-                                    <option value="contractor" className="text-black">Contractor</option>
-                                    <option value="guest" className="text-black">Guest</option>
+                                    <option value="employee" className="bg-gray-900">Employee</option>
+                                    <option value="contractor" className="bg-gray-900">Contractor</option>
+                                    <option value="guest" className="bg-gray-900">Guest</option>
                                 </select>
-                                <button type="submit" className="md:col-span-2 btn-primary py-2 rounded-lg">
-                                    Create User
+                                <button type="submit" className="md:col-span-2 btn-primary py-3 rounded-xl font-semibold shadow-lg hover:shadow-premium-gold/20 transition-all">
+                                    Create User Account
                                 </button>
                             </form>
                         </div>
 
                         {/* User List */}
-                        <div className="glass-panel p-6 rounded-2xl">
-                            <div className="flex items-center gap-3 mb-6">
-                                <div className="p-2 bg-blue-500/10 rounded-lg">
-                                    <Users className="w-6 h-6 text-blue-400" />
-                                </div>
-                                <h2 className="text-xl font-semibold text-white">Organization Users</h2>
-                            </div>
-
+                        <div className="glass-panel p-6 rounded-2xl overflow-hidden">
+                            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                                <Users className="w-5 h-5 text-blue-400" />
+                                Users Directory
+                            </h3>
                             <div className="overflow-x-auto">
-                                <table className="w-full text-left">
+                                <table className="w-full text-left border-collapse">
                                     <thead>
-                                        <tr className="border-b border-gray-800 text-gray-400 text-sm">
-                                            <th className="p-3">Name</th>
-                                            <th className="p-3">Email</th>
-                                            <th className="p-3">Role</th>
-                                            <th className="p-3">Dept</th>
-                                            <th className="p-3">Status</th>
+                                        <tr className="text-gray-500 text-sm border-b border-white/5">
+                                            <th className="pb-3 pl-2">Name</th>
+                                            <th className="pb-3">Email</th>
+                                            <th className="pb-3">Role</th>
+                                            <th className="pb-3">Status</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="text-gray-300">
-                                        {users.map((u) => (
-                                            <tr key={u.id} className="border-b border-gray-800/50 hover:bg-white/5 transition-colors">
-                                                <td className="p-3 font-medium text-white">{u.name}</td>
-                                                <td className="p-3 text-sm text-gray-400">{u.email}</td>
-                                                <td className="p-3 capitalize text-sm">{u.role}</td>
-                                                <td className="p-3 text-sm">{u.department || '-'}</td>
-                                                <td className="p-3">
-                                                    <span className={`px-2 py-1 rounded-full text-xs ${u.is_active ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                                                        {u.is_active ? 'Active' : 'Inactive'}
+                                    <tbody className="text-sm">
+                                        {users.map((u, i) => (
+                                            <tr key={u.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                                                <td className="py-3 pl-2 font-medium text-gray-200 group-hover:text-white">{u.name || u.username}</td>
+                                                <td className="py-3 text-gray-400">{u.email}</td>
+                                                <td className="py-3">
+                                                    <span className="px-2 py-0.5 rounded text-xs bg-white/5 text-gray-300 border border-white/10 capitalize">
+                                                        {u.role}
                                                     </span>
+                                                </td>
+                                                <td className="py-3">
+                                                    {u.is_active ?
+                                                        <span className="text-green-400 flex items-center gap-1 text-xs"><CheckCircle2 className="w-3 h-3" /> Active</span> :
+                                                        <span className="text-red-400 flex items-center gap-1 text-xs"><XCircle className="w-3 h-3" /> Inactive</span>
+                                                    }
                                                 </td>
                                             </tr>
                                         ))}
@@ -237,127 +234,69 @@ export default function AdminDashboard() {
                                 </table>
                             </div>
                         </div>
+
                     </div>
 
-                    {/* Right Column: Ingestion & Logs */}
-                    <div className="space-y-8">
-                        {/* Ingestion Controls */}
-                        <div className="glass-panel p-6 rounded-2xl">
-                            <div className="flex items-center gap-3 mb-6">
-                                <div className="p-2 bg-purple-500/10 rounded-lg">
-                                    <Database className="w-6 h-6 text-purple-400" />
-                                </div>
-                                <h2 className="text-xl font-semibold text-white">Data Ingestion</h2>
-                            </div>
-
-                            <div className="space-y-4">
-                                <div>
-                                    <h3 className="text-sm font-medium text-gray-400 mb-3">Data Sources Status</h3>
-                                    <div className="space-y-2">
-                                        {stats?.dataSources?.map((source, idx) => (
-                                            <div key={idx} className="bg-white/5 p-3 rounded-lg border border-green-500/20">
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                                                        <span className="text-sm font-medium text-white">{source.filename}</span>
-                                                    </div>
-                                                    <span className="text-xs text-gray-400">{parseInt(source.count).toLocaleString()} docs</span>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        {(!stats?.dataSources || stats.dataSources.length === 0) && (
-                                            <div className="text-center text-gray-500 py-4 text-sm">
-                                                No data sources uploaded yet
-                                            </div>
-                                        )}
+                    {/* Right Col: Activity Log */}
+                    <div className="space-y-6 animate-fade-in" style={{ animationDelay: '300ms' }}>
+                        <div className="glass-panel p-6 rounded-2xl h-full">
+                            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                                <Database className="w-5 h-5 text-gray-400" />
+                                Data Ingestion Log
+                            </h3>
+                            <div className="space-y-4 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
+                                {uploads.map((up, i) => (
+                                    <div key={i} className="p-3 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
+                                        <div className="flex items-start justify-between mb-1">
+                                            <span className="text-gray-200 font-medium text-sm truncate max-w-[150px]">{up.filename}</span>
+                                            <span className="text-xs text-gray-500">{new Date(up.uploaded_at).toLocaleDateString()}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-xs text-gray-400">
+                                            <FileText className="w-3 h-3" />
+                                            {up.document_count} chunks processed
+                                        </div>
                                     </div>
-                                </div>
-
-                                <div>
-                                    <h3 className="text-sm font-medium text-gray-400 mb-3">Upload New Data</h3>
-                                    <div className="text-center py-4 bg-white/5 rounded-lg border border-dashed border-gray-700">
-                                        <Database className="w-8 h-8 text-gray-500 mx-auto mb-2" />
-                                        <p className="text-xs text-gray-500">Use Documents page to upload</p>
+                                ))}
+                                {uploads.length === 0 && (
+                                    <div className="text-center py-8 text-gray-500 text-sm">
+                                        No recent uploads found.
                                     </div>
-                                </div>
+                                )}
                             </div>
                         </div>
-
-                        {/* Recent Uploads Activity */}
-                        <ActivityLogs uploads={uploads} />
                     </div>
+
                 </div>
             </div>
         </div>
     );
 }
 
-// Metric Card Component
-function MetricCard({ icon: Icon, title, value, subtitle, iconColor, bgColor }) {
+function MetricCard({ icon: Icon, label, value, subtext, color, bg }) {
     return (
-        <div className="glass-panel p-6 rounded-2xl">
-            <div className="flex items-center gap-4">
-                <div className={`p-3 ${bgColor} rounded-xl`}>
-                    <Icon className={`w-6 h-6 ${iconColor}`} />
+        <div className="glass-panel p-6 rounded-2xl hover:scale-[1.02] transition-transform duration-300">
+            <div className="flex items-start justify-between mb-4">
+                <div className={`p-3 rounded-xl ${bg}`}>
+                    <Icon className={`w-6 h-6 ${color}`} />
                 </div>
-                <div className="flex-1">
-                    <p className="text-sm text-gray-400 mb-1">{title}</p>
-                    <p className="text-2xl font-bold text-white">{value}</p>
-                    <p className="text-xs text-gray-500 mt-1">{subtitle}</p>
-                </div>
+                {/* <div className="text-xs font-mono text-gray-500 bg-black/20 px-2 py-1 rounded">Global</div> */}
             </div>
+            <div className="text-3xl font-bold text-white mb-1">{value.toLocaleString()}</div>
+            <div className="text-sm text-gray-400 font-medium mb-1">{label}</div>
+            <div className="text-xs text-gray-500">{subtext}</div>
         </div>
     );
 }
 
-// Activity Logs Component
-function ActivityLogs({ uploads }) {
-    const formatTimeAgo = (dateString) => {
-        const date = new Date(dateString);
-        const now = new Date();
-        const diffMs = now - date;
-        const diffMins = Math.floor(diffMs / 60000);
-        const diffHours = Math.floor(diffMs / 3600000);
-
-        if (diffMins < 60) return `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
-        if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-        return date.toLocaleDateString();
-    };
-
+function HealthIndicator({ name, status }) {
     return (
-        <div className="glass-panel p-6 rounded-2xl h-[400px] flex flex-col">
-            <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 bg-green-500/10 rounded-lg">
-                    <Activity className="w-6 h-6 text-green-400" />
-                </div>
-                <h2 className="text-xl font-semibold text-white">Activity Logs</h2>
-            </div>
-
-            <div className="overflow-y-auto flex-1 pr-2 custom-scrollbar">
-                <div className="space-y-3">
-                    {uploads.map((upload, idx) => (
-                        <div key={idx} className="bg-white/5 p-3 rounded-lg border border-white/5 text-sm hover:bg-white/10 transition-colors">
-                            <div className="flex items-start gap-2">
-                                <div className="w-2 h-2 bg-green-400 rounded-full mt-1.5"></div>
-                                <div className="flex-1">
-                                    <div className="flex justify-between items-start mb-1">
-                                        <span className="font-medium text-white">{upload.filename}</span>
-                                        <span className="text-xs text-gray-500">{formatTimeAgo(upload.uploaded_at)}</span>
-                                    </div>
-                                    <div className="text-xs text-gray-400">
-                                        {parseInt(upload.document_count).toLocaleString()} documents uploaded
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-                    {uploads.length === 0 && (
-                        <div className="text-center text-gray-500 py-8">
-                            <Database className="w-12 h-12 text-gray-700 mx-auto mb-2" />
-                            <p>No activity recorded</p>
-                        </div>
-                    )}
-                </div>
+        <div className="bg-black/20 rounded-xl p-3 flex items-center justify-between border border-white/5">
+            <span className="text-sm text-gray-300 font-medium">{name}</span>
+            <div className="flex items-center gap-1.5">
+                <div className={`w-2 h-2 rounded-full ${status ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+                <span className={`text-xs font-bold ${status ? 'text-green-500' : 'text-red-500'}`}>
+                    {status ? 'OK' : 'DOWN'}
+                </span>
             </div>
         </div>
     );

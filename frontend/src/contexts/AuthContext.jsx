@@ -39,7 +39,8 @@ export function AuthProvider({ children }) {
           email: userData.email,
           role: userData.role,
           // Map org_id to organization for consistency
-          organization: userData.organization || userData.org_id
+          organization: userData.organization || userData.org_id,
+          organization_type: userData.organization_type
         });
       } catch (error) {
         console.error('[AuthContext] Failed to load user:', error.message);
@@ -79,7 +80,8 @@ export function AuthProvider({ children }) {
     // Set user state with organization mapping
     const user = {
       ...userData,
-      organization: userData.org_id || userData.organization
+      organization: userData.org_id || userData.organization,
+      organization_type: userData.organization_type
     };
     setUser(user);
     console.log('[AuthContext] Login successful:', user.email, 'Org:', user.organization);
