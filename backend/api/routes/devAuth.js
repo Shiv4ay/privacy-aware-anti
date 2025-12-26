@@ -74,6 +74,9 @@ router.post('/dev/token', (req, res) => {
     username,
     roles,
     role,
+    role,
+    org_id: requestedUser.org_id || 1, // Default to Org 1 for dev
+    organizationId: requestedUser.org_id || 1,
     type: 'access'
   };
 

@@ -15,8 +15,8 @@ const crypto = require('crypto');
 // Load from environment
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || JWT_SECRET;
-const ACCESS_TOKEN_EXPIRY = '15m';
-const REFRESH_TOKEN_EXPIRY = '7d';
+const ACCESS_TOKEN_EXPIRY = '4h'; // Extended for better UX - was 15m
+const REFRESH_TOKEN_EXPIRY = '7d'; // Unchanged - secure balance
 
 if (!JWT_SECRET) {
     throw new Error('JWT_SECRET environment variable is required');
@@ -147,7 +147,7 @@ function generateTokenPair(user) {
     return {
         accessToken: generateAccessToken(user),
         refreshToken: generateRefreshToken(user),
-        expiresIn: 15 * 60, // 15 minutes in seconds
+        expiresIn: 4 * 60 * 60, // 4 hours in seconds
         tokenType: 'Bearer'
     };
 }

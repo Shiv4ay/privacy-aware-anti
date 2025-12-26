@@ -126,10 +126,18 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             }];
 
         } else if (fileExt === '.pdf') {
-            // PDF handling would go here (simplified for now)
-            return res.status(400).json({
-                error: 'PDF support coming soon. Please use CSV, TXT, or HTML for now.'
-            });
+            // Basic PDF support - treat as binary document
+            // Text extraction can be added later
+            const base64Content = file.buffer.toString('base64');
+            documents = [{
+                content: `PDF Document: ${fileName} (${(file.size / 1024).toFixed(2)} KB)`,
+                metadata: {
+                    record_type: record_type || 'pdf_document',
+                    source: source_name || fileName,
+                    file_type: 'pdf',
+                    base64_content: base64Content.substring(0, 100) // Store first 100 chars as preview
+                }
+            }];
         }
 
         if (documents.length === 0) {
@@ -204,11 +212,32 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 
         console.log(`[Documents] Successfully uploaded ${insertedDocuments.length} documents to org ${organization_id}`);
 
+        // Trigger automatic processing via worker
+        try {
+            const workerUrl = process.env.WORKER_URL || 'http://worker:8001';
+            console.log(`[Documents] Triggering auto-processing for org ${organization_id}`);
+
+            // Call worker's process-batch endpoint asynchronously (don't wait for completion)
+            const axios = require('axios');
+            axios.post(`${workerUrl}/process-batch?org_id=${organization_id}&batch_size=${insertedDocuments.length}`)
+                .then(response => {
+                    console.log(`[Documents] Auto-processing completed:`, response.data);
+                })
+                .catch(err => {
+                    console.error(`[Documents] Auto-processing failed:`, err.message);
+                    // Don't fail the upload if processing fails
+                });
+        } catch (procError) {
+            console.error('[Documents] Failed to trigger auto-processing:', procError.message);
+            // Continue anyway - user can process manually
+        }
+
         res.json({
             success: true,
             message: `Successfully uploaded ${insertedDocuments.length} document(s)`,
             documents: insertedDocuments,
-            organization_id: organization_id
+            organization_id: organization_id,
+            processing_status: 'triggered' // Indicate processing was started
         });
 
     } catch (error) {
@@ -287,7 +316,7 @@ router.get('/', async (req, res) => {
 
         if (req.user.role === 'super_admin') {
             query = `
-                SELECT id, filename, created_at, uploaded_by, file_size, org_id
+                SELECT id, filename, created_at, uploaded_by, file_size, org_id, status, processed_at
                 FROM documents
                 ORDER BY created_at DESC
                 LIMIT 100
@@ -295,7 +324,7 @@ router.get('/', async (req, res) => {
             params = [];
         } else {
             query = `
-                SELECT id, filename, created_at, uploaded_by, file_size
+                SELECT id, filename, created_at, uploaded_by, file_size, status, processed_at
                 FROM documents
                 WHERE org_id = $1
                 ORDER BY created_at DESC
@@ -314,6 +343,83 @@ router.get('/', async (req, res) => {
     } catch (error) {
         console.error('[Documents] List error:', error);
         res.status(500).json({ error: 'Failed to list documents' });
+    }
+});
+
+/**
+ * DELETE /api/documents/:id
+ * Delete a document by ID
+ */
+router.delete('/:id', async (req, res) => {
+    try {
+        const docId = parseInt(req.params.id);
+        const userId = req.user?.id;
+        const userOrgId = req.user?.organization;
+        const userRole = req.user?.role;
+
+        if (!userId) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        // Get document details first to verify ownership
+        const docQuery = await pool.query(
+            'SELECT id, filename, org_id, file_key FROM documents WHERE id = $1',
+            [docId]
+        );
+
+        if (docQuery.rows.length === 0) {
+            return res.status(404).json({ error: 'Document not found' });
+        }
+
+        const document = docQuery.rows[0];
+
+        // Check permissions - only allow delete if:
+        // 1. User is super_admin, OR
+        // 2. Document belongs to user's organization
+        if (userRole !== 'super_admin' && document.org_id !== userOrgId) {
+            return res.status(403).json({ error: 'Forbidden - cannot delete documents from other organizations' });
+        }
+
+        // Delete from ChromaDB vector store if processed
+        try {
+            const workerUrl = process.env.WORKER_URL || 'http://worker:8001';
+            const vectorId = `doc_${document.org_id}_${docId}`;
+
+            console.log(`[Documents] Attempting to delete vector ${vectorId} from ChromaDB`);
+
+            // Call worker to delete from vector store (best effort)
+            axios.delete(`${workerUrl}/vectors/${vectorId}?org_id=${document.org_id}`)
+                .then(() => console.log(`[Documents] Vector ${vectorId} deleted from ChromaDB`))
+                .catch(err => console.error(`[Documents] Failed to delete vector: ${err.message}`));
+        } catch (err) {
+            console.error('[Documents] Error calling worker for vector deletion:', err.message);
+            // Continue with database deletion even if vector deletion fails
+        }
+
+        // Delete from database
+        const deleteResult = await pool.query(
+            'DELETE FROM documents WHERE id = $1 RETURNING id, filename',
+            [docId]
+        );
+
+        if (deleteResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Document not found' });
+        }
+
+        console.log(`[Documents] Deleted document ${docId}: ${deleteResult.rows[0].filename}`);
+
+        res.json({
+            success: true,
+            message: `Document "${deleteResult.rows[0].filename}" deleted successfully`,
+            deleted_id: docId
+        });
+
+    } catch (error) {
+        console.error('[Documents] Delete error:', error);
+        res.status(500).json({
+            error: 'Failed to delete document',
+            details: error.message
+        });
     }
 });
 

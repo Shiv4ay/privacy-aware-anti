@@ -111,18 +111,18 @@ try {
     }
 }
 
-if ($AppendNotes) {
-    $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    if ($succeeded) {
-        $note = "## Upload note – $stamp`n- Upload succeeded: $FilePath`n- Endpoint: $uploadUrl`n"
-        $note | Out-File -FilePath .\fixed_notes.md -Encoding utf8 -Append
-        Write-Host "`nAppended note to fixed_notes.md"
-    } else {
-        $note = "## Upload note – $stamp`n- Upload FAILED for: $FilePath`n- Endpoint: $uploadUrl`n"
-        $note | Out-File -FilePath .\fixed_notes.md -Encoding utf8 -Append
-        Write-Host "`nAppended failure note to fixed_notes.md"
-    }
-}
+# if ($AppendNotes) {
+#    $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+#    if ($succeeded) {
+#        $note = "## Upload note – $stamp`n- Upload succeeded: $FilePath`n- Endpoint: $uploadUrl`n"
+#        $note | Out-File -FilePath .\fixed_notes.md -Encoding utf8 -Append
+#        Write-Host "`nAppended note to fixed_notes.md"
+#    } else {
+#        $note = "## Upload note – $stamp`n- Upload FAILED for: $FilePath`n- Endpoint: $uploadUrl`n"
+#        $note | Out-File -FilePath .\fixed_notes.md -Encoding utf8 -Append
+#        Write-Host "`nAppended failure note to fixed_notes.md"
+#    }
+# }
 
 Write-Host "`n=== Immediate checks if you still see Unauthorized ==="
 Write-Host "1) Inspect the token you generated:"

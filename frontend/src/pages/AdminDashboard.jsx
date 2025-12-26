@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import client from '../api/index';
 import { useAuth } from '../contexts/AuthContext';
 import {
     Users, UserPlus, Database, Activity, FileText,
     Server, Shield, AlertTriangle, CheckCircle2, XCircle,
-    RefreshCw, Lock
+    RefreshCw, Lock, Trash2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import DataUpload from '../components/DataUpload';
 
 export default function AdminDashboard() {
     const { user } = useAuth();
@@ -17,7 +18,7 @@ export default function AdminDashboard() {
     const [loading, setLoading] = useState(true);
     const [newUser, setNewUser] = useState({ name: '', email: '', password: '', department: '', user_category: 'employee' });
 
-    useEffect(() => {
+    React.useEffect(() => {
         fetchData();
         const interval = setInterval(fetchData, 30000); // Refresh every 30s
         return () => clearInterval(interval);
@@ -58,6 +59,24 @@ export default function AdminDashboard() {
         }
     };
 
+    const handleDeleteDocument = async (docId, filename) => {
+        if (!window.confirm(`Are you sure you want to delete "${filename}"? This action cannot be undone.`)) {
+            return;
+        }
+
+        try {
+            const res = await client.delete(`/documents/${docId}`);
+            if (res.data.success) {
+                toast.success(res.data.message || 'Document deleted successfully');
+                // Refresh data
+                fetchData();
+            }
+        } catch (err) {
+            console.error('Delete error:', err);
+            toast.error(err.response?.data?.error || 'Failed to delete document');
+        }
+    };
+
     if (loading) return (
         <div className="flex items-center justify-center min-h-screen animated-gradient-bg">
             <div className="relative">
@@ -67,8 +86,8 @@ export default function AdminDashboard() {
     );
 
     return (
-        <div className="min-h-screen animated-gradient-bg p-6 lg:p-12">
-            <div className="max-w-7xl mx-auto space-y-8 relative z-10">
+        <div className="min-h-screen animated-gradient-bg p-6">
+            <div className="max-w-7xl mx-auto space-y-6 relative z-10">
 
                 {/* Header Section */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 animate-fade-in">
@@ -113,7 +132,7 @@ export default function AdminDashboard() {
                 </div>
 
                 {/* Core Metrics */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in" style={{ animationDelay: '100ms' }}>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in" style={{ animationDelay: '100ms' }}>
                     <MetricCard
                         icon={FileText}
                         label="Total Documents"
@@ -140,10 +159,10 @@ export default function AdminDashboard() {
                     />
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
                     {/* Left Col: User Management */}
-                    <div className="lg:col-span-2 space-y-6 animate-fade-in" style={{ animationDelay: '200ms' }}>
+                    <div className="lg:col-span-2 space-y-4 animate-fade-in" style={{ animationDelay: '200ms' }}>
 
                         {/* Add User Form */}
                         <div className="glass-panel p-6 rounded-2xl">
@@ -235,25 +254,45 @@ export default function AdminDashboard() {
                             </div>
                         </div>
 
+                        {/* Data Upload Section - Hidden for Students */}
+                        {user?.role !== 'student' && (
+                            <div className="glass-panel p-6 rounded-2xl">
+                                <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                                    <Database className="w-5 h-5 text-premium-gold" />
+                                    Upload New Data
+                                </h3>
+                                <DataUpload onUploadComplete={fetchData} />
+                            </div>
+                        )}
+
                     </div>
 
                     {/* Right Col: Activity Log */}
-                    <div className="space-y-6 animate-fade-in" style={{ animationDelay: '300ms' }}>
+                    <div className="space-y-4 animate-fade-in" style={{ animationDelay: '300ms' }}>
                         <div className="glass-panel p-6 rounded-2xl h-full">
                             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
                                 <Database className="w-5 h-5 text-gray-400" />
                                 Data Ingestion Log
                             </h3>
-                            <div className="space-y-4 max-h-[600px] overflow-y-auto custom-scrollbar pr-2">
+                            <div className="space-y-3 max-h-[500px] overflow-y-auto custom-scrollbar pr-2">
                                 {uploads.map((up, i) => (
-                                    <div key={i} className="p-3 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
+                                    <div key={up.id || i} className="p-3 rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 transition-colors">
                                         <div className="flex items-start justify-between mb-1">
                                             <span className="text-gray-200 font-medium text-sm truncate max-w-[150px]">{up.filename}</span>
-                                            <span className="text-xs text-gray-500">{new Date(up.uploaded_at).toLocaleDateString()}</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-gray-500">{new Date(up.uploaded_at || up.created_at).toLocaleDateString()}</span>
+                                                <button
+                                                    onClick={() => handleDeleteDocument(up.id, up.filename)}
+                                                    className="p-1 text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                                                    title="Delete document"
+                                                >
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-2 text-xs text-gray-400">
                                             <FileText className="w-3 h-3" />
-                                            {up.document_count} chunks processed
+                                            {up.document_count || 'Processing...'}
                                         </div>
                                     </div>
                                 ))}

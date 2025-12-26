@@ -67,33 +67,29 @@ client.interceptors.request.use(
     try {
       const token = localStorage.getItem('accessToken') || localStorage.getItem('token');
 
-      // PHASE 2: Strict Client-Side Token Validation
+      // PHASE 2: Client-Side Token Validation (Relaxed for refresh)
       if (token) {
         const payload = parseJwt(token);
 
-        // If token is malformed OR missing "type: access", force logout immediately
-        if (!payload || payload.type !== 'access') {
-          console.warn('[Security] Invalid token format detected. Forcing logout.');
+        // Only check if token is completely malformed, not the type
+        // Let backend handle type validation and trigger refresh if needed
+        if (!payload) {
+          console.warn('[Security] Malformed token detected. Clearing...');
           localStorage.removeItem('accessToken');
           localStorage.removeItem('refreshToken');
           localStorage.removeItem('token');
-          delete client.defaults.headers.common['Authorization'];
-          window.location.href = '/login';
-          // Cancel request
-          const controller = new AbortController();
-          cfg.signal = controller.signal;
-          controller.abort('Invalid token format');
-          return cfg;
-        }
+          // Don't redirect here - let the response interceptor handle it
+        } else {
+          // Token is parseable, attach it
+          const activeOrg = localStorage.getItem('active_org');
 
-        const activeOrg = localStorage.getItem('active_org');
+          cfg.headers = cfg.headers || {};
+          cfg.headers.Authorization = `Bearer ${token}`;
 
-        cfg.headers = cfg.headers || {};
-        cfg.headers.Authorization = `Bearer ${token}`;
-
-        // PHASE 11: Context Propagation
-        if (activeOrg) {
-          cfg.headers['X-Organization'] = activeOrg;
+          // PHASE 11: Context Propagation
+          if (activeOrg) {
+            cfg.headers['X-Organization'] = activeOrg;
+          }
         }
       }
     } catch (err) {
@@ -106,23 +102,100 @@ client.interceptors.request.use(
 );
 
 /**
- * Response interceptor: handle 401 unauthorized
+ * Response interceptor: handle 401 unauthorized with automatic token refresh
  */
+let isRefreshing = false;
+let failedQueue = [];
+
+const processQueue = (error, token = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
 client.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Clear auth data on 401
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-      localStorage.removeItem('token');
-      delete client.defaults.headers.common['Authorization'];
+  async (error) => {
+    const originalRequest = error.config;
 
-      // Redirect to login if not already there
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+    // If 401 and we haven't tried refreshing yet
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        // Another request is already refreshing, queue this one
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        }).then(token => {
+          originalRequest.headers['Authorization'] = 'Bearer ' + token;
+          return client(originalRequest);
+        }).catch(err => {
+          return Promise.reject(err);
+        });
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
+      const refreshToken = localStorage.getItem('refreshToken');
+
+      if (!refreshToken) {
+        // No refresh token, must login
+        isRefreshing = false;
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('token');
+        delete client.defaults.headers.common['Authorization'];
+
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+        return Promise.reject(error);
+      }
+
+      try {
+        // Try to refresh the token
+        const response = await axios.post(`${baseURL}/simple-auth/refresh`, {
+          refreshToken
+        });
+
+        const { accessToken, refreshToken: newRefreshToken } = response.data;
+
+        // Store new tokens
+        localStorage.setItem('accessToken', accessToken);
+        localStorage.setItem('token', accessToken); // Backward compat
+        if (newRefreshToken) {
+          localStorage.setItem('refreshToken', newRefreshToken);
+        }
+
+        // Update default header
+        client.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
+        originalRequest.headers['Authorization'] = `Bearer ${accessToken}`;
+
+        processQueue(null, accessToken);
+        isRefreshing = false;
+
+        // Retry original request
+        return client(originalRequest);
+      } catch (refreshError) {
+        processQueue(refreshError, null);
+        isRefreshing = false;
+
+        // Refresh failed, must login
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('token');
+        delete client.defaults.headers.common['Authorization'];
+
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+        return Promise.reject(refreshError);
       }
     }
+
     return Promise.reject(error);
   }
 );

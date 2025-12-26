@@ -1,0 +1,209 @@
+WARNING:app:No embed test passed; falling back to first matched env candidate: nomic-embed-text
+INFO:     127.0.0.1:40218 - "GET /health HTTP/1.1" 200 OK
+INFO:app:Configured Ollama embed model (enforced single): nomic-embed-text
+INFO:     172.18.0.8:38828 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59430 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:37062 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41552 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:58532 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43114 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:59518 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43298 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:47850 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39316 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:43424 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60672 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:36042 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:53196 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56826 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:54514 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43226 - "GET /health HTTP/1.1" 200 OK
+INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+INFO:httpx:HTTP Request: GET http://chromadb:8000/api/v2/auth/identity "HTTP/1.1 200 OK"
+INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+INFO:httpx:HTTP Request: GET http://chromadb:8000/api/v2/tenants/default_tenant "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET http://chromadb:8000/api/v2/tenants/default_tenant/databases/default_database "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: POST http://chromadb:8000/api/v2/tenants/default_tenant/databases/default_database/collections "HTTP/1.1 200 OK"
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:app:Privacy-Aware RAG Worker starting...
+INFO:app:Initialized DB connection pool (min=1 max=6)
+INFO:     172.18.0.8:58202 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34172 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:52282 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35514 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:48838 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50806 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:51996 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54330 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:52004 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:38084 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55128 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:59082 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59312 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:47124 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38112 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:36878 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39892 - "GET /health HTTP/1.1" 200 OK
+INFO:app:Database tables ensured
+INFO:app:Starting background worker thread 1
+INFO:app:Starting background worker thread 2
+INFO:app:Starting background worker thread 3
+INFO:app:Starting background worker thread 4
+INFO:app:Configured Ollama embed models (in preference order): ['nomic-embed-text']
+INFO:app:Worker service initialized successfully
+INFO:app:Privacy-Aware RAG Worker starting...
+INFO:app:Database tables ensured
+INFO:app:Background worker started
+INFO:app:Database tables ensured
+INFO:app:Background worker started
+INFO:app:Database tables ensured
+INFO:app:Database tables ensured
+INFO:app:Background worker started
+INFO:app:Starting background worker thread 1
+INFO:app:Starting background worker thread 2
+INFO:app:Starting background worker thread 3
+INFO:app:Starting background worker thread 4
+INFO:app:Database tables ensured
+INFO:app:Background worker started
+INFO:app:Database tables ensured
+INFO:app:Configured Ollama embed models (in preference order): ['nomic-embed-text']
+INFO:app:Worker service initialized successfully
+INFO:     Application startup complete.
+INFO:app:Background worker started
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+INFO:app:Database tables ensured
+INFO:app:Background worker started
+INFO:app:Database tables ensured
+INFO:app:Background worker started
+INFO:app:Database tables ensured
+INFO:app:Background worker started
+INFO:     172.18.0.8:34882 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33412 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:51286 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40528 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:51296 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:49670 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51454 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:53038 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38928 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:58674 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53822 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:52216 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40340 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:60360 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52368 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:39092 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:54440 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59480 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:55766 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45490 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:42850 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46286 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:59058 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54634 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:49476 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40858 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:48100 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57972 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:45360 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54758 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:44202 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54432 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:38266 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57890 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:34084 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52542 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:58214 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41850 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:42802 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49280 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:58186 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38744 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:43646 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34880 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:38640 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45680 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:57598 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53814 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:55080 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57312 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:42040 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33400 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:50976 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53794 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:34612 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60678 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:34468 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35470 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:34226 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56278 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:44178 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48244 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:53034 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51990 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:41932 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60530 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:33988 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53192 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:57470 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33792 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:34060 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45540 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:41238 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57862 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:53514 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60888 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:47972 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42482 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:48744 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45696 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:39584 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50134 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:59222 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59204 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:60330 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40086 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:33488 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35004 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:34662 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57940 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:54918 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60516 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:35602 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54596 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:56114 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54790 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:59320 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39340 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:43742 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52846 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:52496 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45708 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:49682 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45166 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:41638 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43166 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:50942 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38764 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:52460 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44264 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:36108 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56586 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:33748 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42152 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:33394 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52446 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:50560 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53308 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:39222 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34318 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:49594 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45894 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:37058 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36934 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:41780 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36080 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:39764 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53982 - "GET /health HTTP/1.1" 200 OK

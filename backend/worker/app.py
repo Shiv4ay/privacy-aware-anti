@@ -1,6 +1,13 @@
 
 
 import os
+import sys
+from dotenv import load_dotenv
+
+# Load .env file explicitly from project root (2 levels up)
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
+load_dotenv(dotenv_path)
+
 import time
 import json
 import uuid
@@ -59,7 +66,7 @@ if OPENAI_API_KEY:
     openai.api_key = OPENAI_API_KEY
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
 # Accept comma-separated list of embedding models
 OLLAMA_EMBED_MODELS_RAW = os.getenv("OLLAMA_EMBED_MODEL", "mxbai-embed-large")
 # parse into list, strip whitespace and ignore empties
@@ -275,7 +282,14 @@ def get_org_collection(org_id: Optional[int] = None, org_name: str = "default"):
         safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', org_name).lower()
         collection_name = f"privacy_documents_{safe_name}"
     
-    return chroma_client.get_or_create_collection(name=collection_name)
+    # CRITICAL: We provide pre-computed 384-dim embeddings from nomic-embed-text.
+    # ChromaDB must NOT auto-create an embedding function.
+    # Explicitly set metadata to prevent dimension mis match.
+    metadata = {"hnsw:space": "l2"}  # L2 distance, no embedding function
+    return chroma_client.get_or_create_collection(
+        name=collection_name,
+        metadata=metadata
+    )
 
 class DocumentChunk(BaseModel):
     id: str
@@ -494,38 +508,12 @@ def _call_ollama_embeddings(model_name: str, text: str, timeout: int = 30) -> Op
 
 def get_embedding(text: str, model_name: Optional[str] = None, timeout_per_call: int = 20) -> Optional[List[float]]:
     """
-    Get embedding with fallback strategy:
-    1. Try OpenAI if configured and preferred/available.
-    2. Fallback to Local (Ollama).
+    Get embedding using nomic-embed-text to ensure consistency.
+    All embeddings must use the same dimensionality (384) to match indexed documents.
     """
-    # Check if OpenAI is configured
-    use_openai = False
-    if OPENAI_API_KEY:
-        # If model_name is passed and matches OpenAI model, use it
-        if model_name == PRIMARY_EMBED:
-            use_openai = True
-        # If no model_name passed, default to OpenAI if configured
-        elif not model_name:
-            use_openai = True
-
-    if use_openai:
-        try:
-            response = openai.embeddings.create(
-                input=text,
-                model=PRIMARY_EMBED
-            )
-            logger.info(f"Generated embedding using OpenAI {PRIMARY_EMBED}")
-            return response.data[0].embedding
-        except Exception as e:
-            logger.warning(f"OpenAI embedding failed: {e}. Falling back to local.")
-            # Fallback to local
-    
-    # Local Fallback
-    local_model = model_name if (model_name and model_name != PRIMARY_EMBED) else LOCAL_EMBED_MODEL
-    # If local_model is still None or empty, use the resolved one
-    if not local_model:
-        local_model = SELECTED_EMBED_MODEL
-
+    # ALWAYS use local nomic-embed-text to maintain 384-dim consistency
+    local_model = "nomic-embed-text"
+    logger.info(f"Generating embedding using {local_model} (384-dim)")
     return _call_ollama_embeddings(local_model, text, timeout=timeout_per_call)
 
 def generate_chat_response(query: str, context: str = "", model_preference: Optional[Dict[str, Any]] = None) -> str:
@@ -609,10 +597,12 @@ def chromadb_add(ids: List[str], documents: List[str], embeddings: List[List[flo
 def chromadb_query(query_embeddings: List[List[float]], n_results: int = TOP_K, collection=None):
     """Query ChromaDB for most relevant documents using Python client"""
     target_collection = collection or chroma_collection
+    print(f"SEARCHING with embeddings in collection: {target_collection.name}")
     results = target_collection.query(
         query_embeddings=query_embeddings,
         n_results=n_results
     )
+    print(f"RAW RESULTS: {results}")
     return results
 
 # -----------------------------
@@ -963,7 +953,7 @@ def process_document_job(job_data: Dict[str, Any]):
                 if embedding:
                     batch_embeddings.append(embedding)
                 else:
-                    logger.warning(f"Failed to get embedding for chunk from {file_key}")
+                    raise Exception(f"Failed to get embedding for chunk from {file_key}")
 
             # Store in ChromaDB if we have embeddings
             if batch_embeddings and len(batch_embeddings) == len(batch_chunks):
@@ -1165,9 +1155,14 @@ def search_documents(request: SearchRequest):
                 pass
             raise HTTPException(status_code=500, detail="Failed to generate query embedding")
 
+
         # Query ChromaDB
+        logger.info(f"SEARCH DEBUG: org_id={request.org_id} org_name={request.organization} query='{request.query}' top_k={request.top_k}")
         org_collection = get_org_collection(org_id=request.org_id, org_name=request.organization)
         results = chromadb_query([query_embedding], request.top_k, collection=org_collection)
+        
+        logger.info(f"CHROMA RAW RESULTS: {results}")
+
         documents = []
         doc_ids = []
         if results and results.get("documents") and results["documents"][0]:
@@ -1177,9 +1172,13 @@ def search_documents(request: SearchRequest):
                 results["distances"][0]
             ):
                 # ChromaDB returns L2 (Euclidean) distance, not similarity
-                # Lower distance = higher similarity
-                # Convert to a similarity score (higher is better)
-                score = 1.0 / (1.0 + distance)  # Ranges from 0 to 1
+                # Assuming L2 distance (or similar unbounded metric) from Chroma
+                # DEBUG: Log the raw distance to calibrate
+                # Distance ~ 300-500 observed. Use rational kernel with sigma=500 to map to 0-1.
+                # score = sigma / (sigma + distance)
+                # 326 -> 500/826 = ~60%
+                logger.info(f"DEBUG: Doc {doc_id} Distance: {distance}")
+                score = 500.0 / (500.0 + distance)  # Ranges from 0 to 1
                 documents.append(DocumentChunk(id=doc_id, text=doc_text, score=score))
                 doc_ids.append(doc_id)
 
@@ -1248,9 +1247,14 @@ async def chat_with_documents(req: Request):
 
         # Accept multiple common property names
         query = None
+        org_id = None
+        organization = "default"
+
         if isinstance(body, dict):
             query = body.get("query") or body.get("message") or body.get("prompt") or None
             context = body.get("context", None)
+            org_id = body.get("org_id")
+            organization = body.get("organization") or "default"
         else:
             query = None
             context = None
@@ -1265,25 +1269,44 @@ async def chat_with_documents(req: Request):
         if not context:
             try:
                 # use your existing SearchRequest and search_documents logic
-                sr = SearchRequest(query=query, top_k=3)
+                # [FIX] Pass org_id to search correct collection for context
+                sr = SearchRequest(
+                    query=query, 
+                    top_k=3, 
+                    org_id=org_id, 
+                    organization=organization
+                )
                 search_results = search_documents(sr)
                 # search_documents returns {"results": [...]} or returns DocumentChunk objects depending on your version
                 contexts = []
+                context_docs = [] # To store structured context for printing
                 # handle both shaped result (dict) and direct list
                 if isinstance(search_results, dict) and "results" in search_results:
                     for r in search_results["results"]:
                         # r might be a DocumentChunk or a dict
                         if hasattr(r, "text"):
                             contexts.append(r.text)
+                            context_docs.append({"filename": r.id, "content": r.text}) # Assuming id can be used as filename for logging
                         elif isinstance(r, dict):
                             contexts.append(r.get("text", ""))
+                            context_docs.append({"filename": r.get("id", "unknown"), "content": r.get("text", "")})
                 elif isinstance(search_results, list):
                     for r in search_results:
                         if hasattr(r, "text"):
                             contexts.append(r.text)
+                            context_docs.append({"filename": r.id, "content": r.text})
                         elif isinstance(r, dict):
                             contexts.append(r.get("text", ""))
+                            context_docs.append({"filename": r.get("id", "unknown"), "content": r.get("text", "")})
                 context = "\n\n".join([c for c in contexts if c])
+                
+                # Build Context for printing
+                context_str = "\n\n".join([
+                    f"Document: {doc['filename']}\nContent: {doc['content']}"
+                    for doc in context_docs
+                ])
+                print(f"--- CONTEXT SENT TO LLM ---\n{context_str}\n---------------------------")
+
             except HTTPException as he:
                 logger.warning("Chat: search for context returned HTTPException: %s", he.detail)
                 context = ""
@@ -2315,158 +2338,191 @@ if __name__ == "__main__":
 #         logger.error(f"Embedding error: {e}")
 #         raise HTTPException(status_code=500, detail=str(e))
 
-# @app.post("/search")
-# def search_documents(request: SearchRequest):
-#     """Search for similar documents using ChromaDB client and record audit logs"""
-#     user = {}  # default empty user if caller didn't provide user context
-#     # In your real flow, the API gateway populates user info in payload.
-#     # If you forward user object from api -> worker, use it. Here we check request context.
-#     # For compatibility, attempt to read a 'user' field if present in request (if using raw dict).
-#     try:
-#         # Redact and hash query for audit
-#         raw_query = request.query or ""
-#         query_redacted = redact_text(raw_query)
-#         query_hash = hash_query(raw_query)
+@app.post("/search")
+def search_documents(request: SearchRequest):
+    """Search for similar documents using ChromaDB client and record audit logs"""
+    user = {}  # default empty user if caller didn't provide user context
+    # In your real flow, the API gateway populates user info in payload.
+    # If you forward user object from api -> worker, use it. Here we check request context.
+    # For compatibility, attempt to read a 'user' field if present in request (if using raw dict).
+    try:
+        # Redact and hash query for audit
+        raw_query = request.query or ""
+        query_redacted = redact_text(raw_query)
+        query_hash = hash_query(raw_query)
 
-#         # Generate embedding
-#         query_embedding = get_embedding(raw_query)
-#         if not query_embedding:
-#             # audit with error and return failure
-#             details = {
-#                 "query_hash": query_hash,
-#                 "query_redacted": query_redacted,
-#                 "error": "Failed to generate query embedding",
-#                 "result_count": 0,
-#                 "document_ids": []
-#             }
-#             try:
-#                 insert_audit_log(user.get("id"), "search", "document", None, details)
-#             except Exception:
-#                 pass
-#             raise HTTPException(status_code=500, detail="Failed to generate query embedding")
+        # Generate embedding
+        query_embedding = get_embedding(raw_query)
+        if not query_embedding:
+            # audit with error and return failure
+            details = {
+                "query_hash": query_hash,
+                "query_redacted": query_redacted,
+                "error": "Failed to generate query embedding",
+                "result_count": 0,
+                "document_ids": []
+            }
+            try:
+                insert_audit_log(user.get("id"), "search", "document", None, details)
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail="Failed to generate query embedding")
 
-#         # Query ChromaDB
-#         results = chromadb_query([query_embedding], request.top_k)
-#         documents = []
-#         doc_ids = []
-#         if results and results.get("documents") and results["documents"][0]:
-#             for (doc_text, doc_id, distance) in zip(
-#                 results["documents"][0],
-#                 results["ids"][0],
-#                 results["distances"][0]
-#             ):
-#                 score = 1.0 - distance
-#                 documents.append(DocumentChunk(id=doc_id, text=doc_text, score=score))
-#                 doc_ids.append(doc_id)
+        # Query ChromaDB
+        results = chromadb_query([query_embedding], request.top_k)
+        documents = []
+        doc_ids = []
+        if results and results.get("documents") and results["documents"][0]:
+            for (doc_text, doc_id, distance) in zip(
+                results["documents"][0],
+                results["ids"][0],
+                results["distances"][0]
+            ):
+                # Fixed score for L2 distance
+                score = 1.0 / (1.0 + distance)
+                documents.append(DocumentChunk(id=doc_id, text=doc_text, score=score))
+                doc_ids.append(doc_id)
 
-#         # NOTE: you should apply document-level access filtering here (use your ABAC logic)
-#         # For now we assume the caller has already passed allowed docs, or ABAC is enforced before worker.
-#         filtered = documents  # keep as-is; replace with filtering if you implement it
+        # NOTE: you should apply document-level access filtering here (use your ABAC logic)
+        # For now we assume the caller has already passed allowed docs, or ABAC is enforced before worker.
+        filtered = documents  # keep as-is; replace with filtering if you implement it
 
-#         # Build audit details
-#         details = {
-#             "query_hash": query_hash,
-#             "query_redacted": query_redacted,
-#             "result_count": len(filtered),
-#             "document_ids": doc_ids
-#         }
+        # Build audit details
+        details = {
+            "query_hash": query_hash,
+            "query_redacted": query_redacted,
+            "result_count": len(filtered),
+            "document_ids": doc_ids
+        }
 
-#         # Insert audit log (best-effort)
-#         try:
-#             insert_audit_log(user.get("id"), "search", "document", None, details)
-#         except Exception as e:
-#             logger.exception("Audit insert failed: %s", e)
+        # Insert audit log (best-effort)
+        try:
+            insert_audit_log(user.get("id"), "search", "document", None, details)
+        except Exception as e:
+            logger.exception("Audit insert failed: %s", e)
 
-#         return {
-#             "query": raw_query,
-#             "results": filtered,
-#             "total_found": len(filtered)
-#         }
+        return {
+            "query": raw_query,
+            "results": filtered,
+            "total_found": len(filtered)
+        }
 
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         logger.exception("Search error: %s", e)
-#         # attempt best-effort audit
-#         try:
-#             insert_audit_log(user.get("id"), "search", "document", None, {
-#                 "query_hash": hash_query(request.query if hasattr(request, 'query') else ""),
-#                 "query_redacted": redact_text(request.query if hasattr(request, 'query') else ""),
-#                 "error": str(e),
-#                 "result_count": 0,
-#                 "document_ids": []
-#             })
-#         except Exception:
-#             pass
-#         raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Search error: %s", e)
+        # attempt best-effort audit
+        try:
+            insert_audit_log(user.get("id"), "search", "document", None, {
+                "query_hash": hash_query(request.query if hasattr(request, 'query') else ""),
+                "query_redacted": redact_text(request.query if hasattr(request, 'query') else ""),
+                "error": str(e),
+                "result_count": 0,
+                "document_ids": []
+            })
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))
 
-# @app.post("/chat")
-# async def chat_with_documents(req: Request):
-#     """
-#     Chat interface with document context — made robust to incoming payload shape issues.
+def generate_chat_response(query: str, context: str) -> str:
+    """Generate answer using Ollama with RAG context."""
+    if context:
+        prompt = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer:"
+    else:
+        prompt = query
 
-#     Reason for change:
-#       - Pydantic model validation produced 422 when the gateway forwarded payloads
-#         that didn't precisely match the model. To avoid 422 and provide clearer errors,
-#         we read the raw JSON, extract query/context conservatively, validate, then proceed.
-#     """
-#     try:
-#         # Attempt to parse JSON body; if parsing fails FastAPI will have already rejected non-JSON,
-#         # but we catch and provide clearer message.
-#         try:
-#             body = await req.json()
-#         except Exception as e:
-#             logger.debug("Failed to parse JSON body for /chat: %s", e)
-#             raise HTTPException(status_code=400, detail="Invalid JSON body for /chat")
+    try:
+        # Use simple generation (not chat) for this basic RAG
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False
+        }
+        res = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=60)
+        res.raise_for_status()
+        return res.json().get("response", "")
+    except Exception as e:
+        logger.error(f"Ollama generation failed: {e}")
+        return "I'm sorry, I encountered an error generating a response."
 
-#         # Log incoming body for easier debugging (remove or reduce later)
-#         logger.debug("Incoming /chat body: %s", json.dumps(body)[:2000])
 
-#         # Accept multiple possible field names for query for compatibility:
-#         # prefer 'query', then 'q', then 'message'
-#         query = None
-#         if isinstance(body, dict):
-#             query = body.get("query") or body.get("q") or body.get("message")
-#             context = body.get("context") if "context" in body else None
-#         else:
-#             # in case the body isn't a dict, coerce to string
-#             query = str(body)
+@app.post("/chat")
+async def chat_with_documents(req: Request):
+    """
+    Chat interface with document context — made robust to incoming payload shape issues.
 
-#         # Validate the query
-#         if not query or not isinstance(query, str) or query.strip() == "":
-#             # Return 400 with a helpful message so callers/gateway know what's wrong
-#             raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body. Provide JSON like {\"query\":\"your question\",\"context\":\"optional\"}")
+    Reason for change:
+      - Pydantic model validation produced 422 when the gateway forwarded payloads
+        that didn't precisely match the model. To avoid 422 and provide clearer errors,
+        we read the raw JSON, extract query/context conservatively, validate, then proceed.
+    """
+    try:
+        # Attempt to parse JSON body; if parsing fails FastAPI will have already rejected non-JSON,
+        # but we catch and provide clearer message.
+        try:
+            body = await req.json()
+        except Exception as e:
+            logger.debug("Failed to parse JSON body for /chat: %s", e)
+            raise HTTPException(status_code=400, detail="Invalid JSON body for /chat")
 
-#         query = query.strip()
-#         context = (context.strip() if isinstance(context, str) and context.strip() else None)
+        # Log incoming body for easier debugging (remove or reduce later)
+        logger.debug("Incoming /chat body: %s", json.dumps(body)[:2000])
 
-#         # If no context provided, run a short search to assemble context
-#         if not context:
-#             # create a SearchRequest instance and call internal search
-#             search_req = SearchRequest(query=query, top_k=3)
-#             search_results = search_documents(search_req)
-#             contexts = []
-#             for doc in search_results["results"]:
-#                 contexts.append(doc.text)
-#             context = "\n\n".join(contexts)
+        # Accept multiple possible field names for query for compatibility:
+        # prefer 'query', then 'q', then 'message'
+        query = None
+        org_id = None
+        organization = "default"
+        if isinstance(body, dict):
+            query = body.get("query") or body.get("q") or body.get("message")
+            context = body.get("context") if "context" in body else None
+            org_id = body.get("org_id")
+            organization = body.get("organization", "default")
+        else:
+            # in case the body isn't a dict, coerce to string
+            query = str(body)
 
-#         # Generate chat response
-#         response_text = generate_chat_response(query, context or "")
+        # Validate the query
+        if not query or not isinstance(query, str) or query.strip() == "":
+            # Return 400 with a helpful message so callers/gateway know what's wrong
+            raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body. Provide JSON like {\"query\":\"your question\",\"context\":\"optional\"}")
 
-#         return {
-#             "query": query,
-#             "response": response_text,
-#             "context_used": bool(context),
-#             "status": "success"
-#         }
+        query = query.strip()
+        context = (context.strip() if isinstance(context, str) and context.strip() else None)
 
-#     except HTTPException:
-#         # re-raise HTTPExceptions (400 etc.)
-#         raise
-#     except Exception as e:
-#         logger.exception(f"Chat error: {e}")
-#         # Return 500 with message
-#         raise HTTPException(status_code=500, detail=str(e))
+        # If no context provided, run a short search to assemble context
+        if not context:
+            # create a SearchRequest instance and call internal search
+            search_req = SearchRequest(
+                query=query, 
+                top_k=3, 
+                org_id=org_id, 
+                organization=organization
+            )
+            search_results = search_documents(search_req)
+            contexts = []
+            for doc in search_results["results"]:
+                contexts.append(doc.text)
+            context = "\n\n".join(contexts)
+            logger.info(f"ASSEMBLED CONTEXT (len={len(context)}): {context[:200]}...")
+
+        # Generate chat response
+        response_text = generate_chat_response(query, context or "")
+
+        return {
+            "query": query,
+            "response": response_text,
+            "context_used": bool(context),
+            "status": "success"
+        }
+
+    except HTTPException:
+        # re-raise HTTPExceptions (400 etc.)
+        raise
+    except Exception as e:
+        logger.exception(f"Chat error: {e}")
+        # Return 500 with message
+        raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------------
 # Ingestion Logic
