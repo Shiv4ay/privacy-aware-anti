@@ -1,0 +1,10 @@
+--- MISTRAL PERFORMANCE BENCHMARK ---
+Testing model: mistral:7b-instruct-v0.3-q4_0
+
+✅ Success!
+Response:  Privacy in AI is crucial as it safeguards personal data and maintains individual autonomy, trust, and dignity. It ensures that AI systems do not violate user rights or misuse information, fostering a secure and ethical digital environment where users feel comfortable engaging with AI technologies.
+
+Total Time: 83.71 seconds
+Estimated Speed: 0.70 tokens/sec
+memory.used [MiB]
+3597

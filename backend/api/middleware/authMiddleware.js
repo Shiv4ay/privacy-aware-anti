@@ -60,50 +60,62 @@ async function authenticateJWT(req, res, next) {
         try {
             payload = verifyAccessToken(token);
         } catch (error) {
-            return res.status(401).json({ error: 'Invalid or expired token' });
+            console.error('[Auth] Token verification failed:', error.message);
+            return res.status(401).json({ error: 'Invalid or expired token', details: error.message });
         }
 
         // Check token blacklist
         if (isTokenBlacklisted(token)) {
+            console.error('[Auth] Token is blacklisted');
             return res.status(401).json({ error: 'Token has been invalidated' });
         }
 
         // Fetch full user from database (if db connection available)
         if (req.db) {
-            const userResult = await req.db.query(
-                `SELECT id, username, email, role, department, org_id, 
-                is_active 
-         FROM users 
-         WHERE id = $1`,
-                [payload.userId]
-            );
-
-            if (userResult.rows.length === 0) {
-                return res.status(401).json({ error: 'User not found' });
+            if (!payload.userId) {
+                console.error('[Auth] Token payload missing userId:', payload);
+                return res.status(401).json({ error: 'Invalid token payload (missing userId)' });
             }
 
-            const user = userResult.rows[0];
+            try {
+                const userResult = await req.db.query(
+                    `SELECT id, username, email, role, department, org_id, 
+                    is_active 
+             FROM users 
+             WHERE id = $1`,
+                    [payload.userId]
+                );
 
-            // Check if user is active
-            if (!user.is_active) {
-                return res.status(401).json({ error: 'Account is deactivated' });
+                if (userResult.rows.length === 0) {
+                    console.error(`[Auth] User ID ${payload.userId} not found in DB`);
+                    return res.status(401).json({ error: 'User not found' });
+                }
+
+                const user = userResult.rows[0];
+
+                // Check if user is active
+                if (!user.is_active) {
+                    console.error(`[Auth] User ID ${user.id} is deactivated`);
+                    return res.status(401).json({ error: 'Account is deactivated' });
+                }
+
+                // Attach full user to request
+                req.user = {
+                    userId: user.id,
+                    username: user.username,
+                    email: user.email,
+                    role: user.role,
+                    department: user.department,
+                    organizationId: user.org_id,
+                    org_id: user.org_id,
+                    // entityId: user.entity_id
+                };
+            } catch (dbError) {
+                console.error('[Auth] Database lookup failed:', dbError);
+                throw new Error(`Database auth lookup failed: ${dbError.message}`);
             }
-
-            // Check if account is locked (feature not yet implemented in schema)
-            // if (user.locked_until && new Date(user.locked_until) > new Date()) { ... }
-
-            // Attach full user to request
-            req.user = {
-                userId: user.id,
-                username: user.username,
-                email: user.email,
-                role: user.role,
-                department: user.department,
-                organizationId: user.org_id,
-                org_id: user.org_id,
-                // entityId: user.entity_id
-            };
         } else {
+            console.warn('[Auth] No DB connection available on request object');
             // No DB connection - use payload data
             req.user = {
                 userId: payload.userId,
@@ -127,8 +139,13 @@ async function authenticateJWT(req, res, next) {
 
         next();
     } catch (error) {
-        console.error('Authentication error:', error);
-        return res.status(500).json({ error: 'Authentication failed' });
+        console.error('[Auth] Authentication Critical Error:', error);
+        // RETURN DETAILED ERROR TO CLIENT FOR DEBUGGING
+        return res.status(500).json({
+            error: 'Authentication middleware failed',
+            details: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 }
 

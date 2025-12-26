@@ -1,0 +1,4 @@
+NAME                       ID              SIZE      MODIFIED    
+phi3:mini                  4f2222927938    2.2 GB    2 weeks ago    
+qwen2.5:0.5b               a8b0c5157701    397 MB    2 weeks ago    
+nomic-embed-text:latest    0a109f422b47    274 MB    2 weeks ago    

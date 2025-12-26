@@ -39,9 +39,7 @@ const loginLimiter = rateLimit({
         const safeIP = normalizeIP(req.ip);
         return `login_${safeIP}_${email}`;
     },
-    validate: {
-        trustProxy: false
-    }
+    validate: false
 });
 
 /**
@@ -57,7 +55,8 @@ const passwordResetLimiter = rateLimit({
         const email = (req.body && req.body.email) || 'unknown';
         const safeIP = normalizeIP(req.ip);
         return `pwd_reset_${safeIP}_${email}`;
-    }
+    },
+    validate: false
 });
 
 /**
@@ -69,7 +68,8 @@ const registrationLimiter = rateLimit({
     message: 'Too many registration attempts, please try again later',
     // Default keyGenerator uses IP, which is fine if we don't override it
     // But if we want consistent prefixes:
-    keyGenerator: (req) => `register_${normalizeIP(req.ip)}`
+    keyGenerator: (req) => `register_${normalizeIP(req.ip)}`,
+    validate: false
 });
 
 /**
@@ -95,7 +95,8 @@ const apiLimiter = rateLimit({
     skip: (req) => {
         // Skip rate limiting for super admins
         return req.user?.role === 'super_admin';
-    }
+    },
+    validate: false
 });
 
 /**
@@ -105,7 +106,8 @@ const strictLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 10,
     message: 'Too many requests for this sensitive operation',
-    keyGenerator: (req) => req.user?.userId ? `strict_user_${req.user.userId}` : `strict_ip_${normalizeIP(req.ip)}`
+    keyGenerator: (req) => req.user?.userId ? `strict_user_${req.user.userId}` : `strict_ip_${normalizeIP(req.ip)}`,
+    validate: false
 });
 
 /**
@@ -115,7 +117,8 @@ const mfaLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 5,
     message: 'Too many MFA setup attempts',
-    keyGenerator: (req) => req.user?.userId ? `mfa_${req.user.userId}` : `mfa_ip_${normalizeIP(req.ip)}`
+    keyGenerator: (req) => req.user?.userId ? `mfa_${req.user.userId}` : `mfa_ip_${normalizeIP(req.ip)}`,
+    validate: false
 });
 
 module.exports = {

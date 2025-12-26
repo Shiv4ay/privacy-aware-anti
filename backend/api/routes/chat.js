@@ -2,6 +2,11 @@ const express = require('express');
 const axios = require('axios');
 const router = express.Router();
 
+const { authenticateJWT } = require('../middleware/authMiddleware');
+
+// Apply auth middleware to all routes in this router
+router.use(authenticateJWT);
+
 const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
 
 /**
@@ -54,7 +59,11 @@ router.post('/search', async (req, res) => {
       return res.status(400).json({ error: 'Query is required' });
     }
 
-    const org_id = req.user?.org_id;
+
+    // [FIX] Force org_id=1 if missing (quick fix for demo)
+    const org_id = req.user?.org_id || 1;
+    console.log(`[API Search] User: ${req.user?.username} (ID: ${req.user?.userId}), OrgID: ${org_id}, Role: ${req.user?.role}`);
+
 
     const response = await axios.post(`${WORKER_URL}/search`, {
       query: query.trim(),

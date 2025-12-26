@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import client from '../api/index';
 import { useAuth } from '../contexts/AuthContext';
 import { Send, Bot, User, Loader2, MessageSquare, Sparkles, AlertCircle } from 'lucide-react';
@@ -13,7 +14,7 @@ export default function Chat() {
   const { user } = useAuth();
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   };
 
   useEffect(() => {
@@ -27,6 +28,17 @@ export default function Chat() {
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
     }
   }, [message]);
+
+  // Context Awareness
+  const location = useLocation();
+  useEffect(() => {
+    if (location.state?.context) {
+      setMessage(`Tell me about ${location.state.context}...`);
+      // Optional: Clean up state so refresh doesn't keep it? 
+      // Actually keeping it is fine for now so user remembers context.
+      // But clearing it from history replace is better UX usually, strictly simple requirement for now.
+    }
+  }, [location.state]);
 
   const send = async () => {
     if (!message.trim() || loading) return;
@@ -93,150 +105,103 @@ export default function Chat() {
   }
 
   return (
-    <div className="h-screen animated-gradient-bg flex flex-col relative overflow-hidden">
-      {/* Centered Chat Container */}
-      <div className="flex-1 flex flex-col max-w-4xl mx-auto w-full px-4 py-6 relative z-10 h-full">
-        {/* Header */}
-        <div className="text-center mb-6 animate-fade-in flex-shrink-0">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-premium-gold/10 mb-3 shadow-lg">
-            <MessageSquare className="w-8 h-8 text-premium-gold" />
-          </div>
-          <h1 className="text-3xl md:text-4xl font-bold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white via-premium-gold to-white">
+    <div className="flex flex-col h-full w-full bg-black/20 relative overflow-hidden rounded-2xl border border-white/5">
+      {/* 1. Header - Fixed Top */}
+      <div className="flex-shrink-0 p-4 border-b border-white/10 bg-black/20 backdrop-blur-md z-20">
+        <div className="flex items-center justify-center flex-col">
+          <h1 className="text-xl font-bold text-white flex items-center gap-2">
+            <MessageSquare className="w-5 h-5 text-premium-gold" />
             AI Chat Assistant
           </h1>
-          <p className="text-gray-400 text-sm flex items-center justify-center gap-2">
+          <p className="text-xs text-gray-400 flex items-center gap-1 mt-1">
             <Sparkles className="w-3 h-3 text-premium-gold" />
-            Powered by RAG • Context-aware responses
-            <Sparkles className="w-3 h-3 text-premium-gold" />
+            Context-aware RAG
           </p>
         </div>
+      </div>
 
-        {/* Main Chat Card */}
-        <div className="flex-1 glass-panel-strong rounded-2xl overflow-hidden shadow-2xl border border-white/10 flex flex-col min-h-0 relative z-20">
-          {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 custom-scrollbar bg-gradient-to-b from-black/20 to-transparent relative z-20">
-            {messages.length === 0 && (
-              <div className="h-full flex flex-col items-center justify-center py-12">
-                <div className="relative">
-                  <div className="absolute inset-0 bg-premium-gold/20 blur-3xl rounded-full"></div>
-                  <Bot className="w-20 h-20 text-premium-gold relative animate-pulse" />
-                </div>
-                <h2 className="text-xl font-bold text-white mt-6 mb-2">How can I help you today?</h2>
-                <p className="text-gray-400 text-center max-w-md text-sm px-4">
-                  Ask me anything about your documents. I'll search through your knowledge base to find the best answers.
-                </p>
-                <div className="mt-6 flex gap-2 flex-wrap justify-center px-4">
-                  <button
-                    onClick={() => setMessage("What is the average student GPA?")}
-                    className="glass-panel px-3 py-2 rounded-lg text-xs text-gray-300 hover:bg-white/10 transition-all hover:scale-105 z-30"
-                  >
-                    💯 Student GPAs
-                  </button>
-                  <button
-                    onClick={() => setMessage("Tell me about course enrollments")}
-                    className="glass-panel px-3 py-2 rounded-lg text-xs text-gray-300 hover:bg-white/10 transition-all hover:scale-105 z-30"
-                  >
-                    📚 Courses
-                  </button>
-                  <button
-                    onClick={() => setMessage("Show me attendance data")}
-                    className="glass-panel px-3 py-2 rounded-lg text-xs text-gray-300 hover:bg-white/10 transition-all hover:scale-105 z-30"
-                  >
-                    📊 Attendance
-                  </button>
-                </div>
+      {/* 2. Messages Area - Flexible Middle (Scrolls) */}
+      <div className="flex-1 overflow-y-auto min-h-0 relative custom-scrollbar p-4 scroll-smooth">
+        <div className={`min-h-full flex flex-col ${messages.length === 0 ? 'justify-center' : 'justify-end'} space-y-4 max-w-4xl mx-auto w-full`}>
+
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-8 opacity-80">
+              <div className="w-16 h-16 rounded-full bg-premium-gold/10 flex items-center justify-center mb-4">
+                <Bot className="w-8 h-8 text-premium-gold animate-pulse" />
               </div>
-            )}
-
-            {messages.map((m) => (
-              <div key={m.id} className={`flex gap-3 ${m.from === 'user' ? 'flex-row-reverse' : ''} animate-fade-in`}>
-                {/* Avatar */}
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg ${m.from === 'user'
-                  ? 'bg-gradient-to-br from-blue-500 to-blue-600'
-                  : m.from === 'error'
-                    ? 'bg-gradient-to-br from-red-500 to-red-600'
-                    : 'bg-gradient-to-br from-premium-gold to-yellow-500'
-                  }`}>
-                  {m.from === 'user' ? <User className="w-5 h-5 text-white" /> : <Bot className="w-5 h-5 text-black" />}
-                </div>
-
-                {/* Message Bubble */}
-                <div className={`max-w-[80%] md:max-w-[70%] rounded-2xl p-4 shadow-lg ${m.from === 'user'
-                  ? 'bg-gradient-to-br from-blue-600/40 to-blue-700/40 text-blue-50 border border-blue-400/30 rounded-tr-md backdrop-blur-sm'
-                  : m.from === 'error'
-                    ? 'bg-gradient-to-br from-red-500/20 to-red-600/20 text-red-100 border border-red-400/30 backdrop-blur-sm'
-                    : 'bg-gradient-to-br from-white/10 to-white/5 text-gray-100 border border-white/20 rounded-tl-md backdrop-blur-sm'
-                  }`}>
-                  <div className="whitespace-pre-wrap break-words leading-relaxed text-sm">{m.text}</div>
-                  {m.contextUsed && m.from === 'ai' && (
-                    <div className="mt-2 pt-2 border-t border-white/10 text-xs text-premium-gold flex items-center gap-1">
-                      <Sparkles className="w-3 h-3" />
-                      <span className="font-medium">Based on your documents</span>
-                    </div>
-                  )}
-                  <div className="text-xs mt-2 opacity-50 font-medium">
-                    {new Date(m.timestamp).toLocaleTimeString()}
-                  </div>
-                </div>
+              <h2 className="text-lg font-bold text-white mb-2">How can I help?</h2>
+              <div className="flex gap-2 flex-wrap justify-center mt-4">
+                <button onClick={() => setMessage("Student GPAs?")} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs text-gray-300 transition-colors border border-white/10">💯 GPAs</button>
+                <button onClick={() => setMessage("Courses list?")} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs text-gray-300 transition-colors border border-white/10">📚 Courses</button>
               </div>
-            ))}
-
-            {loading && (
-              <div className="flex gap-3 animate-fade-in">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-premium-gold to-yellow-500 flex items-center justify-center flex-shrink-0 shadow-lg">
-                  <Bot className="w-5 h-5 text-black" />
-                </div>
-                <div className="bg-gradient-to-br from-white/10 to-white/5 rounded-2xl rounded-tl-md p-4 border border-white/20 flex items-center gap-3 backdrop-blur-sm shadow-lg">
-                  <div className="flex gap-1">
-                    <div className="w-2 h-2 bg-premium-gold rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <div className="w-2 h-2 bg-premium-gold rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <div className="w-2 h-2 bg-premium-gold rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  </div>
-                  <span className="text-gray-300 text-sm font-medium">AI is thinking...</span>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input Area - Professional Style */}
-          <div className="flex-shrink-0 p-4 md:p-5 bg-gradient-to-t from-black/80 to-black/40 border-t border-white/10 backdrop-blur-xl relative z-30">
-            <div className="flex gap-3 items-end relative z-40">
-              {/* Textarea Input */}
-              <div className="flex-1 relative">
-                <textarea
-                  ref={textareaRef}
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={loading ? "AI is responding..." : "Type your message..."}
-                  disabled={loading}
-                  rows={1}
-                  className="w-full px-4 py-3 rounded-xl bg-white/10 border-2 border-white/20 text-white placeholder-gray-400 focus:outline-none focus:border-premium-gold focus:bg-white/10 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed backdrop-blur-sm shadow-inner text-sm resize-none overflow-hidden relative z-50 pointer-events-auto"
-                  style={{ minHeight: '48px', maxHeight: '120px' }}
-                />
-              </div>
-
-              {/* Send Button */}
-              <button
-                onClick={send}
-                disabled={loading || !message.trim()}
-                className="flex-shrink-0 w-12 h-12 rounded-xl bg-gradient-to-r from-premium-gold to-yellow-500 text-black font-bold flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105 hover:shadow-lg hover:shadow-premium-gold/30 active:scale-95 shadow-md relative z-50 pointer-events-auto"
-              >
-                {loading ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Send className="w-5 h-5" />
-                )}
-              </button>
             </div>
+          )}
 
-            {/* Helper Text */}
-            <p className="text-center mt-3 text-xs text-gray-500">
-              Press Enter to send • Shift+Enter for new line • First message may take 2-3 min
-            </p>
-          </div>
+          {messages.map((m) => (
+            <div key={m.id} className={`flex gap-3 ${m.from === 'user' ? 'flex-row-reverse' : ''} animate-fade-in`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold shadow-lg ${m.from === 'user' ? 'bg-blue-600 text-white' : 'bg-premium-gold text-black'
+                }`}>
+                {m.from === 'user' ? 'U' : 'AI'}
+              </div>
+              <div className={`max-w-[85%] rounded-2xl p-3 shadow-md ${m.from === 'user'
+                  ? 'bg-blue-600/20 border border-blue-500/30 text-blue-100'
+                  : 'bg-white/10 border border-white/10 text-gray-100'
+                }`}>
+                <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{m.text}</div>
+                {m.contextUsed && m.from === 'ai' && (
+                  <div className="mt-1 pt-1 border-t border-white/10 text-[10px] text-premium-gold opacity-80 flex items-center gap-1">
+                    <Sparkles className="w-2 h-2" /> Context Used
+                  </div>
+                )}
+                <div className="text-[10px] mt-1 opacity-40 text-right">
+                  {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {loading && (
+            <div className="flex gap-3 animate-fade-in opacity-70">
+              <div className="w-8 h-8 rounded-full bg-premium-gold flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 text-black" />
+              </div>
+              <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
+                <div className="flex gap-1 h-4 items-center">
+                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
+                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75" />
+                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150" />
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
         </div>
+      </div>
+
+      {/* 3. Input Area - Fixed Bottom */}
+      <div className="flex-shrink-0 p-4 border-t border-white/10 bg-black/40 backdrop-blur-xl z-30">
+        <div className="max-w-4xl mx-auto w-full relative flex gap-2 items-end">
+          <textarea
+            ref={textareaRef}
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask a question..."
+            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-premium-gold/50 focus:bg-white/10 transition-all resize-none text-sm"
+            rows={1}
+            style={{ minHeight: '46px', maxHeight: '120px' }}
+          />
+          <button
+            onClick={send}
+            disabled={loading || !message.trim()}
+            className="h-[46px] w-[46px] flex items-center justify-center rounded-xl bg-premium-gold text-black hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+          </button>
+        </div>
+        <p className="text-center text-[10px] text-gray-600 mt-2">
+          AI can make mistakes. Check important info.
+        </p>
       </div>
     </div>
   );

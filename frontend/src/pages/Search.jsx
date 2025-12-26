@@ -58,7 +58,7 @@ export default function Search() {
     try {
       const res = await client.post('/search', { query: q.trim() });
 
-      if (res.data?.query_redacted) {
+      if (res.data?.query_redacted && res.data.query_redacted !== (res.data.query || q)) {
         setPrivacyInfo(prev => ({
           ...prev,
           redacted: res.data.query_redacted,
