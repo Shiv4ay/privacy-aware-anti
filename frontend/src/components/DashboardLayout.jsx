@@ -1,19 +1,22 @@
 import React, { useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
 
 export default function DashboardLayout({ children }) {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const location = useLocation();
+    const isChat = location.pathname === '/chat';
 
     return (
-        <div className="flex min-h-screen bg-premium-black text-white font-sans selection:bg-premium-gold selection:text-black">
+        <div className="flex h-full w-full overflow-hidden bg-premium-black text-white font-sans selection:bg-premium-gold selection:text-black">
             {/* Sidebar */}
             <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
 
             {/* Main Content Area */}
             <div
                 className={`
-          flex-1 flex flex-col min-h-screen transition-all duration-300 ease-in-out
+          flex-1 flex flex-col h-full transition-all duration-300 ease-in-out
           ${isSidebarOpen ? 'ml-64' : 'ml-20'}
         `}
             >
@@ -24,8 +27,8 @@ export default function DashboardLayout({ children }) {
                 />
 
                 {/* Page Content */}
-                <main className="flex-1 p-6 overflow-x-hidden">
-                    <div className="max-w-7xl mx-auto animate-fade-in">
+                <main className={`flex-1 overflow-x-hidden flex flex-col ${isChat ? 'overflow-hidden p-0 sm:p-4' : 'overflow-y-auto p-6'}`}>
+                    <div className={`mx-auto animate-fade-in flex-1 flex flex-col w-full h-full ${isChat ? 'max-w-full' : 'max-w-7xl'}`}>
                         {children}
                     </div>
                 </main>

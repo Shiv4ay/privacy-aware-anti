@@ -162,17 +162,37 @@ router.get('/uploads', requireAdmin, async (req, res) => {
 });
 
 // GET /api/admin/documents/stats - Specific stats for documents page
-router.get('/documents/stats', requireAdmin, async (req, res) => {
+// ALLOWED for all users (view restricted to own org)
+router.get('/documents/stats', async (req, res) => {
     try {
         const params = [];
         let whereClause = '';
 
+        // 1. Overall Stats
+        let pIdx = 1;
+
         if (req.user.role !== 'super_admin') {
             whereClause = 'WHERE org_id = $1';
             params.push(req.user.org_id);
+            pIdx++;
+
+            // DATA INTEGRITY: Filter out raw data rows for stats/dropdowns
+            // Only apply this to 'user' or 'student' roles. 'admin' should see everything in their org.
+            if (req.user.role !== 'admin') {
+                const hiddenTypes = ['attendance', 'results', 'users', 'students', 'alumni', 'companies'];
+                const placeholders = hiddenTypes.map((_, i) => `$${pIdx + i}`).join(', ');
+                hiddenTypes.forEach(type => params.push(type));
+                whereClause += ` AND (metadata->>'record_type' IS NULL OR metadata->>'record_type' NOT IN (${placeholders}))`;
+                pIdx += hiddenTypes.length;
+            }
+
+            // DEPARTMENT SCOPE
+            if (req.user.department) {
+                whereClause += ` AND (metadata->>'Department' IS NULL OR metadata->>'Department' = $${pIdx++})`;
+                params.push(req.user.department);
+            }
         }
 
-        // 1. Overall Stats
         const overallQuery = `
             SELECT 
                 COUNT(*) as total_documents,
@@ -217,7 +237,8 @@ router.get('/documents/stats', requireAdmin, async (req, res) => {
 });
 
 // GET /api/admin/documents - List documents
-router.get('/documents', requireAdmin, async (req, res) => {
+// ALLOWED for all users (view restricted to own org)
+router.get('/documents', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
@@ -236,6 +257,31 @@ router.get('/documents', requireAdmin, async (req, res) => {
         if (req.user.role !== 'super_admin') {
             whereClauses.push(`org_id = $${pIdx++}`);
             params.push(req.user.org_id);
+
+            // DATA INTEGRITY: Filter out raw data rows for standard users
+            // Students/Faculty should only see "Resources" (Courses, Dept info, Placements), not raw DB rows
+            // DATA INTEGRITY: Filter out raw data rows for standard users
+            // Students/Faculty should only see "Resources" (Courses, Dept info, Placements), not raw DB rows
+            // Admin should see EVERYTHING.
+            if (req.user.role !== 'admin') {
+                const hiddenTypes = ['attendance', 'results', 'users', 'students', 'alumni', 'companies'];
+                // We use JSON containment to check if record_type is in the forbidden list
+                // Postgres JSONB query: metadata->>'record_type' NOT IN (...)
+
+                // Construct the NOT IN clause dynamically
+                const placeholders = hiddenTypes.map((_, i) => `$${pIdx + i}`).join(', ');
+                hiddenTypes.forEach(type => params.push(type));
+                whereClauses.push(`(metadata->>'record_type' IS NULL OR metadata->>'record_type' NOT IN (${placeholders}))`);
+                pIdx += hiddenTypes.length;
+            }
+
+            // DEPARTMENT SCOPE: If user belongs to a department, prioritize their department's data
+            // (Optional: currently we enforce checking if the doc has a department tagline, it must match)
+            if (req.user.department) {
+                // Show general documents (no dept) OR documents matching user's department
+                whereClauses.push(`(metadata->>'Department' IS NULL OR metadata->>'Department' = $${pIdx++})`);
+                params.push(req.user.department);
+            }
         }
 
         if (filename) {

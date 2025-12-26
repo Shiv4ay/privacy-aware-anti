@@ -1,0 +1,13 @@
+
+Computer Science Department Report:
+The average GPA for Computer Science students in 2024 is 3.65.
+Top performing students include:
+- Alice Johnson (GPA: 3.95) - AI Research
+- Bob Smith (GPA: 3.88) - Cybersecurity
+- Carol Williams (GPA: 3.82) - Data Science
+
+Privacy Features of the RAG System:
+- Automatic PII redaction (emails, SSNs, phone numbers)
+- Role-based access control (RBAC)
+- Query hashing for audit logs
+- Department-level data isolation

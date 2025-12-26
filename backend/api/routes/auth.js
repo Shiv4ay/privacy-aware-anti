@@ -475,4 +475,83 @@ router.post('/reset-password', async (req, res) => {
     }
 });
 
+/**
+ * POST /api/auth/change-password
+ * Change password for logged-in user
+ */
+router.post('/change-password', authenticateJWT, async (req, res) => {
+    const client = await req.db.connect();
+    try {
+        await client.query('BEGIN');
+        const { currentPassword, newPassword } = req.body;
+        const userId = req.user.userId;
+
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ error: 'Current and new password required' });
+        }
+        if (!isStrongPassword(newPassword)) {
+            return res.status(400).json({ error: 'New password is too weak (min 10 chars)' });
+        }
+
+        // Get current hash
+        const result = await client.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+        if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+        const user = result.rows[0];
+
+        // Verify current password
+        const valid = await bcrypt.compare(currentPassword, user.password_hash);
+        if (!valid) {
+            await logAudit(client, userId, 'password_change_failed', false, { error: 'Incorrect current password' }, req);
+            return res.status(401).json({ error: 'Incorrect current password' });
+        }
+
+        // Hash new password
+        const newHash = await bcrypt.hash(newPassword, 12);
+
+        // Update
+        await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, userId]);
+
+        // Log to history
+        await client.query('INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)', [userId, newHash]);
+
+        await logAudit(client, userId, 'password_change_success', true, {}, req);
+
+        await client.query('COMMIT');
+        res.json({ message: 'Password updated successfully' });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Change Password Error:', error);
+        res.status(500).json({ error: 'Failed to update password' });
+    } finally {
+        client.release();
+    }
+});
+
+/**
+ * POST /api/auth/mfa/toggle
+ * Toggle MFA (Simulated for Demo)
+ */
+router.post('/mfa/toggle', authenticateJWT, async (req, res) => {
+    try {
+        const { enabled } = req.body;
+        const userId = req.user.userId;
+
+        // Persist to Database
+        await req.db.query('UPDATE users SET is_mfa_enabled = $1 WHERE id = $2', [enabled, userId]);
+
+        await logAudit(req.db, userId, 'mfa_toggle', true, { enabled }, req);
+
+        res.json({
+            success: true,
+            message: enabled ? 'MFA Enabled' : 'MFA Disabled',
+            status: enabled
+        });
+    } catch (error) {
+        console.error("MFA Toggle Error:", error);
+        res.status(500).json({ error: 'Failed to toggle MFA' });
+    }
+});
+
 module.exports = router;

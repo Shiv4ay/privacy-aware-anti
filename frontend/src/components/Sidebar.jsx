@@ -24,8 +24,15 @@ export default function Sidebar({ isOpen, setIsOpen }) {
     { icon: Search, label: 'Search', path: '/search' },
     { icon: MessageSquare, label: 'Chat', path: '/chat' },
     { icon: FileText, label: 'Documents', path: '/documents' },
-    { icon: Upload, label: 'Upload', path: '/documents/upload' },
   ];
+
+  // Logic: Student/Guest cannot upload unless it's a Personal Workspace
+  // const canUpload = (user?.role !== 'student' && user?.role !== 'guest') || user?.organization_type === 'Personal';
+  const canUpload = true; // DEBUG: Force visible
+
+  if (canUpload) {
+    menuItems.push({ icon: Upload, label: 'Upload', path: '/documents/upload' });
+  }
 
   // Role-based items
   if (user?.role === 'super_admin') {
