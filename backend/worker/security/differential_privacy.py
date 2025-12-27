@@ -26,7 +26,8 @@ class DifferentialPrivacy:
         # 2. Distractor Injection
         # If we have more results than top_k, swap one of the top results with a lower one
         # This breaks 'membership inference' by making results less deterministic.
-        if len(results) > 2 and random.random() < 0.2: # 20% chance of distractor injection
+        # Bug fix: Only inject if we have MORE results than top_k
+        if len(results) > top_k and random.random() < 0.2: # 20% chance of distractor injection
             idx_to_replace = random.randint(0, min(len(results), top_k) - 1)
             idx_of_distractor = random.randint(min(len(results), top_k), len(results) - 1)
             

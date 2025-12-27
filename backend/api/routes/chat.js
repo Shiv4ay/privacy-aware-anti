@@ -21,14 +21,15 @@ router.post('/chat', async (req, res) => {
       return res.status(400).json({ error: 'Query is required' });
     }
 
-    const org_id = req.user?.org_id;
+    const org_id = req.user?.org_id || 1; // Default to org 1 if missing (same as search endpoint)
 
     // Call worker's chat endpoint with extended timeout
     const response = await axios.post(`${WORKER_URL}/chat`, {
       query: query.trim(),
-      org_id: org_id || null,
+      org_id: org_id,
       department: req.user?.department || null,
-      user_category: req.user?.user_category || null
+      user_category: req.user?.user_category || null,
+      user_role: req.user?.role || 'student' // Pass user role for RBAC
     }, {
       timeout: 180000 // 3 minutes for Ollama model loading
     });
