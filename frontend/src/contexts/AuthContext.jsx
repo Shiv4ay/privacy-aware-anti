@@ -61,6 +61,12 @@ export function AuthProvider({ children }) {
     console.log('[Auth] Attempting login with fresh credentials:', email);
     const res = await client.post('/auth/login', { email, password });
 
+    // Handle MFA Required state
+    if (res.data.mfaRequired) {
+      console.log('[Auth] MFA Required for:', email);
+      return { mfaRequired: true, mfaToken: res.data.mfaToken };
+    }
+
     // Phase 4 backend returns: { accessToken, refreshToken, user }
     const { accessToken, refreshToken, user: userData } = res.data;
 
@@ -78,13 +84,44 @@ export function AuthProvider({ children }) {
     client.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
 
     // Set user state with organization mapping
-    const user = {
+    const userObj = {
       ...userData,
       organization: userData.org_id || userData.organization,
       organization_type: userData.organization_type
     };
-    setUser(user);
-    console.log('[AuthContext] Login successful:', user.email, 'Org:', user.organization);
+    setUser(userObj);
+    console.log('[AuthContext] Login successful:', userObj.email, 'Org:', userObj.organization);
+
+    return { ...res.data, user: userObj };
+  };
+
+  const verifyMFA = async (otp, mfaToken) => {
+    console.log('[Auth] Attempting MFA verification');
+    const res = await client.post('/auth/mfa/authenticate', { otp, mfaToken });
+
+    const { accessToken, refreshToken, user: userData } = res.data;
+
+    if (!accessToken) {
+      throw new Error('No access token received from server');
+    }
+
+    // Store tokens
+    localStorage.setItem('accessToken', accessToken);
+    if (refreshToken) {
+      localStorage.setItem('refreshToken', refreshToken);
+    }
+
+    // Set authorization header
+    client.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
+
+    // Set user state with organization mapping
+    const userObj = {
+      ...userData,
+      organization: userData.org_id || userData.organization,
+      organization_type: userData.organization_type
+    };
+    setUser(userObj);
+    console.log('[AuthContext] MFA Login successful:', userObj.email);
 
     return res.data;
   };
@@ -105,7 +142,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, verifyMFA }}>
       {children}
     </AuthContext.Provider>
   );

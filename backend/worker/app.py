@@ -41,9 +41,33 @@ from ingestion.web_scraper import WebScraper
 # Initialize Scraper
 scraper = WebScraper()
 
+# ALE Crypto Manager
+try:
+    from security.crypto_manager import CryptoManager
+except ImportError:
+    logger.warning("CryptoManager not found in security.crypto_manager. Encryption will fail if used.")
+    CryptoManager = None
+
+# Phase 4: DP and Retention
+try:
+    from security.differential_privacy import DifferentialPrivacy
+except ImportError:
+    logger.warning("DifferentialPrivacy not found. Search noise disabled.")
+    DifferentialPrivacy = None
+
+RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "365"))
+DP_ENABLED = os.getenv("DP_ENABLED", "TRUE").upper() == "TRUE"
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Phase 3: Guardrail Manager
+try:
+    from security.guardrail_manager import GuardrailManager
+except ImportError:
+    logger.warning("GuardrailManager not found. Security guardrails will be disabled.")
+    GuardrailManager = None
 
 # -----------------------------
 # Configuration
@@ -263,6 +287,7 @@ class SearchRequest(BaseModel):
     department: Optional[str] = None
     user_category: Optional[str] = None
     model_preference: Optional[Dict[str, Any]] = None
+    dp_enabled: Optional[bool] = DP_ENABLED
 
 class ChatRequest(BaseModel):
     query: str
@@ -546,7 +571,12 @@ def generate_chat_response(query: str, context: str = "", model_preference: Opti
     
     # Local Fallback
     try:
-        prompt = f"""You are a helpful AI assistant for a privacy-aware document search system.
+        if GuardrailManager:
+            system_msg = GuardrailManager.SECURE_SYSTEM_PROMPT
+        else:
+            system_msg = "You are a helpful AI assistant for a privacy-aware document search system."
+
+        prompt = f"""System: {system_msg}
 
 Context from documents:
 {context}
@@ -560,26 +590,19 @@ Please provide a helpful and accurate response based on the context provided. If
             json={
                 "model": LOCAL_CHAT_MODEL,
                 "prompt": prompt,
+                "system": system_msg,
                 "stream": False
             },
-            timeout=180  # Increased timeout for initial model loading
+            timeout=180
         )
         response.raise_for_status()
-        # Many Ollama responses contain structured data — try multiple shapes
         j = response.json()
-        if isinstance(j, dict):
-            # first check for 'response' key
-            if "response" in j and isinstance(j["response"], str):
-                return j["response"]
-            # some versions return 'output' or similar
-            if "output" in j and isinstance(j["output"], str):
-                return j["output"]
-            # if 'choices' like OpenAI, try to extract text
-            if "choices" in j and isinstance(j["choices"], list) and j["choices"]:
-                c = j["choices"][0]
-                if isinstance(c, dict) and "message" in c and isinstance(c["message"], str):
-                    return c["message"]
-        return json.dumps(j)  # fallback: return raw json as string
+        raw_text = j.get("response") or j.get("output") or ""
+        
+        # Guardrail Post-processing
+        if GuardrailManager and raw_text:
+            return GuardrailManager.post_process_response(raw_text)
+        return raw_text
     except Exception as e:
         logger.error(f"Chat generation failed: {e}")
         return "I'm sorry, I encountered an error generating a response."
@@ -874,63 +897,83 @@ def process_document_job(job_data: Dict[str, Any]):
                 return
 
             temp_file_path = f"/tmp/{os.path.basename(file_key)}"
+            conn = None
             
             try:
-                # Download file from MinIO
-                minio_client.fget_object(MINIO_BUCKET, file_key, temp_file_path)
-                logger.info(f"Downloaded {file_key} for processing")
-
-                # Extract text
-                text_content = extract_text_from_file(temp_file_path)
-                source_info = file_key
+                # 1. Fetch encryption metadata from DB
+                is_encrypted = False
+                encrypted_dek = None
+                encryption_iv = None
+                encryption_tag = None
+                doc_id = job_data.get("document_id")
                 
-                # Clean up temp file immediately after extraction
+                conn = get_conn()
+                with conn.cursor() as cur:
+                    if doc_id:
+                        cur.execute("SELECT is_encrypted, encrypted_dek, encryption_iv, encryption_tag, metadata, filename FROM documents WHERE id = %s", (doc_id,))
+                    else:
+                        cur.execute("SELECT is_encrypted, encrypted_dek, encryption_iv, encryption_tag, metadata, filename FROM documents WHERE file_key = %s", (file_key,))
+                    
+                    row = cur.fetchone()
+                    if row:
+                        is_encrypted, encrypted_dek, encryption_iv, encryption_tag, db_metadata, db_filename = row
+
+                # 2. Try MinIO download first
                 try:
-                    os.remove(temp_file_path)
-                except:
-                    pass
+                    minio_client.fget_object(MINIO_BUCKET, file_key, temp_file_path)
+                    logger.info(f"Downloaded {file_key} for processing (Encrypted: {is_encrypted})")
+
+                    if is_encrypted:
+                        if not CryptoManager:
+                            raise ValueError("CryptoManager not available for decryption")
+                        
+                        logger.info(f"Decrypting file {file_key}...")
+                        with open(temp_file_path, "rb") as f:
+                            encrypted_data = f.read()
+                        
+                        decrypted_data = CryptoManager.decrypt_envelope(encrypted_data, encrypted_dek, encryption_iv, encryption_tag)
+                        with open(temp_file_path, "wb") as f:
+                            f.write(decrypted_data)
+
+                    text_content = extract_text_from_file(temp_file_path)
+                    source_info = file_key
+                    
+                    try: os.remove(temp_file_path)
+                    except: pass
+
+                except Exception as minio_err:
+                    # 3. Fallback to DB Metadata (could be encrypted too)
+                    logger.warning(f"File-based processing failed for {file_key}: {minio_err}. Using DB metadata...")
+                    
+                    if not row or not db_metadata:
+                        logger.error(f"No metadata found to fall back for {file_key}")
+                        return
+
+                    metadata = db_metadata
+                    if is_encrypted and isinstance(metadata, dict) and "encrypted_content" in metadata:
+                        if not CryptoManager:
+                            raise ValueError("CryptoManager not available for metadata decryption")
+                        
+                        logger.info(f"Decrypting metadata for {file_key}...")
+                        encrypted_metadata_bytes = base64.b64decode(metadata["encrypted_content"])
+                        decrypted_metadata_bytes = CryptoManager.decrypt_envelope(
+                            encrypted_metadata_bytes, encrypted_dek, encryption_iv, encryption_tag
+                        )
+                        metadata = json.loads(decrypted_metadata_bytes.decode('utf-8'))
+
+                    # Construct meaningful text from metadata
+                    text_parts = [f"{k}: {v}" for k, v in metadata.items() if v and k not in ['record_type', 'source', 'row_index']]
+                    text_content = " | ".join(text_parts)
+                    if not text_content:
+                        text_content = f"Document entry for {db_filename or file_key}"
+                    source_info = f"DB Metadata: {db_filename or file_key}"
+
             except Exception as e:
-                # Fallback: check if metadata exists in DB (for CSV rows that are metadata-only)
-                logger.warning(f"MinIO download failed for {file_key}: {e}. Checking DB metadata...")
-                try:
-                    # Try to use document_id if available for faster lookup
-                    doc_id = job_data.get("document_id")
-                    conn = get_conn()
-                    with conn.cursor() as cur:
-                        if doc_id:
-                            cur.execute("SELECT metadata, filename FROM documents WHERE id = %s", (doc_id,))
-                        else:
-                            cur.execute("SELECT metadata, filename FROM documents WHERE file_key = %s", (file_key,))
-                        
-                        row = cur.fetchone()
-                        
-                        if row and row[0]:
-                            metadata = row[0]
-                            filename = row[1]
-                            logger.info(f"Found metadata for {file_key}, reconstructing content")
-                            
-                            if isinstance(metadata, str):
-                                import json
-                                metadata_dict = json.loads(metadata)
-                            else:
-                                metadata_dict = metadata
-                            
-                            # Construct meaningful text from metadata
-                            text_parts = [f"{k}: {v}" for k, v in metadata_dict.items() if v and k not in ['record_type', 'source', 'row_index']]
-                            text_content = " | ".join(text_parts)
-                            if not text_content:
-                                text_content = f"Document entry for {filename}"
-                            source_info = f"DB Metadata: {filename}"
-                        else:
-                            logger.error(f"No metadata found for {file_key}, cannot recover")
-                            return
-                except Exception as db_e:
-                    logger.error(f"Failed to fetch metadata fallback: {db_e}")
-                    # If we can't get metadata, we can't process
-                    return
-                finally:
-                    if conn:
-                        put_conn(conn)
+                logger.error(f"Failed to process {file_key}: {e}")
+                return
+            finally:
+                if conn:
+                    put_conn(conn)
 
         if not text_content:
             logger.warning(f"No text extracted from {source_info}")
@@ -1010,6 +1053,55 @@ def process_document_job(job_data: Dict[str, Any]):
             os.remove(temp_file_path)
         except:
             pass
+
+def start_retention_job():
+    """Starts the daily data retention background job"""
+    def retention_loop():
+        while True:
+            try:
+                logger.info("[RETENTION] Running data lifecycle check...")
+                conn = get_conn()
+                with conn.cursor() as cur:
+                    # 1. Identity purge: Find documents marked as 'deleted' or older than threshold
+                    cur.execute("""
+                        SELECT id, file_key, org_id
+                        FROM documents 
+                        WHERE status = 'deleted' 
+                        OR (created_at < NOW() - INTERVAL '%s days' AND status = 'processed')
+                    """, (RETENTION_DAYS,))
+                    to_purge = cur.fetchall()
+
+                    for doc_id, file_key, doc_org_id in to_purge:
+                        logger.info(f"[RETENTION] Purging document: {file_key}")
+                        
+                        # A. Remove from MinIO
+                        try:
+                            minio_client.remove_object(MINIO_BUCKET, file_key)
+                        except Exception as e:
+                            logger.error(f"[RETENTION] Failed to remove {file_key} from MinIO: {e}")
+
+                        # B. Remove from ChromaDB
+                        try:
+                            # Use org_id to get collection
+                            org_col = get_org_collection(org_id=doc_org_id)
+                            org_col.delete(where={"document_id": str(doc_id)})
+                        except Exception as e:
+                            logger.error(f"[RETENTION] Failed to remove {file_key} from Chroma: {e}")
+
+                        # C. Finally delete from Postgres
+                        cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+                    
+                conn.commit()
+                put_conn(conn)
+                logger.info(f"[RETENTION] Purge complete. Processed {len(to_purge)} documents.")
+            except Exception as e:
+                logger.error(f"[RETENTION] Job error: {e}")
+            
+            # Wait 24 hours
+            time.sleep(86400)
+
+    thread = Thread(target=retention_loop, daemon=True)
+    thread.start()
 
 # -----------------------------
 # Background worker
@@ -1156,12 +1248,14 @@ def search_documents(request: SearchRequest):
             raise HTTPException(status_code=500, detail="Failed to generate query embedding")
 
 
-        # Query ChromaDB
+        # Query ChromaDB (fetch slightly more if noise enabled for distractor injection)
         logger.info(f"SEARCH DEBUG: org_id={request.org_id} org_name={request.organization} query='{request.query}' top_k={request.top_k}")
         org_collection = get_org_collection(org_id=request.org_id, org_name=request.organization)
-        results = chromadb_query([query_embedding], request.top_k, collection=org_collection)
         
-        logger.info(f"CHROMA RAW RESULTS: {results}")
+        fetch_k = request.top_k + 2 if (request.dp_enabled and DifferentialPrivacy) else request.top_k
+        results = chromadb_query([query_embedding], fetch_k, collection=org_collection)
+        
+        logger.info(f"CHROMA RAW RESULTS: {results} (fetched {fetch_k} for DP={request.dp_enabled})")
 
         documents = []
         doc_ids = []
@@ -1182,9 +1276,11 @@ def search_documents(request: SearchRequest):
                 documents.append(DocumentChunk(id=doc_id, text=doc_text, score=score))
                 doc_ids.append(doc_id)
 
-        # NOTE: you should apply document-level access filtering here (use your ABAC logic)
-        # For now we assume the caller has already passed allowed docs, or ABAC is enforced before worker.
-        filtered = documents  # keep as-is; replace with filtering if you implement it
+        # Apply Differential Privacy if enabled
+        if request.dp_enabled and DifferentialPrivacy:
+            documents = DifferentialPrivacy.apply_noise(documents, request.top_k)
+
+        filtered = documents 
 
         # Build audit details
         details = {
@@ -1264,6 +1360,17 @@ async def chat_with_documents(req: Request):
             raise HTTPException(status_code=400, detail="Missing required 'query' (also accepts 'message' or 'prompt'). The request body must be JSON.")
 
         query = query.strip()
+
+        # Phase 3 Guardrails: Query Safety Check
+        if GuardrailManager:
+            is_safe, error_msg = GuardrailManager.check_query(query)
+            if not is_safe:
+                return {
+                    "query": query,
+                    "response": error_msg,
+                    "context_used": False,
+                    "status": "blocked"
+                }
 
         # Build context if not provided using your search_documents function
         if not context:
@@ -2383,9 +2490,11 @@ def search_documents(request: SearchRequest):
                 documents.append(DocumentChunk(id=doc_id, text=doc_text, score=score))
                 doc_ids.append(doc_id)
 
-        # NOTE: you should apply document-level access filtering here (use your ABAC logic)
-        # For now we assume the caller has already passed allowed docs, or ABAC is enforced before worker.
-        filtered = documents  # keep as-is; replace with filtering if you implement it
+        # Apply Differential Privacy if enabled
+        if request.dp_enabled and DifferentialPrivacy:
+            documents = DifferentialPrivacy.apply_noise(documents, request.top_k)
+
+        filtered = documents 
 
         # Build audit details
         details = {
@@ -2425,22 +2534,32 @@ def search_documents(request: SearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 def generate_chat_response(query: str, context: str) -> str:
-    """Generate answer using Ollama with RAG context."""
-    if context:
-        prompt = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer:"
+    """Generate answer using Ollama with RAG context and Guardrails."""
+    if GuardrailManager:
+        system_msg = GuardrailManager.SECURE_SYSTEM_PROMPT
     else:
-        prompt = query
+        system_msg = "You are a helpful AI assistant."
+
+    if context:
+        prompt = f"System: {system_msg}\n\nContext:\n{context}\n\nQuestion: {query}\n\nAnswer:"
+    else:
+        prompt = f"System: {system_msg}\n\nQuestion: {query}\n\nAnswer:"
 
     try:
-        # Use simple generation (not chat) for this basic RAG
         payload = {
             "model": OLLAMA_MODEL,
             "prompt": prompt,
+            "system": system_msg,
             "stream": False
         }
         res = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=60)
         res.raise_for_status()
-        return res.json().get("response", "")
+        raw_response = res.json().get("response", "")
+        
+        # Guardrail Post-processing
+        if GuardrailManager and raw_response:
+            return GuardrailManager.post_process_response(raw_response)
+        return raw_response
     except Exception as e:
         logger.error(f"Ollama generation failed: {e}")
         return "I'm sorry, I encountered an error generating a response."
@@ -2488,6 +2607,18 @@ async def chat_with_documents(req: Request):
             raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body. Provide JSON like {\"query\":\"your question\",\"context\":\"optional\"}")
 
         query = query.strip()
+
+        # Phase 3 Guardrails: Query Safety Check
+        if GuardrailManager:
+            is_safe, error_msg = GuardrailManager.check_query(query)
+            if not is_safe:
+                return {
+                    "query": query,
+                    "response": error_msg,
+                    "context_used": False,
+                    "status": "blocked"
+                }
+
         context = (context.strip() if isinstance(context, str) and context.strip() else None)
 
         # If no context provided, run a short search to assemble context
@@ -2798,6 +2929,10 @@ def startup():
     
     # Log which embed models were configured
     logger.info("Configured Ollama embed models (in preference order): %s", OLLAMA_EMBED_MODELS)
+    
+    # Phase 4: Start Retention Job
+    start_retention_job()
+    
     logger.info("Worker service initialized successfully")
 
 if __name__ == "__main__":

@@ -6,8 +6,8 @@ from pathlib import Path
 from ingest_via_api import upload_csv, CSV_FILES, API_BASE, DATASET_PATH, Colors
 
 # Admin Credentials
-ADMIN_EMAIL = "admin@privacy-aware-rag.local"
-ADMIN_PASSWORD = "password"
+ADMIN_EMAIL = "admin@mit.edu"
+ADMIN_PASSWORD = "password123"
 
 def login():
     """Login and return token + org_id"""

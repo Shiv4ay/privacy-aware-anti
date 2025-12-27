@@ -22,6 +22,7 @@ const { apiLimiter } = require('./middleware/rateLimiter');
 const { sanitizeBody } = require('./middleware/validator');
 const { authenticateJWT } = require('./middleware/authMiddleware');
 const { anomalyDetectionMiddleware } = require('./security/anomalyDetector');
+const { encryptEnvelope } = require('./security/cryptoManager');
 
 // Application Logic
 const { attachUserId } = require('./middleware/attachUserId');
@@ -236,21 +237,26 @@ app.post('/api/upload', authenticateJWT, anomalyDetectionMiddleware, async (req,
                 if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
                 const fileName = req.file.originalname;
-                const filePath = req.file.path;
+                const fileBuffer = fs.readFileSync(req.file.path);
                 const fileKey = `${Date.now()}-${fileName}`;
 
                 try {
-                    const fileStream = fs.createReadStream(filePath);
-                    const fileStats = fs.statSync(filePath);
-                    await minioClient.putObject(BUCKET_NAME, fileKey, fileStream, fileStats.size);
+                    // Encrypt the file using Envelope Encryption
+                    const { encryptedData, encryptedDEK, iv, authTag } = encryptEnvelope(fileBuffer);
+
+                    // Upload encrypted data to MinIO
+                    await minioClient.putObject(BUCKET_NAME, fileKey, encryptedData, encryptedData.length);
 
                     const uploaderId = req.user?.id || (req.user?.sub ? Number(req.user.sub) : null);
                     const result = await pool.query(
-                        'INSERT INTO documents (file_key, filename, status, uploaded_by) VALUES ($1, $2, $3, $4) RETURNING id',
-                        [fileKey, fileName, 'pending', uploaderId]
+                        `INSERT INTO documents 
+                         (file_key, filename, status, uploaded_by, is_encrypted, encrypted_dek, encryption_iv, encryption_tag, file_size) 
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+                         RETURNING id`,
+                        [fileKey, fileName, 'pending', uploaderId, true, encryptedDEK, iv, authTag, req.file.size]
                     );
 
-                    console.log(`[UPLOAD] user=${uploaderId} file=${fileName} key=${fileKey}`);
+                    console.log(`[ALE-UPLOAD] user=${uploaderId} file=${fileName} key=${fileKey} (Encrypted)`);
 
                     const jobData = {
                         key: fileKey,
@@ -299,14 +305,40 @@ app.get('/api/documents', authenticateJWT, async (req, res, next) => {
 // 5. Document Download
 app.get('/api/download/:id', authenticateJWT, anomalyDetectionMiddleware, async (req, res, next) => {
     try {
-        const result = await pool.query('SELECT file_key, filename FROM documents WHERE id = $1', [req.params.id]);
+        const result = await pool.query(
+            'SELECT file_key, filename, is_encrypted, encrypted_dek, encryption_iv, encryption_tag FROM documents WHERE id = $1',
+            [req.params.id]
+        );
         if (result.rows.length === 0) return res.status(404).json({ error: 'Document not found' });
 
-        const { file_key, filename } = result.rows[0];
+        const { file_key, filename, is_encrypted, encrypted_dek, encryption_iv, encryption_tag } = result.rows[0];
+
+        const { decryptEnvelope } = require('./security/cryptoManager');
+
         minioClient.getObject(BUCKET_NAME, file_key, (err, stream) => {
             if (err) return res.status(404).json({ error: 'File not found in storage' });
+
             res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-            stream.pipe(res);
+
+            if (is_encrypted) {
+                const chunks = [];
+                stream.on('data', chunk => chunks.push(chunk));
+                stream.on('end', () => {
+                    try {
+                        const encryptedBuffer = Buffer.concat(chunks);
+                        const decryptedBuffer = decryptEnvelope(encryptedBuffer, encrypted_dek, encryption_iv, encryption_tag);
+                        res.send(decryptedBuffer);
+                    } catch (decErr) {
+                        console.error('[ALE] Download decryption failed:', decErr.message);
+                        res.status(500).json({ error: 'Failed to decrypt document' });
+                    }
+                });
+                stream.on('error', (streamErr) => {
+                    res.status(500).json({ error: 'Stream error during download' });
+                });
+            } else {
+                stream.pipe(res);
+            }
         });
     } catch (error) {
         next(error);
