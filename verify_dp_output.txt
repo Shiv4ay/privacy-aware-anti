@@ -1,0 +1,8 @@
+
+--- Testing: Differential Privacy Jitter Check ---
+Search 1 Result Count: 5
+Search 2 Result Count: 5
+Top Score 1: 0.47503423886164414
+Top Score 2: 0.6429904105695761
+SUCCESS: Jitter detected (Differential Privacy working)
+SUCCESS: Result order changed (Distractor injection triggered)

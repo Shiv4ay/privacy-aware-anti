@@ -62,6 +62,22 @@ function generateRefreshToken(user) {
 }
 
 /**
+ * Generate temporary MFA token (valid for 5 minutes)
+ */
+function generateMFAToken(user) {
+    const payload = {
+        userId: user.user_id || user.userId,
+        type: 'mfa_pending'
+    };
+
+    return jwt.sign(payload, JWT_SECRET, {
+        expiresIn: '5m',
+        algorithm: 'HS256'
+    });
+}
+
+
+/**
  * Verify access token
  */
 function verifyAccessToken(token) {
@@ -104,6 +120,24 @@ function verifyRefreshToken(token) {
         throw new Error(`Refresh token verification failed: ${error.message}`);
     }
 }
+
+/**
+ * Verify MFA pending token
+ */
+function verifyMFAToken(token) {
+    try {
+        const payload = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+
+        if (payload.type !== 'mfa_pending') {
+            throw new Error('Invalid token type');
+        }
+
+        return payload;
+    } catch (error) {
+        throw new Error(`MFA verification failed: ${error.message}`);
+    }
+}
+
 
 /**
  * Invalidate token (add to blacklist)
@@ -157,8 +191,10 @@ module.exports = {
     generateRefreshToken,
     verifyAccessToken,
     verifyRefreshToken,
+    verifyMFAToken,
     invalidateToken,
     isTokenBlacklisted,
     decodeToken,
-    generateTokenPair
+    generateTokenPair,
+    generateMFAToken
 };

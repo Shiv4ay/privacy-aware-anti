@@ -79,10 +79,10 @@ async function authenticateJWT(req, res, next) {
 
             try {
                 const userResult = await req.db.query(
-                    `SELECT id, username, email, role, department, org_id, 
-                    is_active 
+                    `SELECT id, user_id, username, email, role, department, org_id, 
+                    is_active, is_mfa_enabled 
              FROM users 
-             WHERE id = $1`,
+             WHERE user_id = $1`,
                     [payload.userId]
                 );
 
@@ -101,14 +101,15 @@ async function authenticateJWT(req, res, next) {
 
                 // Attach full user to request
                 req.user = {
-                    userId: user.id,
+                    id: user.id,
+                    userId: user.user_id,
                     username: user.username,
                     email: user.email,
                     role: user.role,
                     department: user.department,
                     organizationId: user.org_id,
                     org_id: user.org_id,
-                    // entityId: user.entity_id
+                    is_mfa_enabled: user.is_mfa_enabled
                 };
             } catch (dbError) {
                 console.error('[Auth] Database lookup failed:', dbError);

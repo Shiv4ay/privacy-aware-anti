@@ -10,6 +10,8 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const jwtManager = require('../auth/jwtManager');
 const { authenticateJWT } = require('../middleware/authMiddleware');
+const speakeasy = require('speakeasy');
+const qrcode = require('qrcode');
 
 // ==========================================
 // HELPERS
@@ -174,6 +176,7 @@ router.post('/register', async (req, res) => {
  * Login with email/password
  */
 router.post('/login', async (req, res) => {
+    console.log('[DEBUG] Login attempt for:', req.body.email);
     try {
         let { email, password } = req.body;
         email = (email || '').trim().toLowerCase();
@@ -184,7 +187,7 @@ router.post('/login', async (req, res) => {
 
         // Fetch user
         const result = await req.db.query(
-            `SELECT u.id, u.username, u.email, u.password_hash, u.role, u.org_id, u.department, u.is_active, u.failed_login_attempts, o.type as organization_type
+            `SELECT u.id, u.user_id, u.username, u.email, u.password_hash, u.role, u.org_id, u.department, u.is_active, u.is_mfa_enabled, u.failed_login_attempts, o.type as organization_type
              FROM users u
              LEFT JOIN organizations o ON u.org_id = o.id
              WHERE u.email = $1`,
@@ -205,28 +208,41 @@ router.post('/login', async (req, res) => {
 
         // Verify password
         const isValid = await bcrypt.compare(password, user.password_hash);
+        console.log('[DEBUG] Password valid:', isValid);
 
         if (!isValid) {
+            console.log('[DEBUG] Hash in DB:', user.password_hash);
             // Increment failed attempts
             await req.db.query('UPDATE users SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1 WHERE id = $1', [user.id]);
-            await logAudit(req.db, user.id, 'login_failed', false, { error: 'Invalid password' }, req);
+            await logAudit(req.db, user.user_id, 'login_failed', false, { error: 'Invalid password' }, req);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
         // Reset failed attempts on success
         await req.db.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE id = $1', [user.id]);
 
+        // Check if MFA is required
+        if (user.is_mfa_enabled) {
+            const mfaToken = jwtManager.generateMFAToken({ user_id: user.user_id });
+            await logAudit(req.db, user.user_id, 'mfa_required', true, {}, req);
+            return res.status(200).json({
+                message: 'MFA required',
+                mfaRequired: true,
+                mfaToken
+            });
+        }
+
         // Generate Tokens
-        const tokens = jwtManager.generateTokenPair({ ...user, user_id: user.id });
+        const tokens = jwtManager.generateTokenPair({ ...user, user_id: user.user_id });
 
         // Store Session
         await req.db.query(`
             INSERT INTO auth_sessions 
             (user_id, refresh_token, expires_at, ip_address, user_agent)
             VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4)
-        `, [user.id, tokens.refreshToken, req.ip, req.get('User-Agent')]);
+        `, [user.user_id, tokens.refreshToken, req.ip, req.get('User-Agent')]);
 
-        await logAudit(req.db, user.id, 'login', true, {}, req);
+        await logAudit(req.db, user.user_id, 'login', true, {}, req);
 
         res.json({
             message: 'Login successful',
@@ -364,7 +380,8 @@ router.get('/me', authenticateJWT, async (req, res) => {
                 email: req.user.email,
                 role: req.user.role,
                 department: req.user.department,
-                org_id: req.user.organizationId || req.user.org_id
+                org_id: req.user.organizationId || req.user.org_id,
+                is_mfa_enabled: req.user.is_mfa_enabled
             }
         });
     } catch (error) {
@@ -530,27 +547,221 @@ router.post('/change-password', authenticateJWT, async (req, res) => {
 });
 
 /**
- * POST /api/auth/mfa/toggle
- * Toggle MFA (Simulated for Demo)
+ * POST /api/auth/mfa/setup
+ * Generate initial MFA secret and QR code
  */
-router.post('/mfa/toggle', authenticateJWT, async (req, res) => {
+router.post('/mfa/setup', authenticateJWT, async (req, res) => {
     try {
-        const { enabled } = req.body;
         const userId = req.user.userId;
 
-        // Persist to Database
-        await req.db.query('UPDATE users SET is_mfa_enabled = $1 WHERE id = $2', [enabled, userId]);
+        // Check if already enabled
+        const userRes = await req.db.query('SELECT is_mfa_enabled FROM users WHERE user_id = $1', [userId]);
+        if (userRes.rows[0]?.is_mfa_enabled) {
+            return res.status(400).json({ error: 'MFA is already enabled' });
+        }
 
-        await logAudit(req.db, userId, 'mfa_toggle', true, { enabled }, req);
+        // Generate secret
+        const secret = speakeasy.generateSecret({
+            name: `PrivacyRAG:${req.user.email}`,
+            issuer: 'Privacy-Aware RAG'
+        });
+
+        // Store temporary secret (or update if exists)
+        // We use mfa_secrets table, marked as enabled=false for now
+        await req.db.query(`
+            INSERT INTO mfa_secrets (user_id, secret, enabled)
+            VALUES ($1, $2, FALSE)
+            ON CONFLICT (user_id) DO UPDATE SET secret = $2, enabled = FALSE
+        `, [userId, secret.base32]);
+
+        // Generate QR code
+        const qrCodeUrl = await qrcode.toDataURL(secret.otpauth_url);
 
         res.json({
             success: true,
-            message: enabled ? 'MFA Enabled' : 'MFA Disabled',
-            status: enabled
+            qrCode: qrCodeUrl,
+            manualKey: secret.base32
         });
+
     } catch (error) {
-        console.error("MFA Toggle Error:", error);
-        res.status(500).json({ error: 'Failed to toggle MFA' });
+        console.error('MFA Setup Error:', error);
+        res.status(500).json({ error: 'Failed to initiate MFA setup' });
+    }
+});
+
+/**
+ * POST /api/auth/mfa/verify
+ * Verify OTP to enable MFA
+ */
+router.post('/mfa/verify', authenticateJWT, async (req, res) => {
+    try {
+        const { otp } = req.body;
+        const userId = req.user.userId;
+
+        if (!otp) return res.status(400).json({ error: 'OTP code required' });
+
+        // Get secret
+        const result = await req.db.query('SELECT secret FROM mfa_secrets WHERE user_id = $1', [userId]);
+        if (result.rows.length === 0) {
+            return res.status(400).json({ error: 'MFA setup not initiated' });
+        }
+
+        const secret = result.rows[0].secret;
+
+        // Verify OTP
+        const verified = speakeasy.totp.verify({
+            secret: secret,
+            encoding: 'base32',
+            token: otp,
+            window: 1 // Allow 30s drift
+        });
+
+        if (!verified) {
+            await logAudit(req.db, userId, 'mfa_verify_failed', false, { error: 'Invalid OTP during setup' }, req);
+            return res.status(400).json({ error: 'Invalid OTP code' });
+        }
+
+        // Enable in both tables
+        await req.db.query('UPDATE users SET is_mfa_enabled = TRUE WHERE user_id = $1', [userId]);
+        await req.db.query('UPDATE mfa_secrets SET enabled = TRUE WHERE user_id = $1', [userId]);
+
+        await logAudit(req.db, userId, 'mfa_enabled', true, {}, req);
+
+        res.json({ success: true, message: 'MFA enabled successfully' });
+
+    } catch (error) {
+        console.error('MFA Verify Error:', error);
+        res.status(500).json({ error: 'Failed to verify MFA' });
+    }
+});
+
+/**
+ * POST /api/auth/mfa/authenticate
+ * Verify OTP during login
+ */
+router.post('/mfa/authenticate', async (req, res) => {
+    try {
+        const { otp, mfaToken } = req.body;
+
+        if (!otp || !mfaToken) {
+            return res.status(400).json({ error: 'OTP and MFA token required' });
+        }
+
+        // Verify MFA token
+        let decoded;
+        try {
+            decoded = jwtManager.verifyMFAToken(mfaToken);
+        } catch (e) {
+            return res.status(401).json({ error: 'Session expired, please login again' });
+        }
+
+        const userId = decoded.userId;
+
+        // Get secret
+        const result = await req.db.query(
+            `SELECT m.secret, u.id, u.user_id, u.username, u.email, u.role, u.org_id, u.department, o.type as organization_type
+             FROM mfa_secrets m
+             JOIN users u ON m.user_id = u.user_id
+             LEFT JOIN organizations o ON u.org_id = o.id
+             WHERE m.user_id = $1 AND m.enabled = TRUE`,
+            [userId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(400).json({ error: 'MFA not enabled for this user' });
+        }
+
+        const { secret, ...user } = result.rows[0];
+
+        // Verify OTP
+        const verified = speakeasy.totp.verify({
+            secret: secret,
+            encoding: 'base32',
+            token: otp,
+            window: 1
+        });
+
+        if (!verified) {
+            await logAudit(req.db, userId, 'mfa_auth_failed', false, { error: 'Invalid OTP' }, req);
+            return res.status(401).json({ error: 'Invalid OTP code' });
+        }
+
+        // Generate Full Tokens
+        const tokens = jwtManager.generateTokenPair({ ...user, user_id: user.user_id });
+
+        // Store Session
+        await req.db.query(`
+            INSERT INTO auth_sessions 
+            (user_id, refresh_token, expires_at, ip_address, user_agent)
+            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4)
+        `, [user.user_id, tokens.refreshToken, req.ip, req.get('User-Agent')]);
+
+        await logAudit(req.db, userId, 'login_mfa_success', true, {}, req);
+
+        res.json({
+            message: 'MFA Login successful',
+            user: {
+                userId: user.user_id,
+                username: user.username,
+                email: user.email,
+                role: user.role,
+                org_id: user.org_id,
+                organization_type: user.organization_type,
+                department: user.department
+            },
+            ...tokens
+        });
+
+    } catch (error) {
+        console.error('MFA Auth Error:', error);
+        res.status(500).json({ error: 'MFA authentication failed' });
+    }
+});
+
+/**
+ * POST /api/auth/mfa/disable
+ * Disable MFA (Requires Password)
+ */
+router.post('/mfa/disable', authenticateJWT, async (req, res) => {
+    try {
+        const { password } = req.body;
+        const userId = req.user.userId;
+
+        if (!password) return res.status(400).json({ error: 'Current password required' });
+
+        // Verify password
+        const userRes = await req.db.query('SELECT password_hash FROM users WHERE user_id = $1', [userId]);
+        const isValid = await bcrypt.compare(password, userRes.rows[0].password_hash);
+
+        if (!isValid) {
+            return res.status(401).json({ error: 'Incorrect password' });
+        }
+
+        // Disable
+        await req.db.query('UPDATE users SET is_mfa_enabled = FALSE WHERE user_id = $1', [userId]);
+        await req.db.query('DELETE FROM mfa_secrets WHERE user_id = $1', [userId]);
+
+        await logAudit(req.db, userId, 'mfa_disabled', true, {}, req);
+
+        res.json({ success: true, message: 'MFA disabled' });
+
+    } catch (error) {
+        console.error('MFA Disable Error:', error);
+        res.status(500).json({ error: 'Failed to disable MFA' });
+    }
+});
+
+/**
+ * GET /api/auth/mfa/status
+ * Check if MFA is enabled for current user
+ */
+router.get('/mfa/status', authenticateJWT, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const result = await req.db.query('SELECT is_mfa_enabled FROM users WHERE user_id = $1', [userId]);
+        res.json({ enabled: result.rows[0]?.is_mfa_enabled || false });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to check MFA status' });
     }
 });
 
