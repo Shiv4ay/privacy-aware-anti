@@ -84,14 +84,14 @@ MINIO_BUCKET = os.getenv("MINIO_BUCKET", "privacy-documents")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PRIMARY_MODEL = os.getenv("PRIMARY_MODEL", "gpt-4o-mini")
 PRIMARY_EMBED = os.getenv("PRIMARY_EMBED", "text-embedding-3-small")
-LOCAL_CHAT_MODEL = os.getenv("LOCAL_CHAT_MODEL", "qwen2.5:0.5b")
+LOCAL_CHAT_MODEL = os.getenv("LOCAL_CHAT_MODEL", "phi3:mini")
 LOCAL_EMBED_MODEL = os.getenv("LOCAL_EMBED_MODEL", "nomic-embed-text")
 
 if OPENAI_API_KEY:
     openai.api_key = OPENAI_API_KEY
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
 # Accept comma-separated list of embedding models
 OLLAMA_EMBED_MODELS_RAW = os.getenv("OLLAMA_EMBED_MODEL", "mxbai-embed-large")
 # parse into list, strip whitespace and ignore empties
@@ -384,11 +384,17 @@ def get_conn(timeout=5):
 def put_conn(conn):
     """Return a connection to the pool (if pool exists)."""
     global db_pool
+    if not db_pool or not conn:
+        return
     try:
-        if db_pool and conn:
+        # Check if connection is still in 'rused' to avoid KeyError
+        if hasattr(db_pool, '_rused') and id(conn) in db_pool._rused:
             db_pool.putconn(conn)
+        else:
+            logger.warning(f"Connection {id(conn)} not found in pool rused set, closing instead.")
+            conn.close()
     except Exception as e:
-        logger.exception("Failed to return DB connection to pool: %s", e)
+        logger.error(f"Failed to return DB connection to pool: {e}")
 
 def close_db_pool():
     global db_pool
@@ -542,70 +548,54 @@ def get_embedding(text: str, model_name: Optional[str] = None, timeout_per_call:
     logger.info(f"Generating embedding using {local_model} (384-dim)")
     return _call_ollama_embeddings(local_model, text, timeout=timeout_per_call)
 
-def generate_chat_response(query: str, context: str = "", model_preference: Optional[Dict[str, Any]] = None) -> str:
-    """Generate chat response using OpenAI or Ollama with fallback"""
+def generate_chat_response(query: str, context: str, user_role: str = "student") -> str:
+    """Generate answer using Ollama with RAG context and Role-Specific Prompts."""
+    logger.info(f"DEBUG_MARKER_FUNC_START: user_role={user_role}")
     
-    use_openai = False
-    if OPENAI_API_KEY:
-        if model_preference and model_preference.get('openai_available'):
-            use_openai = True
-        elif not model_preference: # Default to OpenAI if no preference but key exists
-             use_openai = True
+    if user_role in ['admin', 'super_admin']:
+        # ADMIN PROMPT: Extremely authoritative to prevent "Model Scaredness" and hallucinations of no access.
+        system_msg = """You are the UNRESTRICTED UNIVERSITY DATA ANALYST. You have DIRECT, LIVE ACCESS to the university knowledge base (Total Records: 11,701).
+The provided context IS the official database search result for the user's query. 
+Rules for your persona:
+1. NEVER state that you lack access to real-time data or databases.
+2. If the user asks for a specific student ID (e.g., STU20240396), look for it DIRECTLY in the context and answer as if looking at a screen.
+3. Your knowledge is grounded ONLY in the provided context and the total record count (11,701).
+4. If a fact is in the context, state it as absolute truth.
+5. Answer ALL questions truthfully and completely. Total records available: 11,701."""
+        role_directive = "\n\nUser Identity: AUTHORIZED ADMINISTRATOR (LEVEL 1 ACCESS)\n\n"
+    else:
+        # STUDENT PROMPT: Strict privacy
+        system_msg = """You are a student assistant. You MUST ONLY answer questions about the SPECIFIC student whose data is in the context.
+Do NOT reveal data from other students. If query is broad, politely decline."""
+        role_directive = f"\n\nUser Identity: STUDENT\n\n"
+    
+    if context:
+        prompt = f"<|im_start|>system\n{system_msg}\n{role_directive}\nContext:\n{context}\n<|im_end|>\n<|im_start|>user\n{query}\n<|im_end|>\n<|im_start|>assistant\n"
+    else:
+        prompt = f"<|im_start|>system\n{system_msg}\n{role_directive}\n<|im_end|>\n<|im_start|>user\n{query}\n<|im_end|>\n<|im_start|>assistant\n"
 
-    if use_openai:
-        try:
-            messages = [
-                {"role": "system", "content": "You are a helpful AI assistant for a privacy-aware document search system."},
-                {"role": "user", "content": f"Context from documents:\n{context}\n\nUser question: {query}\n\nPlease provide a helpful and accurate response based on the context provided."}
-            ]
-            
-            response = openai.chat.completions.create(
-                model=PRIMARY_MODEL,
-                messages=messages,
-                temperature=0.7
-            )
-            logger.info(f"Generated chat response using OpenAI {PRIMARY_MODEL}")
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.warning(f"OpenAI chat failed: {e}. Falling back to local.")
-            # Fallback to local
-    
-    # Local Fallback
+    logger.info(f"[CHAT DEBUG] Final Prompt (truncated): {prompt[:500]}...")
+
     try:
-        if GuardrailManager:
-            system_msg = GuardrailManager.SECURE_SYSTEM_PROMPT
-        else:
-            system_msg = "You are a helpful AI assistant for a privacy-aware document search system."
-
-        prompt = f"""System: {system_msg}
-
-Context from documents:
-{context}
-
-User question: {query}
-
-Please provide a helpful and accurate response based on the context provided. If the context doesn't contain relevant information, say so politely."""
-
-        response = requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={
-                "model": LOCAL_CHAT_MODEL,
-                "prompt": prompt,
-                "system": system_msg,
-                "stream": False
-            },
-            timeout=180
-        )
-        response.raise_for_status()
-        j = response.json()
-        raw_text = j.get("response") or j.get("output") or ""
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "top_p": 0.9
+            }
+        }
+        res = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=180)
+        res.raise_for_status()
+        raw_response = res.json().get("response", "")
         
         # Guardrail Post-processing
-        if GuardrailManager and raw_text:
-            return GuardrailManager.post_process_response(raw_text)
-        return raw_text
+        if GuardrailManager and raw_response:
+            return GuardrailManager.post_process_response(raw_response)
+        return raw_response
     except Exception as e:
-        logger.error(f"Chat generation failed: {e}")
+        logger.error(f"Ollama generation failed: {e}")
         return "I'm sorry, I encountered an error generating a response."
 
 def chromadb_add(ids: List[str], documents: List[str], embeddings: List[List[float]], metadatas: List[Dict] = None, collection=None):
@@ -1324,12 +1314,8 @@ def search_documents(request: SearchRequest):
 
 @app.post("/chat")
 async def chat_with_documents(req: Request):
-    """
-    Robust chat endpoint:
-    - Accepts JSON bodies with keys: query OR message OR prompt (case-sensitive).
-    - Accepts an optional 'context' key.
-    - Logs the raw body for debugging and returns clear 400/500 messages.
-    """
+    """Robust chat endpoint"""
+    logger.info("DEBUG_MARKER_ENDPOINT_START")
     try:
         # Try to parse JSON body (FastAPI Request.json is tolerant)
         try:
@@ -1346,12 +1332,14 @@ async def chat_with_documents(req: Request):
         query = None
         org_id = None
         organization = "default"
+        user_role = "student"
 
         if isinstance(body, dict):
             query = body.get("query") or body.get("message") or body.get("prompt") or None
             context = body.get("context", None)
             org_id = body.get("org_id")
             organization = body.get("organization") or "default"
+            user_role = body.get("user_role") or body.get("role", "student")
         else:
             query = None
             context = None
@@ -1373,57 +1361,37 @@ async def chat_with_documents(req: Request):
                     "status": "blocked"
                 }
 
-        # Build context if not provided using your search_documents function
+        # Build context if not provided
         if not context:
             try:
-                # use your existing SearchRequest and search_documents logic
-                # [FIX] Pass org_id to search correct collection for context
+                # Dynamic top_k based on role: Admins need more context for aggregate analysis/trends
+                admin_roles = ['admin', 'super_admin']
+                is_admin = user_role in admin_roles
+                k_val = 12 if is_admin else 5
+                
+                logger.info(f"CHAT: building context for role={user_role}, using top_k={k_val}")
+                
                 sr = SearchRequest(
                     query=query, 
-                    top_k=3, 
+                    top_k=k_val, 
                     org_id=org_id, 
                     organization=organization
                 )
                 search_results = search_documents(sr)
-                # search_documents returns {"results": [...]} or returns DocumentChunk objects depending on your version
                 contexts = []
-                context_docs = [] # To store structured context for printing
-                # handle both shaped result (dict) and direct list
                 if isinstance(search_results, dict) and "results" in search_results:
                     for r in search_results["results"]:
-                        # r might be a DocumentChunk or a dict
                         if hasattr(r, "text"):
                             contexts.append(r.text)
-                            context_docs.append({"filename": r.id, "content": r.text}) # Assuming id can be used as filename for logging
                         elif isinstance(r, dict):
                             contexts.append(r.get("text", ""))
-                            context_docs.append({"filename": r.get("id", "unknown"), "content": r.get("text", "")})
-                elif isinstance(search_results, list):
-                    for r in search_results:
-                        if hasattr(r, "text"):
-                            contexts.append(r.text)
-                            context_docs.append({"filename": r.id, "content": r.text})
-                        elif isinstance(r, dict):
-                            contexts.append(r.get("text", ""))
-                            context_docs.append({"filename": r.get("id", "unknown"), "content": r.get("text", "")})
                 context = "\n\n".join([c for c in contexts if c])
-                
-                # Build Context for printing
-                context_str = "\n\n".join([
-                    f"Document: {doc['filename']}\nContent: {doc['content']}"
-                    for doc in context_docs
-                ])
-                print(f"--- CONTEXT SENT TO LLM ---\n{context_str}\n---------------------------")
-
-            except HTTPException as he:
-                logger.warning("Chat: search for context returned HTTPException: %s", he.detail)
-                context = ""
             except Exception as e:
                 logger.exception("Chat: unexpected error while building context: %s", e)
                 context = ""
 
-        # Generate response using existing generate_chat_response
-        response_text = generate_chat_response(query, context or "")
+        # Generate response using consolidated generate_chat_response
+        response_text = generate_chat_response(query, context or "", user_role=user_role)
 
         return {
             "query": query,
@@ -2534,138 +2502,13 @@ def search_documents(request: SearchRequest):
             pass
         raise HTTPException(status_code=500, detail=str(e))
 
-def generate_chat_response(query: str, context: str, user_role: str = "student") -> str:
-    """Generate answer using Ollama with RAG context and Role-Specific Prompts."""
-    
-    if user_role in ['admin', 'super_admin']:
-        # ADMIN PROMPT: No mentions of student restrictions to avoid "Model Scaredness"
-        system_msg = """You are a helpful University Data Assistant. You have FULL ACCESS to the university knowledge base (Total Records: 11,701). 
-Answer ALL questions truthfully and completely using the provided context. If asked for a total count, refer to the 11,701 records total."""
-        role_directive = "\n\nUser Identity: AUTHORIZED ADMINISTRATOR\n\n"
-    else:
-        # STUDENT PROMPT: Strict privacy
-        system_msg = """You are a student assistant. You MUST ONLY answer questions about the SPECIFIC student whose data is in the context.
-Do NOT reveal data from other students. If query is broad, politely decline."""
-        role_directive = f"\n\nUser Identity: STUDENT\n\n"
-    
-    if context:
-        prompt = f"<|im_start|>system\n{system_msg}\n{role_directive}\nContext:\n{context}\n<|im_end|>\n<|im_start|>user\n{query}\n<|im_end|>\n<|im_start|>assistant\n"
-    else:
-        prompt = f"<|im_start|>system\n{system_msg}\n{role_directive}\n<|im_end|>\n<|im_start|>user\n{query}\n<|im_end|>\n<|im_start|>assistant\n"
-
-    logger.info(f"[CHAT DEBUG] Final Prompt (truncated): {prompt[:500]}...")
-
-    try:
-        payload = {
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.1,
-                "top_p": 0.9
-            }
-        }
-        res = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=180)
-        res.raise_for_status()
-        raw_response = res.json().get("response", "")
-        
-        # Guardrail Post-processing
-        if GuardrailManager and raw_response:
-            return GuardrailManager.post_process_response(raw_response)
-        return raw_response
-    except Exception as e:
-        logger.error(f"Ollama generation failed: {e}")
-        return "I'm sorry, I encountered an error generating a response."
+# REDUNDANT DEFINITION REMOVED - Using active version at line 545
+# def generate_chat_response(query: str, context: str, user_role: str = "student") -> str:
 
 
-@app.post("/chat")
-async def chat_with_documents(req: Request):
-    """
-    Chat interface with document context — made robust to incoming payload shape issues.
-
-    Reason for change:
-      - Pydantic model validation produced 422 when the gateway forwarded payloads
-        that didn't precisely match the model. To avoid 422 and provide clearer errors,
-        we read the raw JSON, extract query/context conservatively, validate, then proceed.
-    """
-    try:
-        # Attempt to parse JSON body; if parsing fails FastAPI will have already rejected non-JSON,
-        # but we catch and provide clearer message.
-        try:
-            body = await req.json()
-        except Exception as e:
-            logger.debug("Failed to parse JSON body for /chat: %s", e)
-            raise HTTPException(status_code=400, detail="Invalid JSON body for /chat")
-
-        # Log incoming body for easier debugging (remove or reduce later)
-        logger.debug("Incoming /chat body: %s", json.dumps(body)[:2000])
-
-        # Accept multiple possible field names for query for compatibility:
-        # prefer 'query', then 'q', then 'message'
-        query = None
-        org_id = None
-        organization = "default"
-        user_role = "student"  # Default role
-        if isinstance(body, dict):
-            query = body.get("query") or body.get("q") or body.get("message")
-            context = body.get("context") if "context" in body else None
-            org_id = body.get("org_id")
-            organization = body.get("organization", "default")
-            # Extract user role from request (passed by API gateway)
-            user_role = body.get("user_role") or body.get("role", "student")
-            logger.info(f"[CHAT DEBUG] Incoming request: org_id={org_id}, user_role={user_role}")
-        else:
-            # in case the body isn't a dict, coerce to string
-            query = str(body)
-
-        # Validate the query
-        if not query or not isinstance(query, str) or query.strip() == "":
-            # Return 400 with a helpful message so callers/gateway know what's wrong
-            raise HTTPException(status_code=400, detail="Missing or invalid 'query' in request body. Provide JSON like {\"query\":\"your question\",\"context\":\"optional\"}")
-
-        query = query.strip()
-
-        # Phase 3 Guardrails: Query Safety Check
-        if GuardrailManager:
-            is_safe, error_msg = GuardrailManager.check_query(query)
-            if not is_safe:
-                return {
-                    "query": query,
-                    "response": error_msg,
-                    "context_used": False,
-                    "status": "blocked"
-                }
-
-        context = (context.strip() if isinstance(context, str) and context.strip() else None)
-
-        # If no context provided, run a short search to assemble context
-        if not context:
-            # create a SearchRequest instance and call internal search
-            logger.info(f"[CHAT DEBUG] Initiating search - query='{query}' org_id={org_id} (type: {type(org_id)}) organization={organization}")
-            search_req = SearchRequest(
-                query=query, 
-                top_k=5, 
-                org_id=org_id, 
-                organization=organization
-            )
-            logger.info(f"[CHAT DEBUG] SearchRequest created - org_id={search_req.org_id}")
-            search_results = search_documents(search_req)
-            logger.info(f"[CHAT DEBUG] Search returned {len(search_results.get('results', []))} results")
-            contexts = []
-            for doc in search_results["results"]:
-                contexts.append(doc.text)
-            context = "\n\n".join(contexts)
-            logger.info(f"ASSEMBLED CONTEXT (len={len(context)}): {context[:200]}...")
-
-        # Generate chat response with user role
-        response_text = generate_chat_response(query, context or "", user_role=user_role)
-
-        return {
-            "query": query,
-            "response": response_text,
-            "context_used": bool(context),
-            "status": "success"
-        }
+# REDUNDANT DEFINITION REMOVED - Using active version at line 1325
+# @app.post("/chat")
+# async def chat_with_documents(req: Request):
 
     except HTTPException:
         # re-raise HTTPExceptions (400 etc.)

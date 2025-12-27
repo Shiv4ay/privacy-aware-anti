@@ -202,7 +202,8 @@ export default function Search() {
               <div className="absolute inset-0 border-4 border-premium-gold/50 rounded-full border-t-transparent animate-spin"></div>
               <Sparkles className="absolute inset-0 m-auto w-6 h-6 text-premium-gold animate-pulse" />
             </div>
-            <p className="text-gray-400 text-lg">Analyzing documents...</p>
+            <p className="text-gray-400 text-lg">Querying university index...</p>
+            <p className="text-premium-gold/60 text-xs mt-2 italic">Scanning 11,701 records for best matches</p>
           </div>
         )}
 

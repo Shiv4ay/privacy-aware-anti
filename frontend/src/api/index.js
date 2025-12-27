@@ -40,7 +40,7 @@ const client = axios.create({
   baseURL,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 120000
+  timeout: 300000 // Increased from 120s to 300s to handle slow LLM responses
 })
 
 /**
