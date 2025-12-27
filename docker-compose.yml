@@ -198,6 +198,7 @@ services:
       ALE_MASTER_KEY: ${ALE_MASTER_KEY}
     volumes:
       - embed_meta:/tmp/embed_meta
+      - ./backend/worker:/app
     networks:
       - privacy_aware_net
     deploy:
@@ -213,6 +214,7 @@ services:
       timeout: 5s
       retries: 8
       start_period: 30s
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
 
   # ---------------------------
   # API Gateway (Express)
@@ -257,6 +259,9 @@ services:
       PRIMARY_MODEL: ${PRIMARY_MODEL}
       LOCAL_CHAT_MODEL: ${LOCAL_CHAT_MODEL}
       ALE_MASTER_KEY: ${ALE_MASTER_KEY}
+    volumes:
+      - ./backend/api:/app
+      - /app/node_modules
     networks:
       - privacy_aware_net
     deploy:

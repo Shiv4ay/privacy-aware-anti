@@ -29,9 +29,8 @@ router.post('/chat', async (req, res) => {
       org_id: org_id,
       department: req.user?.department || null,
       user_category: req.user?.user_category || null,
-      user_role: req.user?.role || 'student' // Pass user role for RBAC
     }, {
-      timeout: 180000 // 3 minutes for Ollama model loading
+      timeout: 300000 // 5 minutes for Ollama model loading and complex generation
     });
 
     return res.json(response.data);
@@ -73,7 +72,7 @@ router.post('/search', async (req, res) => {
       department: req.user?.department || null,
       user_category: req.user?.user_category || null
     }, {
-      timeout: 120000
+      timeout: 300000 // 5 minutes for complex queries
     });
 
     return res.json(response.data);

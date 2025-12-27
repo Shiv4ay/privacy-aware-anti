@@ -144,8 +144,8 @@ export default function Chat() {
                 {m.from === 'user' ? 'U' : 'AI'}
               </div>
               <div className={`max-w-[85%] rounded-2xl p-3 shadow-md ${m.from === 'user'
-                  ? 'bg-blue-600/20 border border-blue-500/30 text-blue-100'
-                  : 'bg-white/10 border border-white/10 text-gray-100'
+                ? 'bg-blue-600/20 border border-blue-500/30 text-blue-100'
+                : 'bg-white/10 border border-white/10 text-gray-100'
                 }`}>
                 <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{m.text}</div>
                 {m.contextUsed && m.from === 'ai' && (
@@ -161,17 +161,24 @@ export default function Chat() {
           ))}
 
           {loading && (
-            <div className="flex gap-3 animate-fade-in opacity-70">
-              <div className="w-8 h-8 rounded-full bg-premium-gold flex items-center justify-center flex-shrink-0">
-                <Bot className="w-4 h-4 text-black" />
-              </div>
-              <div className="bg-white/10 rounded-2xl p-3 border border-white/10">
-                <div className="flex gap-1 h-4 items-center">
-                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
-                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75" />
-                  <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150" />
+            <div className="flex flex-col gap-3 animate-fade-in opacity-80">
+              <div className="flex gap-3">
+                <div className="w-8 h-8 rounded-full bg-premium-gold flex items-center justify-center flex-shrink-0 animate-pulse">
+                  <Bot className="w-4 h-4 text-black" />
+                </div>
+                <div className="bg-white/10 rounded-2xl p-3 border border-white/10 relative overflow-hidden">
+                  <div className="flex gap-1 h-4 items-center">
+                    <div className="w-1.5 h-1.5 bg-premium-gold rounded-full animate-bounce" />
+                    <div className="w-1.5 h-1.5 bg-premium-gold rounded-full animate-bounce delay-75" />
+                    <div className="w-1.5 h-1.5 bg-premium-gold rounded-full animate-bounce delay-150" />
+                  </div>
+                  {/* Subtle progress glow */}
+                  <div className="absolute bottom-0 left-0 h-[1px] bg-premium-gold/50 animate-progress-glow" />
                 </div>
               </div>
+              <p className="text-[10px] text-premium-gold/60 pl-11 italic animate-fade-in">
+                Analyzing large university dataset... this may take a moment.
+              </p>
             </div>
           )}
           <div ref={messagesEndRef} />
