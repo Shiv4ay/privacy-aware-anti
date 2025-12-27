@@ -5,6 +5,7 @@ const { Pool } = require('pg');
 const axios = require('axios');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
+const { encryptEnvelope } = require('../security/cryptoManager');
 
 // Database pool
 const pool = new Pool({
@@ -82,7 +83,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         }
 
         const { organization_id, record_type, source_name } = req.body;
-        const userId = req.user.userId;
+        const userId = req.user.id; // Use primary key integer ID for DB FK
         const userOrgId = req.user.organization || req.user.org_id;
 
         // Validate organization access
@@ -168,7 +169,11 @@ router.post('/upload', upload.single('file'), async (req, res) => {
                 const randomSuffix = Math.random().toString(36).substring(7);
                 const fileKey = `${organization_id}/${baseTimestamp}_${docIndex}_${randomSuffix}_${fileName}`;
 
-                values.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, NOW(), $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6}, $${paramIndex + 7}, $${paramIndex + 8}, $${paramIndex + 9}, $${paramIndex + 10})`);
+                // Encrypt the metadata (which contains the actual content)
+                const metadataString = JSON.stringify(doc.metadata);
+                const { encryptedData, encryptedDEK, iv, authTag } = encryptEnvelope(Buffer.from(metadataString));
+
+                values.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, NOW(), $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6}, $${paramIndex + 7}, $${paramIndex + 8}, $${paramIndex + 9}, $${paramIndex + 10}, $${paramIndex + 11}, $${paramIndex + 12}, $${paramIndex + 13}, $${paramIndex + 14})`);
 
                 params.push(
                     fileKey,
@@ -181,16 +186,24 @@ router.post('/upload', upload.single('file'), async (req, res) => {
                     file.mimetype,
                     organization_id,
                     'pending',
-                    JSON.stringify(doc.metadata)
+                    encryptedData.toString('base64'), // Store encrypted metadata as base64 in metadata column? Wait, metadata is JSONB.
+                    // We'll store it as a JSON object containing the encrypted base64 string
+                    true, // is_encrypted
+                    encryptedDEK,
+                    iv,
+                    authTag
                 );
 
-                paramIndex += 11;
+                // Let's reconsider: metadata is JSONB. If we store base64 as one key, it works.
+                params[params.length - 5] = JSON.stringify({ encrypted_content: encryptedData.toString('base64') });
+
+                paramIndex += 15;
             });
 
-            // Execute batch insert
+            // Execute batch insert - Update query with new columns
             const batchQuery = `
                 INSERT INTO documents 
-                (file_key, filename, original_filename, file_path, created_at, uploaded_by, file_size, mime_type, content_type, org_id, status, metadata)
+                (file_key, filename, original_filename, file_path, created_at, uploaded_by, file_size, mime_type, content_type, org_id, status, metadata, is_encrypted, encrypted_dek, encryption_iv, encryption_tag)
                 VALUES ${values.join(', ')}
                 RETURNING id, filename, created_at
             `;

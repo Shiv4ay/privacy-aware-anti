@@ -8,6 +8,9 @@ export default function Settings() {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('general');
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showMfaSetup, setShowMfaSetup] = useState(false);
+  const [showMfaDisable, setShowMfaDisable] = useState(false);
+  const [mfaData, setMfaData] = useState({ qrCode: '', manualKey: '', otp: '', password: '' });
   const [mfaEnabled, setMfaEnabled] = useState(user?.is_mfa_enabled || false);
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
 
@@ -85,15 +88,44 @@ export default function Settings() {
   };
 
   const toggleMFA = async () => {
+    if (mfaEnabled) {
+      setShowMfaDisable(true);
+    } else {
+      try {
+        const res = await client.post('/auth/mfa/setup');
+        setMfaData({ ...mfaData, qrCode: res.data.qrCode, manualKey: res.data.manualKey });
+        setShowMfaSetup(true);
+      } catch (err) {
+        toast.error("Failed to initiate MFA setup");
+      }
+    }
+  };
+
+  const verifyMfaSetup = async () => {
     try {
-      const newState = !mfaEnabled;
-      const res = await client.post('/auth/mfa/toggle', { enabled: newState });
+      const res = await client.post('/auth/mfa/verify', { otp: mfaData.otp });
       if (res.data.success) {
-        setMfaEnabled(newState);
-        toast.success(newState ? "MFA Enabled" : "MFA Disabled");
+        setMfaEnabled(true);
+        setShowMfaSetup(false);
+        setMfaData({ qrCode: '', manualKey: '', otp: '', password: '' });
+        toast.success("MFA enabled successfully");
       }
     } catch (err) {
-      toast.error("Failed to toggle MFA");
+      toast.error(err.response?.data?.error || "Invalid OTP code");
+    }
+  };
+
+  const disableMFA = async () => {
+    try {
+      const res = await client.post('/auth/mfa/disable', { password: mfaData.password });
+      if (res.data.success) {
+        setMfaEnabled(false);
+        setShowMfaDisable(false);
+        setMfaData({ qrCode: '', manualKey: '', otp: '', password: '' });
+        toast.success("MFA disabled");
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Incorrect password");
     }
   };
 
@@ -344,6 +376,78 @@ export default function Settings() {
 
                 <button onClick={handleCreatePassword} className="w-full btn-primary py-3 rounded-xl font-bold mt-4">
                   Update Password
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MFA Setup Modal */}
+        {showMfaSetup && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="glass-panel w-full max-w-md rounded-2xl p-8 relative animate-scaleUp">
+              <button onClick={() => setShowMfaSetup(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
+
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-premium-gold/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Smartphone className="w-8 h-8 text-premium-gold" />
+                </div>
+                <h3 className="text-2xl font-bold text-white">Enable MFA</h3>
+                <p className="text-gray-400 text-sm">Scan this QR code with your authenticator app</p>
+              </div>
+
+              <div className="bg-white p-4 rounded-xl mb-6 mx-auto w-48 h-48 flex items-center justify-center">
+                <img src={mfaData.qrCode} alt="MFA QR Code" className="w-full h-full" />
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-300 block mb-2 text-center uppercase tracking-widest">Verification Code</label>
+                  <input
+                    type="text"
+                    className="glass-input w-full px-4 py-4 rounded-xl text-center text-2xl tracking-[0.5em] font-mono"
+                    placeholder="000000"
+                    maxLength={6}
+                    value={mfaData.otp}
+                    onChange={(e) => setMfaData({ ...mfaData, otp: e.target.value.replace(/\D/g, '') })}
+                  />
+                </div>
+
+                <div className="text-center">
+                  <p className="text-xs text-gray-500 mb-4">Manual Key: <span className="font-mono text-gray-300">{mfaData.manualKey}</span></p>
+                </div>
+
+                <button onClick={verifyMfaSetup} className="w-full btn-primary py-3 rounded-xl font-bold shadow-lg shadow-premium-gold/20">
+                  Verify & Activate
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MFA Disable Modal */}
+        {showMfaDisable && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="glass-panel w-full max-w-md rounded-2xl p-8 relative animate-scaleUp">
+              <button onClick={() => setShowMfaDisable(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
+
+              <div className="text-center mb-6">
+                <Shield className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                <h3 className="text-2xl font-bold text-white">Disable MFA</h3>
+                <p className="text-gray-400 text-sm">For your security, please confirm your password to disable two-factor authentication.</p>
+              </div>
+
+              <div className="space-y-4">
+                <input
+                  type="password"
+                  className="glass-input w-full px-4 py-3 rounded-xl"
+                  placeholder="Your Account Password"
+                  value={mfaData.password}
+                  onChange={(e) => setMfaData({ ...mfaData, password: e.target.value })}
+                />
+
+                <button onClick={disableMFA} className="w-full bg-red-500 hover:bg-red-600 text-white py-3 rounded-xl font-bold transition-colors">
+                  Disable MFA
                 </button>
               </div>
             </div>

@@ -25,27 +25,27 @@ CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id);
 -- Step 6: Update Phase 4 tables to use VARCHAR user_id
 -- auth_sessions
 ALTER TABLE auth_sessions DROP CONSTRAINT IF EXISTS auth_sessions_user_id_fkey;
-ALTER TABLE auth_sessions ALTER COLUMN user_id TYPE VARCHAR(20);
+ALTER TABLE auth_sessions ALTER COLUMN user_id TYPE VARCHAR(20) USING 'USR' || LPAD(user_id::text, 5, '0');
 ALTER TABLE auth_sessions 
   ADD CONSTRAINT auth_sessions_user_id_fkey 
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE;
 
 -- password_reset_tokens
 ALTER TABLE password_reset_tokens DROP CONSTRAINT IF EXISTS password_reset_tokens_user_id_fkey;
-ALTER TABLE password_reset_tokens ALTER COLUMN user_id TYPE VARCHAR(20);
+ALTER TABLE password_reset_tokens ALTER COLUMN user_id TYPE VARCHAR(20) USING 'USR' || LPAD(user_id::text, 5, '0');
 ALTER TABLE password_reset_tokens 
   ADD CONSTRAINT password_reset_tokens_user_id_fkey 
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE;
 
 -- password_history
 ALTER TABLE password_history DROP CONSTRAINT IF EXISTS password_history_user_id_fkey;
-ALTER TABLE password_history ALTER COLUMN user_id TYPE VARCHAR(20);
+ALTER TABLE password_history ALTER COLUMN user_id TYPE VARCHAR(20) USING 'USR' || LPAD(user_id::text, 5, '0');
 ALTER TABLE password_history 
   ADD CONSTRAINT password_history_user_id_fkey 
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE;
 
 -- audit_log
-ALTER TABLE audit_log ALTER COLUMN user_id TYPE VARCHAR(20);
+ALTER TABLE audit_log ALTER COLUMN user_id TYPE VARCHAR(20) USING 'USR' || LPAD(user_id::text, 5, '0');
 
 -- Step 7: Recreate mfa_secrets with VARCHAR user_id as primary key
 CREATE TABLE mfa_secrets (
