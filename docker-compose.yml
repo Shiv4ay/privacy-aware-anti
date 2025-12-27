@@ -189,7 +189,7 @@ services:
       CHROMADB_URL: http://chromadb:8000
       TOP_K: ${TOP_K}
       DB_MIN_CONN: ${DB_MIN_CONN:-1}
-      DB_MAX_CONN: ${DB_MAX_CONN:-6}
+      DB_MAX_CONN: ${DB_MAX_CONN:-20}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       PRIMARY_MODEL: ${PRIMARY_MODEL}
       PRIMARY_EMBED: ${PRIMARY_EMBED}

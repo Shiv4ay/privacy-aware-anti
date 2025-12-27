@@ -14,6 +14,7 @@ import uuid
 import asyncio
 import logging
 import re
+import base64
 import hashlib
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -83,7 +84,7 @@ MINIO_BUCKET = os.getenv("MINIO_BUCKET", "privacy-documents")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 PRIMARY_MODEL = os.getenv("PRIMARY_MODEL", "gpt-4o-mini")
 PRIMARY_EMBED = os.getenv("PRIMARY_EMBED", "text-embedding-3-small")
-LOCAL_CHAT_MODEL = os.getenv("LOCAL_CHAT_MODEL", "phi3:mini")
+LOCAL_CHAT_MODEL = os.getenv("LOCAL_CHAT_MODEL", "qwen2.5:0.5b")
 LOCAL_EMBED_MODEL = os.getenv("LOCAL_EMBED_MODEL", "nomic-embed-text")
 
 if OPENAI_API_KEY:
@@ -270,7 +271,7 @@ app = FastAPI(title="Privacy-Aware RAG Worker", version="1.0.0")
 # -----------------------------
 # Note: chromadb client usage depends on installed client version; adapt if required.
 chroma_client = chromadb.HttpClient(host=CHROMADB_HOST, port=CHROMADB_PORT)
-chroma_collection = chroma_client.get_or_create_collection(name=CHROMADB_COLLECTION)
+chroma_collection = chroma_client.get_or_create_collection(name="privacy_documents_1")
 
 # -----------------------------
 # Pydantic models
@@ -1694,7 +1695,7 @@ if __name__ == "__main__":
 # # -----------------------------
 # # Note: chromadb client usage depends on installed client version; adapt if required.
 # chroma_client = chromadb.HttpClient(host=CHROMADB_HOST, port=CHROMADB_PORT)
-# chroma_collection = chroma_client.get_or_create_collection(name=CHROMADB_COLLECTION)
+# chroma_collection = chroma_client.get_or_create_collection(name="privacy_documents_1")
 
 # # -----------------------------
 # # Pydantic models
@@ -2533,26 +2534,38 @@ def search_documents(request: SearchRequest):
             pass
         raise HTTPException(status_code=500, detail=str(e))
 
-def generate_chat_response(query: str, context: str) -> str:
-    """Generate answer using Ollama with RAG context and Guardrails."""
-    if GuardrailManager:
-        system_msg = GuardrailManager.SECURE_SYSTEM_PROMPT
+def generate_chat_response(query: str, context: str, user_role: str = "student") -> str:
+    """Generate answer using Ollama with RAG context and Role-Specific Prompts."""
+    
+    if user_role in ['admin', 'super_admin']:
+        # ADMIN PROMPT: No mentions of student restrictions to avoid "Model Scaredness"
+        system_msg = """You are a helpful University Data Assistant. You have FULL ACCESS to the university knowledge base (Total Records: 11,701). 
+Answer ALL questions truthfully and completely using the provided context. If asked for a total count, refer to the 11,701 records total."""
+        role_directive = "\n\nUser Identity: AUTHORIZED ADMINISTRATOR\n\n"
     else:
-        system_msg = "You are a helpful AI assistant."
-
+        # STUDENT PROMPT: Strict privacy
+        system_msg = """You are a student assistant. You MUST ONLY answer questions about the SPECIFIC student whose data is in the context.
+Do NOT reveal data from other students. If query is broad, politely decline."""
+        role_directive = f"\n\nUser Identity: STUDENT\n\n"
+    
     if context:
-        prompt = f"System: {system_msg}\n\nContext:\n{context}\n\nQuestion: {query}\n\nAnswer:"
+        prompt = f"<|im_start|>system\n{system_msg}\n{role_directive}\nContext:\n{context}\n<|im_end|>\n<|im_start|>user\n{query}\n<|im_end|>\n<|im_start|>assistant\n"
     else:
-        prompt = f"System: {system_msg}\n\nQuestion: {query}\n\nAnswer:"
+        prompt = f"<|im_start|>system\n{system_msg}\n{role_directive}\n<|im_end|>\n<|im_start|>user\n{query}\n<|im_end|>\n<|im_start|>assistant\n"
+
+    logger.info(f"[CHAT DEBUG] Final Prompt (truncated): {prompt[:500]}...")
 
     try:
         payload = {
             "model": OLLAMA_MODEL,
             "prompt": prompt,
-            "system": system_msg,
-            "stream": False
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "top_p": 0.9
+            }
         }
-        res = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=60)
+        res = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=180)
         res.raise_for_status()
         raw_response = res.json().get("response", "")
         
@@ -2592,11 +2605,15 @@ async def chat_with_documents(req: Request):
         query = None
         org_id = None
         organization = "default"
+        user_role = "student"  # Default role
         if isinstance(body, dict):
             query = body.get("query") or body.get("q") or body.get("message")
             context = body.get("context") if "context" in body else None
             org_id = body.get("org_id")
             organization = body.get("organization", "default")
+            # Extract user role from request (passed by API gateway)
+            user_role = body.get("user_role") or body.get("role", "student")
+            logger.info(f"[CHAT DEBUG] Incoming request: org_id={org_id}, user_role={user_role}")
         else:
             # in case the body isn't a dict, coerce to string
             query = str(body)
@@ -2624,21 +2641,24 @@ async def chat_with_documents(req: Request):
         # If no context provided, run a short search to assemble context
         if not context:
             # create a SearchRequest instance and call internal search
+            logger.info(f"[CHAT DEBUG] Initiating search - query='{query}' org_id={org_id} (type: {type(org_id)}) organization={organization}")
             search_req = SearchRequest(
                 query=query, 
-                top_k=3, 
+                top_k=5, 
                 org_id=org_id, 
                 organization=organization
             )
+            logger.info(f"[CHAT DEBUG] SearchRequest created - org_id={search_req.org_id}")
             search_results = search_documents(search_req)
+            logger.info(f"[CHAT DEBUG] Search returned {len(search_results.get('results', []))} results")
             contexts = []
             for doc in search_results["results"]:
                 contexts.append(doc.text)
             context = "\n\n".join(contexts)
             logger.info(f"ASSEMBLED CONTEXT (len={len(context)}): {context[:200]}...")
 
-        # Generate chat response
-        response_text = generate_chat_response(query, context or "")
+        # Generate chat response with user role
+        response_text = generate_chat_response(query, context or "", user_role=user_role)
 
         return {
             "query": query,
@@ -2794,7 +2814,7 @@ async def process_documents_batch(org_id: int, batch_size: int = 100, max_docume
         
         while True:
             cursor.execute("""
-                SELECT id, filename, metadata, file_key
+                SELECT id, filename, metadata, file_key, is_encrypted, encrypted_dek, encryption_iv, encryption_tag
                 FROM documents
                 WHERE org_id = %s AND status = 'pending'
                 ORDER BY created_at ASC
@@ -2805,14 +2825,31 @@ async def process_documents_batch(org_id: int, batch_size: int = 100, max_docume
             if not docs:
                 break
             
-            for doc_id, filename, metadata, file_key in docs:
+            for doc_id, filename, metadata, file_key, is_encrypted, encrypted_dek, encryption_iv, encryption_tag in docs:
                 try:
                     if isinstance(metadata, str):
-                        import json
                         metadata_dict = json.loads(metadata)
                     else:
                         metadata_dict = metadata or {}
                     
+                    # Phase 2: Handle ALE Decryption if document is encrypted
+                    if is_encrypted and CryptoManager:
+                        try:
+                            encrypted_b64 = metadata_dict.get("encrypted_content")
+                            if encrypted_b64:
+                                encrypted_bytes = base64.b64decode(encrypted_b64)
+                                decrypted_bytes = CryptoManager.decrypt_envelope(
+                                    encrypted_bytes, 
+                                    encrypted_dek, 
+                                    encryption_iv, 
+                                    encryption_tag
+                                )
+                                metadata_dict = json.loads(decrypted_bytes.decode('utf-8'))
+                                logger.info(f"Successfully decrypted doc {doc_id} for indexing")
+                        except Exception as e:
+                            logger.error(f"Failed to decrypt doc {doc_id}: {e}")
+                            # Fallback: continue with encrypted metadata (will show as garbage)
+
                     text_parts = [f"{k}: {v}" for k, v in metadata_dict.items() if v]
                     text = " | ".join(text_parts) if text_parts else f"Document from {filename}"
                     
