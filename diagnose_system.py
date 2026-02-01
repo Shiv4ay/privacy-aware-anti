@@ -6,7 +6,7 @@ import json
 # Configuration
 WORKER_URL = "http://localhost:8001"
 API_URL = "http://localhost:3001"
-TEST_QUERY = "attendance"
+TEST_QUERY = "Margaret Johnson"
 
 def test_worker():
     print(f"\n--- Testing Worker directly ({WORKER_URL}/search) ---")

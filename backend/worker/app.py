@@ -326,17 +326,18 @@ class DocumentChunk(BaseModel):
 # Privacy helpers (redaction + hashing)
 # -----------------------------
 EMAIL_RE = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')
-PHONE_RE = re.compile(r'\b(?:\+?\d{1,3}[-.\s]?)?(?:\d[-.\s]?){6,14}\b')
+PHONE_RE = re.compile(r'\b(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}(?:x\d+)?\b')
 SSN_RE = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
 
 PII_PATTERNS = [EMAIL_RE, PHONE_RE, SSN_RE]
 
-def redact_text(text: str, replacement='[REDACTED]') -> str:
+def redact_text(text: str) -> str:
     if not text:
         return text
     out = text
-    for p in PII_PATTERNS:
-        out = p.sub(replacement, out)
+    out = EMAIL_RE.sub('[EMAIL_REDACTED]', out)
+    out = SSN_RE.sub('[SSN_REDACTED]', out)
+    out = PHONE_RE.sub('[PHONE_REDACTED]', out)
     return out
 
 def hash_query(text: str) -> str:
@@ -554,20 +555,26 @@ def generate_chat_response(query: str, context: str, user_role: str = "student")
     
     if user_role in ['admin', 'super_admin']:
         # ADMIN PROMPT: Extremely authoritative to prevent "Model Scaredness" and hallucinations of no access.
-        system_msg = """You are the UNRESTRICTED UNIVERSITY DATA ANALYST. You have DIRECT, LIVE ACCESS to the university knowledge base (Total Records: 11,701).
-The provided context IS the official database search result for the user's query. 
-Rules for your persona:
-1. NEVER state that you lack access to real-time data or databases.
-2. If the user asks for a specific student ID (e.g., STU20240396), look for it DIRECTLY in the context and answer as if looking at a screen.
-3. Your knowledge is grounded ONLY in the provided context and the total record count (11,701).
-4. If a fact is in the context, state it as absolute truth.
-5. Answer ALL questions truthfully and completely. Total records available: 11,701."""
-        role_directive = "\n\nUser Identity: AUTHORIZED ADMINISTRATOR (LEVEL 1 ACCESS)\n\n"
+        system_msg = """You are the UNIVERSITY DATA SYSTEMS ANALYST. You have ACTIVE ACCESS to the university records database via a secure RAG pipeline.
+The SEARCH RESULTS provided below ARE the direct excerpts from the university database for your current query.
+
+Rules:
+1. DO NOT say you cannot access databases. You ARE currently viewing the database results in the context.
+2. If the user asks for a specific student, name, or GPA, extract it from the context exactly as it appears.
+3. Be professional, data-driven, and authoritative.
+4. If the data is not in the context, state: 'The record was not found in the current search scope.'"""
+        role_directive = "\n\n[ADMINISTRATIVE ACCESS GRANTED]\n\n"
     else:
-        # STUDENT PROMPT: Strict privacy
-        system_msg = """You are a student assistant. You MUST ONLY answer questions about the SPECIFIC student whose data is in the context.
-Do NOT reveal data from other students. If query is broad, politely decline."""
-        role_directive = f"\n\nUser Identity: STUDENT\n\n"
+        # STUDENT PROMPT: Strict but clearer
+        system_msg = """You are a SECURE STUDENT ASSISTANT. Your task is to extract information from the provided SEARCH RESULTS.
+Only answer based on the data provided in the context below. 
+
+Rules:
+1. If the record for the requested student is present, provide the details accurately.
+2. If multiple records are present, only answer for the one that best matches the query.
+3. If no record is found in the context, explain that the database search for that specific query yielded no matches.
+4. NEVER mention that you are an AI or lack access to databases. You are a secure portal for this specific data view."""
+        role_directive = f"\n\n[STUDENT PORTAL ACCESS]\n\n"
     
     if context:
         prompt = f"<|im_start|>system\n{system_msg}\n{role_directive}\nContext:\n{context}\n<|im_end|>\n<|im_start|>user\n{query}\n<|im_end|>\n<|im_start|>assistant\n"

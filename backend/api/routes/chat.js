@@ -27,6 +27,7 @@ router.post('/chat', async (req, res) => {
     const response = await axios.post(`${WORKER_URL}/chat`, {
       query: query.trim(),
       org_id: org_id,
+      user_role: req.user?.role || 'student',
       department: req.user?.department || null,
       user_category: req.user?.user_category || null,
     }, {
