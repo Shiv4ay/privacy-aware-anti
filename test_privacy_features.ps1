@@ -3,7 +3,7 @@
 # Tests: Query Redaction, RBAC, Audit Logging
 
 $API_URL = "http://localhost:3001"
-$TOKEN = "super-secret-dev-key"  # Dev auth token
+$TOKEN = "super-secret-dev-key"
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Privacy Features Test Suite" -ForegroundColor Cyan
@@ -13,123 +13,94 @@ Write-Host ""
 # Test 1: Query with PII - Email
 Write-Host "Test 1: Search Query with Email (PII Detection)" -ForegroundColor Yellow
 Write-Host "Query: 'Find documents about john.doe@example.com'" -ForegroundColor Gray
-$queryWithEmail = @{
-    q = "Find documents about john.doe@example.com"
-} | ConvertTo-Json
+$queryWithEmail = @{ query = "Find documents about john.doe@example.com" } | ConvertTo-Json
 
 try {
-    $response = Invoke-RestMethod -Uri "$API_URL/api/search" `
-        -Method POST `
-        -Headers @{
-            "Authorization" = "Bearer $TOKEN"
-            "x-dev-auth" = $TOKEN
-            "Content-Type" = "application/json"
-        } `
-        -Body $queryWithEmail `
-        -ErrorAction Stop
+    $response = Invoke-RestMethod -Uri "$API_URL/api/search" -Method POST -Headers @{
+        "Authorization" = "Bearer $TOKEN"
+        "x-dev-auth" = $TOKEN
+        "Content-Type" = "application/json"
+    } -Body $queryWithEmail -ErrorAction Stop
     
-    Write-Host "✓ Search successful" -ForegroundColor Green
+    Write-Host "[PASS] Search successful" -ForegroundColor Green
     Write-Host "  Original Query: $($response.query)" -ForegroundColor White
     if ($response.query_redacted) {
         Write-Host "  Redacted Query: $($response.query_redacted)" -ForegroundColor Yellow
-        Write-Host "  ✓ PII Redaction Working!" -ForegroundColor Green
-    } else {
-        Write-Host "  ⚠ query_redacted field not in response" -ForegroundColor Yellow
+        Write-Host "  [PASS] PII Redaction Working!" -ForegroundColor Green
     }
     Write-Host "  Results: $($response.total_found)" -ForegroundColor White
 } catch {
-    Write-Host "✗ Search failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "[FAIL] Search failed: $($_.Exception.Message)" -ForegroundColor Red
 }
 Write-Host ""
 
 # Test 2: Query with Phone Number
 Write-Host "Test 2: Search Query with Phone Number (PII Detection)" -ForegroundColor Yellow
 Write-Host "Query: 'Contact info for 555-123-4567'" -ForegroundColor Gray
-$queryWithPhone = @{
-    q = "Contact info for 555-123-4567"
-} | ConvertTo-Json
+$queryWithPhone = @{ query = "Contact info for 555-123-4567" } | ConvertTo-Json
 
 try {
-    $response = Invoke-RestMethod -Uri "$API_URL/api/search" `
-        -Method POST `
-        -Headers @{
-            "Authorization" = "Bearer $TOKEN"
-            "x-dev-auth" = $TOKEN
-            "Content-Type" = "application/json"
-        } `
-        -Body $queryWithPhone `
-        -ErrorAction Stop
+    $response = Invoke-RestMethod -Uri "$API_URL/api/search" -Method POST -Headers @{
+        "Authorization" = "Bearer $TOKEN"
+        "x-dev-auth" = $TOKEN
+        "Content-Type" = "application/json"
+    } -Body $queryWithPhone -ErrorAction Stop
     
-    Write-Host "✓ Search successful" -ForegroundColor Green
+    Write-Host "[PASS] Search successful" -ForegroundColor Green
     Write-Host "  Original Query: $($response.query)" -ForegroundColor White
     if ($response.query_redacted) {
         Write-Host "  Redacted Query: $($response.query_redacted)" -ForegroundColor Yellow
-        Write-Host "  ✓ PII Redaction Working!" -ForegroundColor Green
+        Write-Host "  [PASS] PII Redaction Working!" -ForegroundColor Green
     }
 } catch {
-    Write-Host "✗ Search failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "[FAIL] Search failed: $($_.Exception.Message)" -ForegroundColor Red
 }
 Write-Host ""
 
 # Test 3: Query with SSN
 Write-Host "Test 3: Search Query with SSN (PII Detection)" -ForegroundColor Yellow
 Write-Host "Query: 'Employee with SSN 123-45-6789'" -ForegroundColor Gray
-$queryWithSSN = @{
-    q = "Employee with SSN 123-45-6789"
-} | ConvertTo-Json
+$queryWithSSN = @{ query = "Employee with SSN 123-45-6789" } | ConvertTo-Json
 
 try {
-    $response = Invoke-RestMethod -Uri "$API_URL/api/search" `
-        -Method POST `
-        -Headers @{
-            "Authorization" = "Bearer $TOKEN"
-            "x-dev-auth" = $TOKEN
-            "Content-Type" = "application/json"
-        } `
-        -Body $queryWithSSN `
-        -ErrorAction Stop
+    $response = Invoke-RestMethod -Uri "$API_URL/api/search" -Method POST -Headers @{
+        "Authorization" = "Bearer $TOKEN"
+        "x-dev-auth" = $TOKEN
+        "Content-Type" = "application/json"
+    } -Body $queryWithSSN -ErrorAction Stop
     
-    Write-Host "✓ Search successful" -ForegroundColor Green
+    Write-Host "[PASS] Search successful" -ForegroundColor Green
     Write-Host "  Original Query: $($response.query)" -ForegroundColor White
     if ($response.query_redacted) {
         Write-Host "  Redacted Query: $($response.query_redacted)" -ForegroundColor Yellow
-        Write-Host "  ✓ PII Redaction Working!" -ForegroundColor Green
+        Write-Host "  [PASS] PII Redaction Working!" -ForegroundColor Green
     }
 } catch {
-    Write-Host "✗ Search failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "[FAIL] Search failed: $($_.Exception.Message)" -ForegroundColor Red
 }
 Write-Host ""
 
 # Test 4: Normal Query (No PII)
 Write-Host "Test 4: Normal Query Without PII" -ForegroundColor Yellow
 Write-Host "Query: 'What is GDPR compliance?'" -ForegroundColor Gray
-$normalQuery = @{
-    q = "What is GDPR compliance?"
-} | ConvertTo-Json
+$normalQuery = @{ query = "What is GDPR compliance?" } | ConvertTo-Json
 
 try {
-    $response = Invoke-RestMethod -Uri "$API_URL/api/search" `
-        -Method POST `
-        -Headers @{
-            "Authorization" = "Bearer $TOKEN"
-            "x-dev-auth" = $TOKEN
-            "Content-Type" = "application/json"
-        } `
-        -Body $normalQuery `
-        -ErrorAction Stop
+    $response = Invoke-RestMethod -Uri "$API_URL/api/search" -Method POST -Headers @{
+        "Authorization" = "Bearer $TOKEN"
+        "x-dev-auth" = $TOKEN
+        "Content-Type" = "application/json"
+    } -Body $normalQuery -ErrorAction Stop
     
-    Write-Host "✓ Search successful" -ForegroundColor Green
+    Write-Host "[PASS] Search successful" -ForegroundColor Green
     Write-Host "  Query: $($response.query)" -ForegroundColor White
     Write-Host "  Results: $($response.total_found)" -ForegroundColor White
-    if ($response.results) {
-        Write-Host "  Sample result count: $($response.results.Count)" -ForegroundColor White
-    }
 } catch {
-    Write-Host "✗ Search failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "[FAIL] Search failed: $($_.Exception.Message)" -ForegroundColor Red
 }
 Write-Host ""
 
-# Test 5: Check Audit Logs (if endpoint exists)
+# Test 5: Audit Log Info
 Write-Host "Test 5: Verify Audit Logging" -ForegroundColor Yellow
 Write-Host "Note: Check database audit_logs table for:" -ForegroundColor Gray
 Write-Host "  - query_hash (hashed queries)" -ForegroundColor Gray
@@ -137,10 +108,10 @@ Write-Host "  - query_redacted (redacted queries)" -ForegroundColor Gray
 Write-Host "  - user_id, action, timestamp" -ForegroundColor Gray
 Write-Host ""
 Write-Host "To view audit logs, run:" -ForegroundColor Cyan
-Write-Host "  docker exec -it privacy-aware-postgres psql -U postgres -d privacy_aware_db -c `"SELECT query_redacted, query_hash, action, timestamp FROM audit_logs ORDER BY timestamp DESC LIMIT 5;`"" -ForegroundColor White
+Write-Host '  docker exec -it privacy-aware-postgres psql -U admin -d privacy_aware_db -c "SELECT query_redacted, action, timestamp FROM audit_logs ORDER BY timestamp DESC LIMIT 5;"' -ForegroundColor White
 Write-Host ""
 
-# Test 6: RBAC Test (if you have restricted user)
+# Test 6: RBAC Info
 Write-Host "Test 6: RBAC Access Control" -ForegroundColor Yellow
 Write-Host "To test RBAC:" -ForegroundColor Gray
 Write-Host "  1. Create a user with restricted role" -ForegroundColor Gray
@@ -157,4 +128,3 @@ Write-Host "  1. Check frontend at http://localhost:3000" -ForegroundColor White
 Write-Host "  2. Test search with PII in the UI" -ForegroundColor White
 Write-Host "  3. Verify privacy warnings appear" -ForegroundColor White
 Write-Host "  4. Check audit logs in database" -ForegroundColor White
-

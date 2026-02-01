@@ -264,7 +264,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 
 /**
  * GET /api/documents/stats
- * Get document statistics for current user/org
+ * Get comprehensive document statistics
  */
 router.get('/stats', async (req, res) => {
     try {
@@ -278,31 +278,49 @@ router.get('/stats', async (req, res) => {
         let params;
 
         if (req.user.role === 'super_admin') {
-            query = 'SELECT COUNT(*) as count FROM documents';
+            query = `
+                SELECT 
+                    COUNT(*) as total_documents,
+                    COUNT(DISTINCT filename) as total_files,
+                    COALESCE(SUM(file_size), 0) as total_storage,
+                    MAX(created_at) as latest_upload,
+                    COUNT(CASE WHEN status = 'processed' THEN 1 END) as processed,
+                    COUNT(CASE WHEN status IN ('pending', 'processing') THEN 1 END) as pending
+                FROM documents
+            `;
             params = [];
         } else {
-            query = 'SELECT COUNT(*) as count FROM documents WHERE org_id = $1';
+            query = `
+                SELECT 
+                    COUNT(*) as total_documents,
+                    COUNT(DISTINCT filename) as total_files,
+                    COALESCE(SUM(file_size), 0) as total_storage,
+                    MAX(created_at) as latest_upload,
+                    COUNT(CASE WHEN status = 'processed' THEN 1 END) as processed,
+                    COUNT(CASE WHEN status IN ('pending', 'processing') THEN 1 END) as pending
+                FROM documents 
+                WHERE org_id = $1
+            `;
             params = [userOrgId];
         }
 
         const result = await pool.query(query, params);
+        const stats = result.rows[0];
 
-        // Also try to get search count from audit_log
-        let searchCount = 0;
-        try {
-            const searchRes = await pool.query(
-                "SELECT COUNT(*) as count FROM audit_log WHERE action = 'search' AND user_id = $1",
-                [req.user.userId]
-            );
-            searchCount = parseInt(searchRes.rows[0]?.count || 0);
-        } catch (e) {
-            // Ignore audit log errors
-        }
+        // Ensure numbers are numbers (Postgres BIGINT comes as string)
+        const formattedStats = {
+            total_documents: parseInt(stats.total_documents),
+            total_files: parseInt(stats.total_files),
+            total_storage: parseInt(stats.total_storage),
+            latest_upload: stats.latest_upload,
+            processed: parseInt(stats.processed),
+            pending: parseInt(stats.pending)
+        };
 
         res.json({
             success: true,
-            total_documents: parseInt(result.rows[0].count),
-            total_searches: searchCount
+            documents: stats, // Keeping this for backward compatibility if needed, but structure changed
+            ...formattedStats
         });
 
     } catch (error) {
@@ -313,44 +331,86 @@ router.get('/stats', async (req, res) => {
 
 /**
  * GET /api/documents
- * List documents for current user's organization
+ * List documents with pagination and filtering
  */
 router.get('/', async (req, res) => {
     try {
         const userOrgId = req.user.organization || req.user.org_id;
+        const {
+            page = 1,
+            limit = 50,
+            sortBy = 'created_at',
+            sortOrder = 'DESC',
+            search = '',
+            filename = ''
+        } = req.query;
 
         if (!userOrgId && req.user.role !== 'super_admin') {
             return res.status(400).json({ error: 'User has no organization' });
         }
 
-        // Super admin can see all, others only their org
-        let query;
-        let params;
+        // Build query
+        const offset = (page - 1) * limit;
+        const validSortColumns = ['created_at', 'filename', 'file_size', 'status'];
+        const sortCol = validSortColumns.includes(sortBy) ? sortBy : 'created_at';
+        const order = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
-        if (req.user.role === 'super_admin') {
-            query = `
-                SELECT id, filename, created_at, uploaded_by, file_size, org_id, status, processed_at
-                FROM documents
-                ORDER BY created_at DESC
-                LIMIT 100
-            `;
-            params = [];
-        } else {
-            query = `
-                SELECT id, filename, created_at, uploaded_by, file_size, status, processed_at
-                FROM documents
-                WHERE org_id = $1
-                ORDER BY created_at DESC
-                LIMIT 100
-            `;
-            params = [userOrgId];
+        let whereClause = '';
+        const params = [];
+        let paramIdx = 1;
+
+        if (req.user.role !== 'super_admin') {
+            whereClause = `WHERE org_id = $${paramIdx}`;
+            params.push(userOrgId);
+            paramIdx++;
         }
 
-        const result = await pool.query(query, params);
+        if (search) {
+            const prefix = whereClause ? 'AND' : 'WHERE';
+            whereClause += ` ${prefix} (filename ILIKE $${paramIdx} OR content_preview ILIKE $${paramIdx})`;
+            params.push(`%${search}%`);
+            paramIdx++;
+        }
+
+        if (filename) {
+            const prefix = whereClause ? 'AND' : 'WHERE';
+            whereClause += ` ${prefix} filename = $${paramIdx}`;
+            params.push(filename);
+            paramIdx++;
+        }
+
+        // Get total count for pagination
+        const countQuery = `SELECT COUNT(*) FROM documents ${whereClause}`;
+        const countResult = await pool.query(countQuery, params); // Re-use params as they match the where clause
+        const total = parseInt(countResult.rows[0].count);
+
+        // Get data
+        const query = `
+            SELECT id, filename, created_at, uploaded_by, file_size, org_id, status, processed_at, metadata
+            FROM documents
+            ${whereClause}
+            ORDER BY ${sortCol} ${order}
+            LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
+        `;
+
+        const listParams = [...params, limit, offset];
+        const result = await pool.query(query, listParams);
+
+        // Process results to ensure types are correct
+        const documents = result.rows.map(doc => ({
+            ...doc,
+            file_size: parseInt(doc.file_size || 0) // Ensure number
+        }));
 
         res.json({
             success: true,
-            documents: result.rows
+            documents: documents,
+            pagination: {
+                total,
+                page: parseInt(page),
+                limit: parseInt(limit),
+                totalPages: Math.ceil(total / limit)
+            }
         });
 
     } catch (error) {

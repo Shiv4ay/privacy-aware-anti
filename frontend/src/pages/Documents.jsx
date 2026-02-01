@@ -49,11 +49,9 @@ export default function Documents() {
 
             if (res.data.success) {
                 setDocuments(res.data.documents || []);
-                setPagination(prev => ({
-                    ...prev,
-                    total: res.data.pagination?.total || 0,
-                    totalPages: res.data.pagination?.totalPages || 0
-                }));
+                if (res.data.pagination) {
+                    setPagination(res.data.pagination);
+                }
             }
         } catch (err) {
             console.error('Failed to fetch documents:', err);
@@ -65,21 +63,9 @@ export default function Documents() {
 
     const fetchStats = async () => {
         try {
-            const res = await client.get('/documents');
-            if (res.data.success && res.data.documents) {
-                const docs = res.data.documents;
-
-                // Calculate stats from documents
-                const stats = {
-                    total_documents: docs.length,
-                    total_files: new Set(docs.map(d => d.filename)).size,
-                    total_storage: docs.reduce((sum, d) => sum + (d.file_size || 0), 0),
-                    latest_upload: docs.length > 0 ? docs[0].created_at : null,
-                    processed: docs.filter(d => d.status === 'processed').length,
-                    pending: docs.filter(d => d.status === 'pending').length
-                };
-
-                setOverallStats(stats);
+            const res = await client.get('/documents/stats');
+            if (res.data.success) {
+                setOverallStats(res.data);
             }
         } catch (err) {
             console.error('Failed to fetch stats:', err);

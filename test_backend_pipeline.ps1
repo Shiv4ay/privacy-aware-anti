@@ -32,32 +32,22 @@ Contact Information:
 The system should redact PII from queries and log all access attempts.
 "@
 
-$testFile = "test_document_$(Get-Date -Format 'yyyyMMddHHmmss').txt"
+$testFile = Join-Path $PSScriptRoot "test_document_$(Get-Date -Format 'yyyyMMddHHmmss').txt"
 $testContent | Out-File -FilePath $testFile -Encoding UTF8
 
 try {
-    $fileBytes = [System.IO.File]::ReadAllBytes($testFile)
-    $boundary = [System.Guid]::NewGuid().ToString()
-    $bodyLines = @(
-        "--$boundary",
-        "Content-Disposition: form-data; name=`"file`"; filename=`"$testFile`"",
-        "Content-Type: text/plain",
-        "",
-        $testContent,
-        "--$boundary--"
-    )
-    $body = $bodyLines -join "`r`n"
-    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-
-    $response = Invoke-RestMethod -Uri "$API_URL/api/documents/upload" `
-        -Method POST `
-        -Headers @{
-            "Authorization" = "Bearer $TOKEN"
-            "x-dev-auth" = $TOKEN
-            "Content-Type" = "multipart/form-data; boundary=$boundary"
-        } `
-        -Body $bodyBytes `
-        -ErrorAction Stop
+    # Use curl for reliable multipart file upload
+    $curlResponse = curl.exe -s -X POST "$API_URL/api/documents/upload" `
+        -H "Authorization: Bearer $TOKEN" `
+        -H "x-dev-auth: $TOKEN" `
+        -F "file=@$testFile" `
+        -F "organization_id=1" 2>&1
+    
+    $response = $curlResponse | ConvertFrom-Json -ErrorAction Stop
+    
+    if ($response.error) {
+        throw $response.error
+    }
 
     Write-Host "✓ Upload successful" -ForegroundColor Green
     Write-Host "  Document ID: $($response.docId)" -ForegroundColor White
@@ -69,6 +59,7 @@ try {
     Start-Sleep -Seconds 10
 } catch {
     Write-Host "✗ Upload failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "  Response: $curlResponse" -ForegroundColor Gray
     if (Test-Path $testFile) { Remove-Item $testFile }
     exit 1
 }
@@ -77,7 +68,7 @@ try {
 Write-Host ""
 Write-Host "Step 2: Search for Uploaded Document" -ForegroundColor Yellow
 $searchQuery = @{
-    q = "GDPR compliance and data protection"
+    query = "GDPR compliance and data protection"
 } | ConvertTo-Json
 
 try {
@@ -112,7 +103,7 @@ try {
 Write-Host ""
 Write-Host "Step 3: Test PII Redaction in Search Query" -ForegroundColor Yellow
 $piiQuery = @{
-    q = "Find contact info for test@example.com and 555-123-4567"
+    query = "Find contact info for test@example.com and 555-123-4567"
 } | ConvertTo-Json
 
 try {
