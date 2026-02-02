@@ -1,0 +1,50 @@
+privacy-aware-api  |   internalQuery: undefined,
+privacy-aware-api  |   where: "unnamed portal parameter $1 = '...'",
+privacy-aware-api  |   schema: undefined,
+privacy-aware-api  |   table: undefined,
+privacy-aware-api  |   column: undefined,
+privacy-aware-api  |   dataType: undefined,
+privacy-aware-api  |   constraint: undefined,
+privacy-aware-api  |   file: 'uuid.c',
+privacy-aware-api  |   line: '133',
+privacy-aware-api  |   routine: 'string_to_uuid'
+privacy-aware-api  | }
+privacy-aware-api  | [Auth] Authentication Critical Error: Error: Database auth lookup failed: invalid input syntax for type uuid: "1"
+privacy-aware-api  |     at authenticateJWT (/app/middleware/authMiddleware.js:116:23)
+privacy-aware-api  |     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+privacy-aware-api  | [DEBUG] Request GET /api/health started
+privacy-aware-api  | [DEBUG] CORS passed
+privacy-aware-api  | [DEBUG] Body parser passed
+privacy-aware-api  | [DEBUG] Security Headers passed
+privacy-aware-api  | [DEBUG] Sanitizer passed
+privacy-aware-api  | [DEBUG] Entering Rate Limiter
+privacy-aware-api  | [DEBUG] RateLimit KeyGen: IP=127_0_0_1 User=undefined
+privacy-aware-api  | [DEBUG] Rate Limiter passed
+privacy-aware-api  | [DEBUG] DB Context attached
+privacy-aware-api  | [DEBUG] Request GET /api/health started
+privacy-aware-api  | [DEBUG] CORS passed
+privacy-aware-api  | [DEBUG] Body parser passed
+privacy-aware-api  | [DEBUG] Security Headers passed
+privacy-aware-api  | [DEBUG] Sanitizer passed
+privacy-aware-api  | [DEBUG] Entering Rate Limiter
+privacy-aware-api  | [DEBUG] RateLimit KeyGen: IP=127_0_0_1 User=undefined
+privacy-aware-api  | [DEBUG] Rate Limiter passed
+privacy-aware-api  | [DEBUG] DB Context attached
+privacy-aware-api  | [DEBUG] Request GET /api/health started
+privacy-aware-api  | [DEBUG] CORS passed
+privacy-aware-api  | [DEBUG] Body parser passed
+privacy-aware-api  | [DEBUG] Security Headers passed
+privacy-aware-api  | [DEBUG] Sanitizer passed
+privacy-aware-api  | [DEBUG] Entering Rate Limiter
+privacy-aware-api  | [DEBUG] RateLimit KeyGen: IP=127_0_0_1 User=undefined
+privacy-aware-api  | [DEBUG] Rate Limiter passed
+privacy-aware-api  | [DEBUG] DB Context attached
+privacy-aware-api  | [DEBUG] Request GET /api/health started
+privacy-aware-api  | [DEBUG] CORS passed
+privacy-aware-api  | [DEBUG] Body parser passed
+privacy-aware-api  | [DEBUG] Security Headers passed
+privacy-aware-api  | [DEBUG] Sanitizer passed
+privacy-aware-api  | [DEBUG] Entering Rate Limiter
+privacy-aware-api  | [DEBUG] RateLimit KeyGen: IP=127_0_0_1 User=undefined
+privacy-aware-api  | [DEBUG] Rate Limiter passed
+privacy-aware-api  | [DEBUG] DB Context attached

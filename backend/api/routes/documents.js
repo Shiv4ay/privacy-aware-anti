@@ -208,6 +208,12 @@ router.post('/upload', upload.single('file'), async (req, res) => {
                 RETURNING id, filename, created_at
             `;
 
+            console.log('[DEBUG] Executing Batch Insert:');
+            // console.log('Query:', batchQuery); 
+            console.log('Params Count:', params.length);
+            console.log('Sample Params:', params.slice(0, 20));
+            console.log('First 5 params types:', params.slice(0, 5).map(p => typeof p));
+
             const result = await pool.query(batchQuery, params);
 
             // Add to insertedDocuments

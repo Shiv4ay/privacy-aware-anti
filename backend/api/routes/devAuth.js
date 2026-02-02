@@ -70,7 +70,7 @@ router.post('/dev/token', (req, res) => {
   const payload = {
     sub,
     id: sub,
-    userId: sub, // ✅ Fix: Match authMiddleware expectation
+    userId: sub === 1 ? '8125dc16-fc01-4584-862d-38759bff8bee' : sub, // ✅ Fix: Match authMiddleware expectation (UUID)
     username,
     roles,
     role,

@@ -1,0 +1,24 @@
+Table: documents
+Column               | Type            | UDT            
+-------------------------------------------------------
+content_preview      | text            | text           
+content_type         | text            | text           
+created_at           | timestamp without time zone | timestamp      
+department           | text            | text           
+encrypted_dek        | text            | text           
+encryption_iv        | text            | text           
+encryption_tag       | text            | text           
+file_key             | text            | text           
+file_path            | text            | text           
+file_size            | bigint          | int8           
+filename             | text            | text           
+id                   | integer         | int4           
+is_encrypted         | boolean         | bool           
+metadata             | jsonb           | jsonb          
+mime_type            | text            | text           
+org_id               | integer         | int4           
+original_filename    | text            | text           
+processed_at         | timestamp without time zone | timestamp      
+sensitivity          | text            | text           
+status               | text            | text           
+uploaded_by          | integer         | int4           
