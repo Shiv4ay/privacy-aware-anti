@@ -1,0 +1,30 @@
+Table: users
+Column               | Type            | UDT            
+-------------------------------------------------------
+created_at           | timestamp without time zone | timestamp      
+department           | character varying | varchar        
+email                | character varying | varchar        
+failed_login_attempts | integer         | int4           
+id                   | integer         | int4           
+is_active            | boolean         | bool           
+is_mfa_enabled       | boolean         | bool           
+last_login           | timestamp without time zone | timestamp      
+org_id               | integer         | int4           
+organization         | character varying | varchar        
+password_hash        | text            | text           
+role                 | character varying | varchar        
+role_id              | integer         | int4           
+user_category        | character varying | varchar        
+user_id              | uuid            | uuid           
+username             | character varying | varchar        
+
+Table: organizations
+Column               | Type            | UDT            
+-------------------------------------------------------
+created_at           | timestamp without time zone | timestamp      
+domain               | text            | text           
+id                   | integer         | int4           
+logo                 | text            | text           
+name                 | text            | text           
+type                 | text            | text           
+

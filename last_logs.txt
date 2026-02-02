@@ -1,0 +1,20 @@
+privacy-aware-worker  | ---
+privacy-aware-worker  | 
+privacy-aware-worker  | DOCUMENT RECORD 2:
+privacy-aware-worker  | result_id: RES006962 | student_id: STU20240774 | course_id: ENG201 | semester: 3 | academic_year: 2024-2025 | grade: B | score: 77 | credits: 3 | remarks: Pass
+privacy-aware-worker  | ---
+privacy-aware-worker  | 
+privacy-aware-worker  | DOCUMENT RECORD 3:
+privacy-aware-worker  | result_id: RES008240 | student_id: STU20240916 | course_id: ENG201 | semester: 3 | academic_year: 2023-2024 | gra...
+privacy-aware-worker  | INFO:app:System Prompt Sample: You are a SECURE STUDENT ASSISTANT. Your goal is to help students find information in their records.
+privacy-aware-worker  | 
+privacy-aware-worker  | STRICT RULES:
+privacy-aware-worker  | 1. ONLY use the provided context. If the answer is in the metadata or raw text, prov...
+privacy-aware-worker  | INFO:httpx:HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+privacy-aware-worker  | INFO:app:Raw OpenAI Response: I don't have enough information regarding the course results for student ID STU20240946....
+privacy-aware-worker  | INFO:     127.0.0.1:33436 - "POST /chat HTTP/1.1" 200 OK
+privacy-aware-worker  | INFO:     127.0.0.1:33450 - "GET /health HTTP/1.1" 200 OK
+privacy-aware-worker  | INFO:     127.0.0.1:57518 - "GET /health HTTP/1.1" 200 OK
+privacy-aware-worker  | INFO:     127.0.0.1:50736 - "GET /health HTTP/1.1" 200 OK
+privacy-aware-worker  | INFO:     127.0.0.1:32978 - "GET /health HTTP/1.1" 200 OK
+privacy-aware-worker  | INFO:     127.0.0.1:60774 - "GET /health HTTP/1.1" 200 OK

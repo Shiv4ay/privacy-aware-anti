@@ -270,7 +270,13 @@ app = FastAPI(title="Privacy-Aware RAG Worker", version="1.0.0")
 # ChromaDB client
 # -----------------------------
 # Note: chromadb client usage depends on installed client version; adapt if required.
-chroma_client = chromadb.HttpClient(host=CHROMADB_HOST, port=CHROMADB_PORT)
+# Standardize ChromaDB client with explicit tenant/database to avoid sync issues
+chroma_client = chromadb.HttpClient(
+    host=CHROMADB_HOST, 
+    port=CHROMADB_PORT,
+    tenant="default_tenant",
+    database="default_database"
+)
 chroma_collection = chroma_client.get_or_create_collection(name="privacy_documents_1")
 
 # -----------------------------
@@ -287,6 +293,8 @@ class SearchRequest(BaseModel):
     org_id: Optional[int] = None
     department: Optional[str] = None
     user_category: Optional[str] = None
+    user_role: Optional[str] = "student" # super_admin, admin, student, general
+    user_id: Optional[int] = None
     model_preference: Optional[Dict[str, Any]] = None
     dp_enabled: Optional[bool] = DP_ENABLED
 
@@ -295,13 +303,19 @@ class ChatRequest(BaseModel):
     context: Optional[str] = None
     organization: Optional[str] = "default"
     org_id: Optional[int] = None
+    user_role: Optional[str] = "student"
+    user_id: Optional[int] = None
     department: Optional[str] = None
     user_category: Optional[str] = None
     model_preference: Optional[Dict[str, Any]] = None
 
-def get_org_collection(org_id: Optional[int] = None, org_name: str = "default"):
-    """Get or create a ChromaDB collection for a specific organization"""
-    if org_id:
+def get_org_collection(org_id: Optional[int] = None, org_name: str = "default", user_role: str = "student"):
+    """Get or create a ChromaDB collection for a specific organization or general use"""
+    if user_role == "super_admin":
+        collection_name = "privacy_documents_global"
+    elif user_role == "general":
+        collection_name = "privacy_documents_general"
+    elif org_id:
         collection_name = f"privacy_documents_{org_id}"
     else:
         # Fallback to name-based if ID not provided (legacy/default)
@@ -312,6 +326,7 @@ def get_org_collection(org_id: Optional[int] = None, org_name: str = "default"):
     # ChromaDB must NOT auto-create an embedding function.
     # Explicitly set metadata to prevent dimension mis match.
     metadata = {"hnsw:space": "l2"}  # L2 distance, no embedding function
+    # Consistently use the same standardized client
     return chroma_client.get_or_create_collection(
         name=collection_name,
         metadata=metadata
@@ -549,61 +564,107 @@ def get_embedding(text: str, model_name: Optional[str] = None, timeout_per_call:
     logger.info(f"Generating embedding using {local_model} (384-dim)")
     return _call_ollama_embeddings(local_model, text, timeout=timeout_per_call)
 
-def generate_chat_response(query: str, context: str, user_role: str = "student") -> str:
-    """Generate answer using Ollama with RAG context and Role-Specific Prompts."""
-    logger.info(f"DEBUG_MARKER_FUNC_START: user_role={user_role}")
-    
-    if user_role in ['admin', 'super_admin']:
-        # ADMIN PROMPT: Extremely authoritative to prevent "Model Scaredness" and hallucinations of no access.
-        system_msg = """You are the UNIVERSITY DATA SYSTEMS ANALYST. You have ACTIVE ACCESS to the university records database via a secure RAG pipeline.
-The SEARCH RESULTS provided below ARE the direct excerpts from the university database for your current query.
+def get_system_prompt(user_role: str = "student", context_present: bool = False) -> str:
+    """Factory for Role-Specific and Strict-RAG System Prompts."""
+    base_rules = """STRICT RULES:
+1. ONLY use the provided context. If the answer is in the metadata or raw text, provide it.
+2. If the context clearly doesn't contain the data, state you don't have enough information.
+3. DO NOT use external world knowledge.
+4. If context has [REDACTED_...] placeholders, assume they are the correct values.
+5. Provide a clear, summarized answer based on the records found."""
 
-Rules:
-1. DO NOT say you cannot access databases. You ARE currently viewing the database results in the context.
-2. If the user asks for a specific student, name, or GPA, extract it from the context exactly as it appears.
-3. Be professional, data-driven, and authoritative.
-4. If the data is not in the context, state: 'The record was not found in the current search scope.'"""
-        role_directive = "\n\n[ADMINISTRATIVE ACCESS GRANTED]\n\n"
+    if user_role in ['super_admin']:
+        role_desc = "You are the GLOBAL SYSTEM AUDITOR. You have overview access to all organizations."
+        access_level = "FULL GLOBAL ACCESS"
+    elif user_role in ['admin']:
+        role_desc = "You are the UNIVERSITY ADMINISTRATOR. You are responsible for campus data oversight."
+        access_level = "CAMPUS-WIDE ACCESS"
+    elif user_role == 'general':
+        role_desc = "You are a PERSONAL GUIDANCE ASSISTANT. You help the user with their private documents."
+        access_level = "PERSONAL ISOLATED ACCESS"
     else:
-        # STUDENT PROMPT: Strict but clearer
-        system_msg = """You are a SECURE STUDENT ASSISTANT. Your task is to extract information from the provided SEARCH RESULTS.
-Only answer based on the data provided in the context below. 
+        role_desc = "You are a SECURE STUDENT ASSISTANT. Your goal is to help students find information in their records."
+        access_level = "STUDENT PORTAL ACCESS"
 
-Rules:
-1. If the record for the requested student is present, provide the details accurately.
-2. If multiple records are present, only answer for the one that best matches the query.
-3. If no record is found in the context, explain that the database search for that specific query yielded no matches.
-4. NEVER mention that you are an AI or lack access to databases. You are a secure portal for this specific data view."""
-        role_directive = f"\n\n[STUDENT PORTAL ACCESS]\n\n"
-    
-    if context:
-        prompt = f"<|im_start|>system\n{system_msg}\n{role_directive}\nContext:\n{context}\n<|im_end|>\n<|im_start|>user\n{query}\n<|im_end|>\n<|im_start|>assistant\n"
-    else:
-        prompt = f"<|im_start|>system\n{system_msg}\n{role_directive}\n<|im_end|>\n<|im_start|>user\n{query}\n<|im_end|>\n<|im_start|>assistant\n"
+    return f"{role_desc}\n\n{base_rules}\n\n[ACCESS LEVEL: {access_level}]\n\n"
 
-    logger.info(f"[CHAT DEBUG] Final Prompt (truncated): {prompt[:500]}...")
+def call_openai_chat(messages: List[Dict[str, str]], model: str = PRIMARY_MODEL) -> str:
+    """Secure wrapper for OpenAI Chat completions."""
+    if not openai:
+        logger.error("OpenAI library not imported. Cannot call OpenAI chat.")
+        return "ERROR: OpenAI service is not available."
+    if not OPENAI_API_KEY:
+        logger.error("OPENAI_API_KEY is not set. Cannot call OpenAI chat.")
+        return "ERROR: OpenAI API key is missing."
 
     try:
-        payload = {
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.1,
-                "top_p": 0.9
-            }
-        }
-        res = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=180)
-        res.raise_for_status()
-        raw_response = res.json().get("response", "")
-        
-        # Guardrail Post-processing
-        if GuardrailManager and raw_response:
-            return GuardrailManager.post_process_response(raw_response)
-        return raw_response
+        # PII Redaction is expected to have happened before this call
+        response = openai.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.0, # Minimum creativity for strict RAG
+            max_tokens=1000
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        logger.error(f"Ollama generation failed: {e}")
-        return "I'm sorry, I encountered an error generating a response."
+        logger.error(f"OpenAI API error: {e}")
+        return f"ERROR: Cloud reasoning failed. ({e})"
+
+def generate_chat_response(query: str, context: str, user_role: str = "student") -> str:
+    """Generate answer using either OpenAI or Ollama with Strict RAG Guardrails."""
+
+    # 1. Pre-flight Privacy Redaction (The Bread of the Sandwich)
+    redacted_query = redact_text(query)
+    redacted_context = redact_text(context)
+
+    system_msg = get_system_prompt(user_role, bool(context))
+
+    # Use OpenAI if configured
+    use_openai = os.getenv("USE_OPENAI_CHAT", "FALSE").upper() == "TRUE" and OPENAI_API_KEY
+
+    if use_openai:
+        logger.info(f"OpenAI Gateway: Sending REDACTED context (len={len(redacted_context)}) and query to cloud.")
+        # DEBUG (Safe for FYP demo):
+        logger.info(f"Anonymized Query: {redacted_query}")
+        logger.info(f"Context Sample: {redacted_context[:500]}...")
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": f"Context:\n{redacted_context}\n\nQuestion: {redacted_query}"}
+        ]
+        logger.info(f"OpenAI Call Messages: {json.dumps(messages)[:2000]}")
+        raw_response = call_openai_chat(messages)
+        logger.info(f"Raw OpenAI Response: {raw_response[:200]}...")
+    else:
+        # Fallback to Ollama (Local)
+        # ... (rest of logic)
+        logger.info(f"Using Local Ollama (Phi3) for role={user_role}")
+        prompt = f"<|im_start|>system\n{system_msg}\nContext:\n{redacted_context}\n<|im_end|>\n<|im_start|>user\n{redacted_query}\n<|im_end|>\n<|im_start|>assistant\n"
+
+        try:
+            payload = {
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0.1}
+            }
+            res = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=180)
+            res.raise_for_status()
+            raw_response = res.json().get("response", "")
+        except Exception as e:
+            logger.error(f"Local Ollama failed: {e}")
+            raw_response = "I'm sorry, I encountered a local processing error."
+
+    # 2. Post-flight Guardrails (The other Bread)
+    if GuardrailManager and raw_response:
+        guarded_response = GuardrailManager.post_process_response(raw_response)
+        if guarded_response != raw_response:
+             logger.info("GuardrailManager: Response was modified by post-flight guardrails.")
+        return guarded_response
+    
+    final_output = redact_text(raw_response) # Final safety pass
+    if final_output != raw_response:
+        logger.info("redact_text: Final output was additionaly anonymized.")
+    return final_output
 
 def chromadb_add(ids: List[str], documents: List[str], embeddings: List[List[float]], metadatas: List[Dict] = None, collection=None):
     """Add documents to ChromaDB using Python client"""
@@ -1247,13 +1308,84 @@ def search_documents(request: SearchRequest):
 
 
         # Query ChromaDB (fetch slightly more if noise enabled for distractor injection)
-        logger.info(f"SEARCH DEBUG: org_id={request.org_id} org_name={request.organization} query='{request.query}' top_k={request.top_k}")
-        org_collection = get_org_collection(org_id=request.org_id, org_name=request.organization)
+        logger.info(f"SEARCH DEBUG: role={request.user_role} user_id={request.user_id} org_id={request.org_id} query='{request.query}'")
         
+        org_collection = get_org_collection(org_id=request.org_id, org_name=request.organization, user_role=request.user_role)
+        logger.info(f"Target Collection: {org_collection.name} | Items: {org_collection.count()}")
+        
+        where_filter = {}
+        # Apply Metadata Filtering for RBAC
+        # Super Admin: Sees all in Global Collection
+        # Org Admin: Sees all in Org Collection
+        # Student: Sees all in Org Collection (Privacy Sandwich handles individual PII)
+        # General User: Sees only their personal docs in General Collection
+        
+        if request.user_role == 'general' and request.user_id:
+            where_filter["uploaded_by"] = int(request.user_id)
+        # Note: 'student' role now relies on org_collection separation + Gateway Redaction
+
         fetch_k = request.top_k + 2 if (request.dp_enabled and DifferentialPrivacy) else request.top_k
-        results = chromadb_query([query_embedding], fetch_k, collection=org_collection)
         
-        logger.info(f"CHROMA RAW RESULTS: {results} (fetched {fetch_k} for DP={request.dp_enabled})")
+        # Call chromadb_query with filter
+        if where_filter:
+            logger.info(f"Applying metadata filter: {where_filter}")
+            results = org_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=fetch_k,
+                where=where_filter
+            )
+        else:
+            results = chromadb_query([query_embedding], fetch_k, collection=org_collection)
+
+        # HYBRID SEARCH: Keyword matching for Student IDs (STU, RES, INT)
+        try:
+            potential_ids = []
+            # Find words like STUXXXX or RESXXXX or INTXXXX or literal uppercase words with digits
+            words = re.findall(r'[A-Z0-9]+', request.query.upper())
+            for word in words:
+                if any(p in word for p in ["STU", "RES", "INT"]) and any(c.isdigit() for c in word):
+                    potential_ids.append(word)
+            
+            if potential_ids:
+                keyword = potential_ids[0]
+                logger.info(f"Hybrid Search: Found potential ID '{keyword}' - Querying Chroma...")
+                
+                # Use Chroma's internal where_document for literal string matching (more precise than embeddings for IDs)
+                kw_results = org_collection.get(
+                    where_document={"$contains": keyword},
+                    limit=10,
+                    include=["metadatas", "documents"]
+                )
+                
+                if kw_results and kw_results.get("ids") and len(kw_results["ids"]) > 0:
+                    logger.info(f"Hybrid Search: Found {len(kw_results['ids'])} EXACT matches for '{keyword}'")
+                    
+                    # Merge into main results
+                    if not results or not results.get("ids") or not results["ids"][0]:
+                        results = {
+                            "ids": [kw_results["ids"]],
+                            "documents": [kw_results["documents"]],
+                            "metadatas": [kw_results["metadatas"]],
+                            "distances": [[0.0] * len(kw_results["ids"])] # Virtual distance for exact match
+                        }
+                    else:
+                        exist = set(results["ids"][0])
+                        # INSERT direct ID matches at the BEGINNING (index 0) to ensure LLM priority
+                        for i in range(len(kw_results["ids"])):
+                            rid = kw_results["ids"][i]
+                            if rid not in exist:
+                                results["ids"][0].insert(0, rid)
+                                results["documents"][0].insert(0, kw_results["documents"][i])
+                                results["distances"][0].insert(0, 0.0)
+                                if results.get("metadatas") and kw_results.get("metadatas"):
+                                    results["metadatas"][0].insert(0, kw_results["metadatas"][i])
+                else:
+                    logger.info(f"Hybrid Search: No exact matches found for ID '{keyword}' in documents.")
+        except Exception as e:
+            logger.error(f"Hybrid Search Error: {e}")
+
+        final_count = len(results['ids'][0]) if results and results.get('ids') else 0
+        logger.info(f"CHROMA FINAL RESULTS: {final_count} chunks (Primary + Hybrid)")
 
         documents = []
         doc_ids = []
@@ -1338,6 +1470,7 @@ async def chat_with_documents(req: Request):
         # Accept multiple common property names
         query = None
         org_id = None
+        user_id = None
         organization = "default"
         user_role = "student"
 
@@ -1345,6 +1478,7 @@ async def chat_with_documents(req: Request):
             query = body.get("query") or body.get("message") or body.get("prompt") or None
             context = body.get("context", None)
             org_id = body.get("org_id")
+            user_id = body.get("user_id")
             organization = body.get("organization") or "default"
             user_role = body.get("user_role") or body.get("role", "student")
         else:
@@ -1382,17 +1516,29 @@ async def chat_with_documents(req: Request):
                     query=query, 
                     top_k=k_val, 
                     org_id=org_id, 
-                    organization=organization
+                    organization=organization,
+                    user_role=user_role,
+                    user_id=user_id
                 )
                 search_results = search_documents(sr)
-                contexts = []
+                # Build context with clear record separators for better Reasoning
+                context_parts = []
                 if isinstance(search_results, dict) and "results" in search_results:
-                    for r in search_results["results"]:
+                    for idx, r in enumerate(search_results["results"]):
+                        chunk_text = ""
                         if hasattr(r, "text"):
-                            contexts.append(r.text)
+                            chunk_text = r.text
                         elif isinstance(r, dict):
-                            contexts.append(r.get("text", ""))
-                context = "\n\n".join([c for c in contexts if c])
+                            chunk_text = r.get("text", "")
+                        
+                        if chunk_text:
+                            # Use explicit labeling to help LLM associate data
+                            context_parts.append(f"DOCUMENT RECORD {idx+1}:\n{chunk_text}\n---")
+                
+                context = "\n\n".join(context_parts)
+                logger.info(f"CHAT: Final context assembly complete. {len(context_parts)} records. Total len: {len(context)}")
+                if context:
+                    logger.info(f"ASSEMELD CONTEXT (1000 chars): {context[:1000]}")
             except Exception as e:
                 logger.exception("Chat: unexpected error while building context: %s", e)
                 context = ""
@@ -2421,109 +2567,7 @@ if __name__ == "__main__":
 #         logger.error(f"Embedding error: {e}")
 #         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/search")
-def search_documents(request: SearchRequest):
-    """Search for similar documents using ChromaDB client and record audit logs"""
-    user = {}  # default empty user if caller didn't provide user context
-    # In your real flow, the API gateway populates user info in payload.
-    # If you forward user object from api -> worker, use it. Here we check request context.
-    # For compatibility, attempt to read a 'user' field if present in request (if using raw dict).
-    try:
-        # Redact and hash query for audit
-        raw_query = request.query or ""
-        query_redacted = redact_text(raw_query)
-        query_hash = hash_query(raw_query)
-
-        # Generate embedding
-        query_embedding = get_embedding(raw_query)
-        if not query_embedding:
-            # audit with error and return failure
-            details = {
-                "query_hash": query_hash,
-                "query_redacted": query_redacted,
-                "error": "Failed to generate query embedding",
-                "result_count": 0,
-                "document_ids": []
-            }
-            try:
-                insert_audit_log(user.get("id"), "search", "document", None, details)
-            except Exception:
-                pass
-            raise HTTPException(status_code=500, detail="Failed to generate query embedding")
-
-        # Query ChromaDB
-        results = chromadb_query([query_embedding], request.top_k)
-        documents = []
-        doc_ids = []
-        if results and results.get("documents") and results["documents"][0]:
-            for (doc_text, doc_id, distance) in zip(
-                results["documents"][0],
-                results["ids"][0],
-                results["distances"][0]
-            ):
-                # Fixed score for L2 distance
-                score = 1.0 / (1.0 + distance)
-                documents.append(DocumentChunk(id=doc_id, text=doc_text, score=score))
-                doc_ids.append(doc_id)
-
-        # Apply Differential Privacy if enabled
-        if request.dp_enabled and DifferentialPrivacy:
-            documents = DifferentialPrivacy.apply_noise(documents, request.top_k)
-
-        filtered = documents 
-
-        # Build audit details
-        details = {
-            "query_hash": query_hash,
-            "query_redacted": query_redacted,
-            "result_count": len(filtered),
-            "document_ids": doc_ids
-        }
-
-        # Insert audit log (best-effort)
-        try:
-            insert_audit_log(user.get("id"), "search", "document", None, details)
-        except Exception as e:
-            logger.exception("Audit insert failed: %s", e)
-
-        return {
-            "query": raw_query,
-            "results": filtered,
-            "total_found": len(filtered)
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Search error: %s", e)
-        # attempt best-effort audit
-        try:
-            insert_audit_log(user.get("id"), "search", "document", None, {
-                "query_hash": hash_query(request.query if hasattr(request, 'query') else ""),
-                "query_redacted": redact_text(request.query if hasattr(request, 'query') else ""),
-                "error": str(e),
-                "result_count": 0,
-                "document_ids": []
-            })
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail=str(e))
-
-# REDUNDANT DEFINITION REMOVED - Using active version at line 545
-# def generate_chat_response(query: str, context: str, user_role: str = "student") -> str:
-
-
-# REDUNDANT DEFINITION REMOVED - Using active version at line 1325
-# @app.post("/chat")
-# async def chat_with_documents(req: Request):
-
-    except HTTPException:
-        # re-raise HTTPExceptions (400 etc.)
-        raise
-    except Exception as e:
-        logger.exception(f"Chat error: {e}")
-        # Return 500 with message
-        raise HTTPException(status_code=500, detail=str(e))
+# REDUNDANT BLOCK REMOVED
 
 # -----------------------------
 # Ingestion Logic
@@ -2669,6 +2713,7 @@ async def process_documents_batch(org_id: int, batch_size: int = 100, max_docume
                 WHERE org_id = %s AND status = 'pending'
                 ORDER BY created_at ASC
                 LIMIT %s
+                FOR UPDATE SKIP LOCKED
             """, (org_id, batch_size))
             
             docs = cursor.fetchall()
@@ -2735,10 +2780,18 @@ async def process_documents_batch(org_id: int, batch_size: int = 100, max_docume
                     cursor.execute("UPDATE documents SET status = 'processed' WHERE id = %s", (doc_id,))
                     total_processed += 1
                     
+                    if total_processed % 100 == 0:
+                        conn.commit()
+                        logger.info(f"Processed {total_processed} documents...")
+                    
                 except Exception as e:
                     logger.error(f"Error processing doc {doc_id}: {e}")
                     failed_docs.append({"id": doc_id, "error": str(e)})
                     total_failed += 1
+                    try:
+                        conn.rollback()
+                    except:
+                        pass
             
             conn.commit()
             if max_documents and total_processed >= max_documents:
@@ -2796,31 +2849,4 @@ async def get_processing_status(org_id: int):
 # -----------------------------
 # Startup
 # -----------------------------
-@app.on_event("startup")
-def startup():
-    global minio_client
-    logger.info("Privacy-Aware RAG Worker starting...")
-
-    # initialize the DB pool
-    init_db_pool()
-
-    # ensure DB tables exist
-    try:
-        ensure_database_tables()
-    except Exception as e:
-        # If DB isn't ready yet, log and continue; background_worker will also call ensure_database_tables()
-        logger.exception("ensure_database_tables failed during startup: %s", e)
-
-    minio_client = get_minio_client()
-    start_background_worker()
-    
-    # Log which embed models were configured
-    logger.info("Configured Ollama embed models (in preference order): %s", OLLAMA_EMBED_MODELS)
-    
-    # Phase 4: Start Retention Job
-    start_retention_job()
-    
-    logger.info("Worker service initialized successfully")
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)
+# REDUNDANT ENDING REMOVED

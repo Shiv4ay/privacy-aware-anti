@@ -1,0 +1,27 @@
+Table: audit_log
+Column               | Type            | UDT            
+-------------------------------------------------------
+action               | character varying | varchar        
+created_at           | timestamp without time zone | timestamp      
+error_message        | text            | text           
+id                   | integer         | int4           
+ip_address           | character varying | varchar        
+metadata             | jsonb           | jsonb          
+resource_type        | character varying | varchar        
+success              | boolean         | bool           
+user_agent           | text            | text           
+user_id              | uuid            | uuid           
+
+Table: audit_logs
+Column               | Type            | UDT            
+-------------------------------------------------------
+action               | character varying | varchar        
+created_at           | timestamp without time zone | timestamp      
+details              | jsonb           | jsonb          
+id                   | integer         | int4           
+ip_address           | inet            | inet           
+resource_id          | integer         | int4           
+resource_type        | character varying | varchar        
+user_agent           | text            | text           
+user_id              | integer         | int4           
+

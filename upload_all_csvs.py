@@ -11,9 +11,9 @@ ORG_ID = 1
 
 # Get auth token (assuming you're logged in as admin)
 # For simplicity, using dev auth
-DEV_TOKEN_URL = "http://localhost:3001/api/dev-auth/generate-token"
+DEV_TOKEN_URL = "http://localhost:3001/api/dev/token"
 try:
-    token_resp = requests.post(DEV_TOKEN_URL, json={"userId": 1, "expiresIn": "1h"})
+    token_resp = requests.post(DEV_TOKEN_URL, json={"user": {"id": 1}, "expiresIn": "1h"}, headers={"x-dev-auth-key": "super-secret-dev-key"})
     token_resp.raise_for_status()
     token = token_resp.json()["token"]
     print(f"✅ Got auth token")

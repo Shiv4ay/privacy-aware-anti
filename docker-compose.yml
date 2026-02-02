@@ -24,7 +24,7 @@ services:
         reservations:
           memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} || exit 1"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} || exit 1" ]
       interval: 15s
       timeout: 5s
       retries: 8
@@ -48,7 +48,7 @@ services:
         reservations:
           memory: 32M
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -79,7 +79,7 @@ services:
         reservations:
           memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "mc --version >/dev/null 2>&1 || exit 1"]
+      test: [ "CMD-SHELL", "mc --version >/dev/null 2>&1 || exit 1" ]
       interval: 20s
       timeout: 5s
       retries: 5
@@ -107,10 +107,9 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
     healthcheck:
-      test: ["CMD-SHELL",
-             "python -c 'import urllib.request,sys;res=urllib.request.urlopen(\"http://127.0.0.1:11434/\"); sys.exit(0 if res.getcode()==200 else 1)' 2>/dev/null || ( /bin/sh -c 'exec 3<>/dev/tcp/127.0.0.1/11434 >/dev/null 2>&1' 2>/dev/null && exit 0 ) || exit 0"]
+      test: [ "CMD-SHELL", "python -c 'import urllib.request,sys;res=urllib.request.urlopen(\"http://127.0.0.1:11434/\"); sys.exit(0 if res.getcode()==200 else 1)' 2>/dev/null || ( /bin/sh -c 'exec 3<>/dev/tcp/127.0.0.1/11434 >/dev/null 2>&1' 2>/dev/null && exit 0 ) || exit 0" ]
       interval: 15s
       timeout: 5s
       retries: 6
@@ -139,8 +138,7 @@ services:
         reservations:
           memory: 128M
     healthcheck:
-      test: ["CMD-SHELL",
-             "python -c 'import urllib.request,sys;res=urllib.request.urlopen(\"http://127.0.0.1:8000/api/v2/auth/identity\"); sys.exit(0 if res.getcode()==200 else 1)' 2>/dev/null || ( /bin/sh -c 'exec 3<>/dev/tcp/127.0.0.1/8000 >/dev/null 2>&1' 2>/dev/null && exit 0 ) || exit 0"]
+      test: [ "CMD-SHELL", "python -c 'import urllib.request,sys;res=urllib.request.urlopen(\"http://127.0.0.1:8000/api/v2/auth/identity\"); sys.exit(0 if res.getcode()==200 else 1)' 2>/dev/null || ( /bin/sh -c 'exec 3<>/dev/tcp/127.0.0.1/8000 >/dev/null 2>&1' 2>/dev/null && exit 0 ) || exit 0" ]
       interval: 15s
       timeout: 5s
       retries: 6
@@ -196,6 +194,8 @@ services:
       LOCAL_CHAT_MODEL: ${LOCAL_CHAT_MODEL}
       LOCAL_EMBED_MODEL: ${LOCAL_EMBED_MODEL}
       ALE_MASTER_KEY: ${ALE_MASTER_KEY}
+      USE_OPENAI_CHAT: ${USE_OPENAI_CHAT}
+      STRICT_RAG_MODE: ${STRICT_RAG_MODE}
     volumes:
       - embed_meta:/tmp/embed_meta
       - ./backend/worker:/app
@@ -208,13 +208,12 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      test: ["CMD-SHELL",
-             "python -c 'import urllib.request,sys;res=urllib.request.urlopen(\"http://127.0.0.1:8001/health\"); sys.exit(0 if res.getcode()==200 else 1)' 2>/dev/null || ( /bin/sh -c 'exec 3<>/dev/tcp/127.0.0.1/8001 >/dev/null 2>&1' 2>/dev/null && exit 0 ) || exit 1"]
+      test: [ "CMD-SHELL", "python -c 'import urllib.request,sys;res=urllib.request.urlopen(\"http://127.0.0.1:8001/health\"); sys.exit(0 if res.getcode()==200 else 1)' 2>/dev/null || ( /bin/sh -c 'exec 3<>/dev/tcp/127.0.0.1/8001 >/dev/null 2>&1' 2>/dev/null && exit 0 ) || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 8
       start_period: 30s
-    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001"]
+    command: [ "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001" ]
 
   # ---------------------------
   # API Gateway (Express)
@@ -271,7 +270,7 @@ services:
         reservations:
           memory: 128M
     healthcheck:
-      test: ["CMD", "node", "-e", "const http=require('http'); const req=http.get('http://127.0.0.1:3001/api/health', res=>{ process.exit(res.statusCode===200?0:1) }); req.on('error', ()=>process.exit(1));"]
+      test: [ "CMD", "node", "-e", "const http=require('http'); const req=http.get('http://127.0.0.1:3001/api/health', res=>{ process.exit(res.statusCode===200?0:1) }); req.on('error', ()=>process.exit(1));" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -305,7 +304,7 @@ services:
         reservations:
           memory: 64M
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:80/ || exit 1"]
+      test: [ "CMD-SHELL", "curl -f http://127.0.0.1:80/ || exit 1" ]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -317,6 +316,7 @@ volumes:
   ollama_data:
   chromadb_data:
   embed_meta:
+
 
 networks:
   privacy_aware_net:
