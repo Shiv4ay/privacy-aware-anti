@@ -1,0 +1,223 @@
+@app.post("/chat")
+async def chat_with_documents(req: Request):
+    """Robust chat endpoint"""
+    logger.info("DEBUG_MARKER_ENDPOINT_START")
+    try:
+        # Try to parse JSON body (FastAPI Request.json is tolerant)
+        try:
+            body = await req.json()
+        except Exception as e:
+            # Log for diagnostics and return a 400 with clear message
+            logger.warning("Chat endpoint: failed to parse JSON body: %s", e)
+            raise HTTPException(status_code=400, detail="Invalid JSON body for /chat")
+
+        # Log raw body (safe: avoid logging secrets). Useful until issue resolved.
+        logger.info("CHAT /chat received raw body keys: %s", list(body.keys()) if isinstance(body, dict) else str(body)[:200])
+
+        # Accept multiple common property names
+        query = None
+        org_id = None
+        user_id = None
+        organization = "default"
+        user_role = "student"
+
+        if isinstance(body, dict):
+            query = body.get("query") or body.get("message") or body.get("prompt") or None
+            context = body.get("context", None)
+            org_id = body.get("org_id")
+            user_id = body.get("user_id")
+            organization = body.get("organization") or "default"
+            user_role = body.get("user_role") or body.get("role", "student")
+        else:
+            query = None
+            context = None
+
+        if not query or not isinstance(query, str) or not query.strip():
+            # Differentiate missing vs malformed
+            raise HTTPException(status_code=400, detail="Missing required 'query' (also accepts 'message' or 'prompt'). The request body must be JSON.")
+
+        query = query.strip()
+
+        # Phase 3 Guardrails: Query Safety Check
+        if GuardrailManager:
+            is_safe, error_msg = GuardrailManager.check_query(query)
+            if not is_safe:
+                return {
+                    "query": query,
+                    "response": error_msg,
+                    "context_used": False,
+                    "status": "blocked"
+                }
+
+        # Build context if not provided
+        if not context:
+            try:
+                # Dynamic top_k based on role: Admins need more context for aggregate analysis/trends
+                admin_roles = ['admin', 'super_admin']
+                is_admin = user_role in admin_roles
+                k_val = 12 if is_admin else 5
+                
+                logger.info(f"CHAT: building context for role={user_role}, using top_k={k_val}")
+                
+                sr = SearchRequest(
+                    query=query, 
+                    top_k=k_val, 
+                    org_id=org_id, 
+                    organization=organization,
+                    user_role=user_role,
+                    user_id=user_id
+                )
+                search_results = search_documents(sr)
+                # Build context with clear record separators for better Reasoning
+                context_parts = []
+                if isinstance(search_results, dict) and "results" in search_results:
+                    for idx, r in enumerate(search_results["results"]):
+                        chunk_text = ""
+                        if hasattr(r, "text"):
+                            chunk_text = r.text
+                        elif isinstance(r, dict):
+                            chunk_text = r.get("text", "")
+                        
+                        if chunk_text:
+                            # Use explicit labeling to help LLM associate data
+                            context_parts.append(f"DOCUMENT RECORD {idx+1}:\n{chunk_text}\n---")
+                
+                context = "\n\n".join(context_parts)
+                logger.info(f"CHAT: Final context assembly complete. {len(context_parts)} records. Total len: {len(context)}")
+                if context:
+                    logger.info(f"ASSEMELD CONTEXT (1000 chars): {context[:1000]}")
+            except Exception as e:
+                logger.exception("Chat: unexpected error while building context: %s", e)
+                context = ""
+
+        response_text = generate_chat_response(query, context or "", user_role=user_role)
+
+        # Audit Log for Chat (Capture PII Redaction)
+        try:
+            # Check for PII markers in the response
+            pii_types = []
+            if "[EMAIL_REDACTED]" in response_text: pii_types.append("email")
+            if "[PHONE_REDACTED]" in response_text: pii_types.append("phone")
+            if "[SSN_REDACTED]" in response_text: pii_types.append("ssn")
+            if "[ADDRESS_REDACTED]" in response_text: pii_types.append("address")
+            
+            pii_detected = len(pii_types) > 0
+            
+            # Determine user_id to log (either from body or safe default)
+            log_user_id = user_id
+
+            details = {
+                "query_hash": hash_query(query),
+                "query_redacted": redact_text(query), # Also redact input
+                "pii_detected": pii_detected,
+                "pii_types": pii_types,
+                "context_used": bool(context),
+                "response_preview": response_text[:100] + "..." if len(response_text) > 100 else response_text
+            }
+            
+            insert_audit_log(log_user_id, "chat", "chat_session", None, details, success=True)
+            logger.info(f"AUDIT: Logged chat action. PII Detected: {pii_detected}")
+            
+        except Exception as audit_err:
+            logger.error(f"Failed to log chat audit: {audit_err}")
+
+        return {
+            "query": query,
+            "response": response_text,
+            "context_used": bool(context),
+            "status": "success"
+        }
+
+    except HTTPException:
+        # re-raise to let FastAPI send the right HTTP status & detail
+        raise
+    except Exception as e:
+        logger.exception("Chat endpoint unexpected error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error in /chat")
+
+# -----------------------------
+# Startup
+# -----------------------------
+@app.on_event("startup")
+def startup():
+    global minio_client
+    logger.info("Privacy-Aware RAG Worker starting...")
+
+    # initialize the DB pool
+    init_db_pool()
+
+    # ensure DB tables exist
+    try:
+        ensure_database_tables()
+    except Exception as e:
+        # If DB isn't ready yet, log and continue; background_worker will also call ensure_database_tables()
+        logger.exception("ensure_database_tables failed during startup: %s", e)
+
+    minio_client = get_minio_client()
+    start_background_worker()
+
+    # Log which embed models were configured
+    logger.info("Configured Ollama embed models (in preference order): %s", OLLAMA_EMBED_MODELS)
+    logger.info("Worker service initialized successfully")
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# -----------------------------
+# Ingestion Logic
+# -----------------------------
+from ingestion.dummy_modules import DummyUniversityIngestion, DummyHospitalIngestion, DummyFinanceIngestion
+from ingestion.web_scraper import WebIngestion
+
+class IngestionRequest(BaseModel):
+    org_id: str | int # Allow string for "university" etc.
+    type: str
+    url: Optional[str] = None
+
+def run_ingestion_task(org_id: int, ingestion_type: str, url: Optional[str] = None):
+    """
+    Background task to run ingestion pipeline.
+    """
+    logger.info(f"Starting ingestion task: type={ingestion_type}, org_id={org_id}")
+    
+    try:
+        pipeline = None
