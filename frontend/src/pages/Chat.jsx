@@ -50,8 +50,17 @@ export default function Chat() {
     setLoading(true);
 
     try {
-      // Direct call to /chat - axios client already has /api baseURL
-      const res = await client.post('/chat', { query: currentMessage });
+      // Build conversation history from last 5 messages for continuity
+      const conversationHistory = messages.slice(-5).map(m => ({
+        role: m.from === 'user' ? 'user' : 'assistant',
+        content: m.text
+      }));
+
+      // Call chat API with conversation history
+      const res = await client.post('/chat', {
+        query: currentMessage,
+        conversation_history: conversationHistory
+      });
 
       const aiMessage = {
         id: Date.now() + 1,

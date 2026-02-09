@@ -15,9 +15,9 @@ function configureSecurityHeaders(app) {
         contentSecurityPolicy: {
             directives: {
                 defaultSrc: ["'self'"],
-                scriptSrc: ["'self'", "'unsafe-inline'"], // Allow inline scripts (adjust for production)
+                scriptSrc: ["'self'", "'unsafe-inline'"],
                 styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-                imgSrc: ["'self'", "data:", "https:"],
+                imgSrc: ["'self'", "data:", "https://lh3.googleusercontent.com", "https://*.googleusercontent.com", "https:"],
                 connectSrc: ["'self'"],
                 fontSrc: ["'self'", "https://fonts.gstatic.com"],
                 objectSrc: ["'none'"],
@@ -25,6 +25,9 @@ function configureSecurityHeaders(app) {
                 frameSrc: ["'none'"],
             },
         },
+        // Disable strict COEP/CORP that blocks external images
+        crossOriginEmbedderPolicy: false,
+        crossOriginResourcePolicy: { policy: "cross-origin" },
 
         // HTTP Strict Transport Security
         hsts: {
@@ -77,8 +80,8 @@ function configureSecurityHeaders(app) {
 
         // Cross-Origin policies
         res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-        res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-        res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        // COEP removed to allow cross-origin images without strict CORP headers
 
         next();
     });

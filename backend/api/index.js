@@ -12,6 +12,8 @@ const cors = require('cors');
 // path already required at top
 const jwt = require('jsonwebtoken');
 const url = require('url'); // For MinIO parsing
+const http = require('http'); // Required for Socket.io
+const RealtimeService = require('./realtime');
 
 // ==========================================
 // Middleware Imports
@@ -113,6 +115,29 @@ const upload = multer({
 // Express App Setup
 const app = express();
 
+// 0. Public Health Check (Root level - for Docker)
+app.get('/healthz', async (req, res) => {
+    try {
+        const health = {
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            services: { postgres: false, redis: false, minio: false, worker: false }
+        };
+        try { await pool.query('SELECT 1'); health.services.postgres = true; } catch (e) { }
+        try { await redis.ping(); health.services.redis = true; } catch (e) { }
+        try { await new Promise((r, j) => minioClient.listBuckets((e) => e ? j(e) : r())); health.services.minio = true; } catch (e) { }
+        try {
+            const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
+            await axios.get(`${WORKER_URL}/health`, { timeout: 1000 });
+            health.services.worker = true;
+        } catch (e) { }
+
+        res.status(200).json(health);
+    } catch (err) {
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
 // 1. Basic Middleware
 app.use((req, res, next) => { console.log(`[DEBUG] Request ${req.method} ${req.url} started`); next(); });
 
@@ -146,9 +171,10 @@ app.use((req, res, next) => { console.log('[DEBUG] Rate Limiter passed'); next()
 // 5. Database Context (Phase 4)
 app.use((req, res, next) => {
     req.db = pool;
-    console.log('[DEBUG] DB Context attached');
+    req.redis = redis;
     next();
 });
+
 
 // ==========================================
 // Routes
@@ -200,10 +226,25 @@ const orgsRoutes = require('./routes/orgs');
 app.use('/api/orgs', authenticateJWT, orgsRoutes);
 console.log('✅ Organizations Routes mounted at /api/orgs');
 
-// Chat & Search Routes (Phase 10 Fix)
+// Profile Routes (All authenticated users)
+const profileRoutes = require('./routes/profile');
+app.use('/api/profile', authenticateJWT, profileRoutes);
+console.log('✅ Profile Routes mounted at /api/profile');
+
+// Audit Routes (Security Center)
+const auditRoutes = require('./routes/audit');
+app.use('/api/audit', authenticateJWT, auditRoutes);
+console.log('✅ Audit Routes mounted at /api/audit');
+
+// Notifications Routes
+const notificationRoutes = require('./routes/notifications');
+app.use('/api/notifications', authenticateJWT, notificationRoutes);
+console.log('✅ Notifications Routes mounted at /api/notifications');
+
+// Chat & Search Routes
 const chatRoutes = require('./routes/chat');
-app.use('/api', chatRoutes); // Mounts /search and /chat
-console.log('✅ Chat Routes mounted at /api');
+app.use('/api', chatRoutes);
+console.log('✅ Chat & Search mounted at /api');
 
 // try {
 //     const authRoutes = require('./routes/auth');
@@ -213,20 +254,6 @@ console.log('✅ Chat Routes mounted at /api');
 //     console.error('❌ Failed to mount auth routes:', error.message);
 // }
 
-// 2. Health Check
-app.get('/api/health', async (req, res) => {
-    const health = {
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        services: { postgres: false, redis: false, minio: false, worker: false }
-    };
-    try { await pool.query('SELECT 1'); health.services.postgres = true; } catch (e) { }
-    try { await redis.ping(); health.services.redis = true; } catch (e) { }
-    try { await new Promise((r, j) => minioClient.listBuckets((e) => e ? j(e) : r())); health.services.minio = true; } catch (e) { }
-    try { await axios.get(`${WORKER_URL}/health`, { timeout: 1000 }); health.services.worker = true; } catch (e) { }
-
-    res.json(health);
-});
 
 // 3. Document Upload (Authenticated + Anomaly Check)
 app.post('/api/upload', authenticateJWT, anomalyDetectionMiddleware, async (req, res, next) => {
@@ -412,8 +439,15 @@ app.use((error, req, res, next) => {
     res.status(500).json({ error: 'Internal server error', details: error.message });
 });
 
+// Create HTTP Server
+const server = http.createServer(app);
+
+// Initialize Real-time Service
+const realtime = new RealtimeService(server, pool);
+app.set('realtime', realtime);
+
 // Start
-app.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`✅ Auth & Application endpoints ready`);
+    console.log(`✅ Real-time Gateway & Application endpoints ready`);
 });

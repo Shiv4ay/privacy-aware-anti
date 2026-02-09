@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
 import client from '../api/index';
-import { UserPlus, Mail, Lock, User, Building, ArrowRight, Loader2 } from 'lucide-react';
+import { UserPlus, Mail, Lock, User, Building, ArrowRight, Loader2, Eye, EyeOff, CheckCircle, XCircle } from 'lucide-react';
+import GoogleOAuthButton from '../components/GoogleOAuthButton';
 import toast from 'react-hot-toast';
 
 export default function Register() {
@@ -14,6 +15,7 @@ export default function Register() {
     department: '',
     role: 'user'
   });
+  const [showPassword, setShowPassword] = useState(false);
   const [organizations, setOrganizations] = useState([]);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth(); // Auto-login after register
@@ -38,6 +40,24 @@ export default function Register() {
       toast.error("Failed to load organizations");
     }
   };
+
+  // Password strength calculator
+  const getPasswordStrength = (password) => {
+    if (!password) return { strength: 0, label: '', color: '' };
+    let strength = 0;
+    if (password.length >= 8) strength++;
+    if (password.length >= 12) strength++;
+    if (/[a-z]/.test(password) && /[A-Z]/.test(password)) strength++;
+    if (/\d/.test(password)) strength++;
+    if (/[^a-zA-Z0-9]/.test(password)) strength++;
+
+    if (strength <= 2) return { strength, label: 'Weak', color: 'bg-red-500' };
+    if (strength <= 3) return { strength, label: 'Fair', color: 'bg-yellow-500' };
+    if (strength <= 4) return { strength, label: 'Good', color: 'bg-blue-500' };
+    return { strength, label: 'Strong', color: 'bg-green-500' };
+  };
+
+  const passwordStrength = getPasswordStrength(formData.password);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -97,6 +117,19 @@ export default function Register() {
           <p className="text-gray-400">Join your organization's secure workspace</p>
         </div>
 
+        {/* Google OAuth Button */}
+        <GoogleOAuthButton mode="signup" className="mb-4" />
+
+        {/* Divider */}
+        <div className="relative my-6">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-700"></div>
+          </div>
+          <div className="relative flex justify-center text-sm">
+            <span className="px-4 bg-premium-black text-gray-400">Or register with email</span>
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-300 ml-1">Full Name</label>
@@ -133,14 +166,40 @@ export default function Register() {
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
               <input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                className="glass-input w-full pl-10 pr-4 py-3 rounded-xl"
+                className="glass-input w-full pl-10 pr-12 py-3 rounded-xl"
                 placeholder="••••••••"
                 required
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
             </div>
+
+            {/* Password Strength Indicator */}
+            {formData.password && (
+              <div className="space-y-1">
+                <div className="flex gap-1">
+                  {[...Array(5)].map((_, i) => (
+                    <div
+                      key={i}
+                      className={`h-1 flex-1 rounded-full transition-all ${i < passwordStrength.strength ? passwordStrength.color : 'bg-gray-700'
+                        }`}
+                    />
+                  ))}
+                </div>
+                <p className={`text-xs ${passwordStrength.strength >= 3 ? 'text-green-400' : 'text-yellow-400'
+                  }`}>
+                  Password strength: {passwordStrength.label}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">

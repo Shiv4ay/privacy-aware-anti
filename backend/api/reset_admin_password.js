@@ -10,10 +10,11 @@ const pool = new Pool({
 });
 
 async function resetAdminPassword() {
-    const newPassword = process.argv[2];
+    const targetEmail = process.argv[2];
+    const newPassword = process.argv[3];
 
-    if (!newPassword) {
-        console.error("Usage: node reset_admin_password.js <new_password>");
+    if (!newPassword || !targetEmail) {
+        console.error("Usage: node reset_admin_password.js <email> <new_password>");
         process.exit(1);
     }
 
@@ -22,10 +23,10 @@ async function resetAdminPassword() {
         const saltRounds = 10;
         const hash = await bcrypt.hash(newPassword, saltRounds);
 
-        console.log(`Resetting password for user 'admin'...`);
+        console.log(`Resetting password for user '${targetEmail}'...`);
         const res = await pool.query(
-            "UPDATE users SET password_hash = $1 WHERE username = 'admin' RETURNING id, username, email",
-            [hash]
+            "UPDATE users SET password_hash = $1 WHERE email = $2 RETURNING id, username, email",
+            [hash, targetEmail]
         );
 
         if (res.rows.length > 0) {
@@ -34,7 +35,7 @@ async function resetAdminPassword() {
             console.log(`Email: ${res.rows[0].email}`);
             console.log(`Password: ${newPassword}`);
         } else {
-            console.log("❌ Error: User 'admin' not found.");
+            console.log("❌ Error: User not found:", targetEmail);
         }
     } catch (err) {
         console.error("Error:", err);

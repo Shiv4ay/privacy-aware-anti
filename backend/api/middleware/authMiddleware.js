@@ -28,6 +28,7 @@ function extractToken(req) {
  * Main authentication middleware
  */
 async function authenticateJWT(req, res, next) {
+    console.log(`[DEBUG] authenticateJWT triggered for ${req.method} ${req.url}`);
     try {
         // Development mode bypass (keep existing dev auth)
         if (process.env.NODE_ENV === 'development') {
@@ -80,7 +81,7 @@ async function authenticateJWT(req, res, next) {
             try {
                 const userResult = await req.db.query(
                     `SELECT id, user_id, username, email, role, department, org_id, 
-                    is_active, is_mfa_enabled 
+                    is_active, is_mfa_enabled, oauth_avatar_url, custom_avatar_url 
              FROM users 
              WHERE user_id = $1`,
                     [payload.userId]
@@ -109,7 +110,8 @@ async function authenticateJWT(req, res, next) {
                     department: user.department,
                     organizationId: user.org_id,
                     org_id: user.org_id,
-                    is_mfa_enabled: user.is_mfa_enabled
+                    is_mfa_enabled: user.is_mfa_enabled,
+                    avatarUrl: user.custom_avatar_url || user.oauth_avatar_url
                 };
             } catch (dbError) {
                 console.error('[Auth] Database lookup failed:', dbError);

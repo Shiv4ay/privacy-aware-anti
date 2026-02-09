@@ -294,7 +294,7 @@ class SearchRequest(BaseModel):
     department: Optional[str] = None
     user_category: Optional[str] = None
     user_role: Optional[str] = "student" # super_admin, admin, student, general
-    user_id: Optional[int] = None
+    user_id: Optional[Any] = None
     model_preference: Optional[Dict[str, Any]] = None
     dp_enabled: Optional[bool] = DP_ENABLED
 
@@ -304,15 +304,21 @@ class ChatRequest(BaseModel):
     organization: Optional[str] = "default"
     org_id: Optional[int] = None
     user_role: Optional[str] = "student"
-    user_id: Optional[int] = None
+    user_id: Optional[Any] = None
     department: Optional[str] = None
     user_category: Optional[str] = None
     model_preference: Optional[Dict[str, Any]] = None
 
 def get_org_collection(org_id: Optional[int] = None, org_name: str = "default", user_role: str = "student"):
     """Get or create a ChromaDB collection for a specific organization or general use"""
+    # Super admin should access org-specific data if org_id is provided
+    # Otherwise fallback to org_id=1 as the default main collection
     if user_role == "super_admin":
-        collection_name = "privacy_documents_global"
+        if org_id:
+            collection_name = f"privacy_documents_{org_id}"
+        else:
+            # Default to org 1 which has the main university data (25K+ documents)
+            collection_name = "privacy_documents_1"
     elif user_role == "general":
         collection_name = "privacy_documents_general"
     elif org_id:
@@ -425,27 +431,47 @@ def close_db_pool():
     except Exception as e:
         logger.exception("Error closing DB pool: %s", e)
 
-def insert_audit_log(user_id, action, resource_type, resource_id, details, ip_address=None, user_agent=None):
+def insert_audit_log(user_id, action, resource_type, resource_id, details, success=True, error_message=None, ip_address=None, user_agent=None):
     """
-    Insert an audit log into audit_logs table.
-    details should be a JSON-serializable dict (will be stored as jsonb).
-    Uses pooled connections.
+    Insert an audit log into audit_log table and publish to Redis for real-time dashboard.
     """
     conn = None
     try:
         conn = get_conn()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO audit_logs (user_id, action, resource_type, resource_id, details, ip_address, user_agent)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id;
-            """, (user_id, action, resource_type, resource_id, PGJson(details), ip_address, user_agent))
+                INSERT INTO audit_log (user_id, action, resource_type, ip_address, user_agent, success, error_message, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, created_at;
+            """, (str(user_id) if user_id else None, action, resource_type, ip_address, user_agent, success, error_message, PGJson(details)))
             row = cur.fetchone()
             conn.commit()
-            return row[0] if row else None
+            
+            if row:
+                log_id, created_at = row
+                # Real-time Broadcast via Redis Pub/Sub
+                try:
+                    r = redis.from_url(REDIS_URL)
+                    event = {
+                        "id": log_id,
+                        "user_id": user_id,
+                        "action": action,
+                        "resource_type": resource_type,
+                        "success": success,
+                        "metadata": details,
+                        "created_at": created_at.isoformat() if created_at else datetime.now().isoformat()
+                    }
+                    # Also try to resolve username if possible (simple heuristic)
+                    event["username"] = details.get("username", "System") if details else "System"
+                    
+                    r.publish('system_activity', json.dumps(event))
+                except Exception as redis_err:
+                    logger.error(f"Redis Broadcast failed: {redis_err}")
+                
+                return log_id
+            return None
     except Exception as e:
         logger.exception("Failed to insert audit log: %s", e)
-        # don't propagate to callers (best-effort audit)
         return None
     finally:
         if conn:
@@ -569,12 +595,27 @@ def get_embedding(text: str, model_name: Optional[str] = None, timeout_per_call:
 
 def get_system_prompt(user_role: str = "student", context_present: bool = False) -> str:
     """Factory for Role-Specific and Strict-RAG System Prompts."""
-    base_rules = """STRICT RULES:
-1. ONLY use the provided context. If the answer is in the metadata or raw text, provide it.
-2. If the context clearly doesn't contain the data, state you don't have enough information.
-3. DO NOT use external world knowledge.
-4. If context has [REDACTED_...] placeholders, assume they are the correct values.
-5. Provide a clear, summarized answer based on the records found."""
+    base_rules = """PROFESSIONAL RESPONSE GUIDELINES:
+1. ANALYZE all provided context thoroughly - information may be spread across multiple document chunks.
+2. SYNTHESIZE information from multiple records when answering aggregate questions (averages, counts, lists).
+3. For queries about groups (e.g., "CSE students", "Microsoft placements"):
+   - Search for relevant attributes in the metadata (department codes, company names)
+   - Compile results from all matching records
+   - Provide aggregated statistics and summaries
+4. If context clearly doesn't contain ANY relevant data, state: "The available records do not contain information about [specific query]."
+5. DO NOT use external world knowledge - rely exclusively on provided documents.
+6. When context has [REDACTED_...] placeholders, acknowledge them as privacy-protected fields.
+7. Structure responses with clear formatting:
+   - Direct answer to the question
+   - Supporting details and context
+   - For multiple records: use bullet points or tables
+   - For aggregates: provide counts, averages, ranges
+8. For numerical queries (GPA, counts, averages):
+   - Calculate from all relevant records in context
+   - Provide exact values and sample sizes
+9. Cross-reference related information to provide comprehensive insights.
+10. Maintain a professional, analytical tone suitable for academic/enterprise environments.
+11. When asked about "all" or "list" queries, compile information from ALL relevant chunks provided."""
 
     if user_role in ['super_admin']:
         role_desc = "You are the GLOBAL SYSTEM AUDITOR. You have overview access to all organizations."
@@ -605,15 +646,15 @@ def call_openai_chat(messages: List[Dict[str, str]], model: str = PRIMARY_MODEL)
         response = openai.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0.0, # Minimum creativity for strict RAG
-            max_tokens=1000
+            temperature=0.1, # Slight flexibility for natural, detailed responses
+            max_tokens=2000  # Increased for comprehensive, detailed answers
         )
         return response.choices[0].message.content
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
         return f"ERROR: Cloud reasoning failed. ({e})"
 
-def generate_chat_response(query: str, context: str, user_role: str = "student") -> str:
+def generate_chat_response(query: str, context: str, user_role: str = "student", conversation_history: list = None) -> str:
     """Generate answer using either OpenAI or Ollama with Strict RAG Guardrails."""
 
     # 1. Pre-flight Privacy Redaction (The Bread of the Sandwich)
@@ -630,10 +671,27 @@ def generate_chat_response(query: str, context: str, user_role: str = "student")
         # DEBUG (Safe for FYP demo):
         logger.info(f"Anonymized Query: {redacted_query}")
         logger.info(f"Context Sample: {redacted_context[:500]}...")
+        
+        # Build messages array with conversation history for context continuity
         messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": f"Context:\n{redacted_context}\n\nQuestion: {redacted_query}"}
+            {"role": "system", "content": system_msg}
         ]
+        
+        # Add previous conversation for context (helps with follow-up questions)
+        if conversation_history and isinstance(conversation_history, list):
+            for msg in conversation_history:
+                if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                    messages.append({
+                        "role": msg["role"],
+                        "content": redact_text(msg["content"])  # Redact PII from history too
+                    })
+        
+        # Add current query with document context
+        messages.append({
+            "role": "user", 
+            "content": f"Context:\n{redacted_context}\n\nQuestion: {redacted_query}"
+        })
+        
         logger.info(f"OpenAI Call Messages: {json.dumps(messages)[:2000]}")
         raw_response = call_openai_chat(messages)
         logger.info(f"Raw OpenAI Response: {raw_response[:200]}...")
@@ -1304,7 +1362,7 @@ def search_documents(request: SearchRequest):
                 "document_ids": []
             }
             try:
-                insert_audit_log(user.get("id"), "search", "document", None, details)
+                insert_audit_log(request.user_id, "search", "document", None, details, success=False, error_message="Failed to generate query embedding")
             except Exception:
                 pass
             raise HTTPException(status_code=500, detail="Failed to generate query embedding")
@@ -1335,6 +1393,7 @@ def search_documents(request: SearchRequest):
             results = org_collection.query(
                 query_embeddings=[query_embedding],
                 n_results=fetch_k,
+                include=["documents", "metadatas", "distances"],
                 where=where_filter
             )
         else:
@@ -1425,7 +1484,7 @@ def search_documents(request: SearchRequest):
 
         # Insert audit log (best-effort)
         try:
-            insert_audit_log(user.get("id"), "search", "document", None, details)
+            insert_audit_log(request.user_id, "search", "document", None, details, success=True)
         except Exception as e:
             logger.exception("Audit insert failed: %s", e)
 
@@ -1443,13 +1502,13 @@ def search_documents(request: SearchRequest):
         logger.exception("Search error: %s", e)
         # attempt best-effort audit
         try:
-            insert_audit_log(user.get("id"), "search", "document", None, {
+            insert_audit_log(request.user_id if hasattr(request, 'user_id') else None, "search", "document", None, {
                 "query_hash": hash_query(request.query if hasattr(request, 'query') else ""),
                 "query_redacted": redact_text(request.query if hasattr(request, 'query') else ""),
                 "error": str(e),
                 "result_count": 0,
                 "document_ids": []
-            })
+            }, success=False, error_message=str(e))
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=str(e))
@@ -1480,6 +1539,7 @@ async def chat_with_documents(req: Request):
         if isinstance(body, dict):
             query = body.get("query") or body.get("message") or body.get("prompt") or None
             context = body.get("context", None)
+            conversation_history = body.get("conversation_history",  [])  # For follow-up questions
             org_id = body.get("org_id")
             user_id = body.get("user_id")
             organization = body.get("organization") or "default"
@@ -1509,9 +1569,10 @@ async def chat_with_documents(req: Request):
         if not context:
             try:
                 # Dynamic top_k based on role: Admins need more context for aggregate analysis/trends
+                # Increased values for more comprehensive, accurate responses
                 admin_roles = ['admin', 'super_admin']
                 is_admin = user_role in admin_roles
-                k_val = 12 if is_admin else 5
+                k_val = 20 if is_admin else 10  # Increased from 12/5 for better context
                 
                 logger.info(f"CHAT: building context for role={user_role}, using top_k={k_val}")
                 
@@ -1546,8 +1607,41 @@ async def chat_with_documents(req: Request):
                 logger.exception("Chat: unexpected error while building context: %s", e)
                 context = ""
 
-        # Generate response using consolidated generate_chat_response
-        response_text = generate_chat_response(query, context or "", user_role=user_role)
+        response_text = generate_chat_response(
+            query, 
+            context or "", 
+            user_role=user_role,
+            conversation_history=conversation_history
+        )
+
+        # Audit Log for Chat (Capture PII Redaction)
+        try:
+            # Check for PII markers in the response
+            pii_types = []
+            if "[EMAIL_REDACTED]" in response_text: pii_types.append("email")
+            if "[PHONE_REDACTED]" in response_text: pii_types.append("phone")
+            if "[SSN_REDACTED]" in response_text: pii_types.append("ssn")
+            if "[ADDRESS_REDACTED]" in response_text: pii_types.append("address")
+            
+            pii_detected = len(pii_types) > 0
+            
+            # Determine user_id to log (either from body or safe default)
+            log_user_id = user_id
+
+            details = {
+                "query_hash": hash_query(query),
+                "query_redacted": redact_text(query), # Also redact input
+                "pii_detected": pii_detected,
+                "pii_types": pii_types,
+                "context_used": bool(context),
+                "response_preview": response_text[:100] + "..." if len(response_text) > 100 else response_text
+            }
+            
+            insert_audit_log(log_user_id, "chat", "chat_session", None, details, success=True)
+            logger.info(f"AUDIT: Logged chat action. PII Detected: {pii_detected}")
+            
+        except Exception as audit_err:
+            logger.error(f"Failed to log chat audit: {audit_err}")
 
         return {
             "query": query,

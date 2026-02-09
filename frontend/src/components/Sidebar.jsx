@@ -17,7 +17,12 @@ import {
 
 export default function Sidebar({ isOpen, setIsOpen }) {
   const { user, logout } = useAuth();
+  const [imgError, setImgError] = useState(false);
   const location = useLocation();
+
+  React.useEffect(() => {
+    setImgError(false);
+  }, [user]);
 
   const menuItems = [
     { icon: LayoutDashboard, label: 'Overview', path: '/dashboard' },
@@ -39,6 +44,7 @@ export default function Sidebar({ isOpen, setIsOpen }) {
     menuItems.push({ icon: Shield, label: 'Super Admin', path: '/super-admin' });
   }
   if (user?.role === 'admin' || user?.role === 'super_admin') {
+    menuItems.push({ icon: Shield, label: 'Audit Log', path: '/security' });
     menuItems.push({ icon: Users, label: 'Admin', path: '/admin' });
   }
 
@@ -108,12 +114,24 @@ export default function Sidebar({ isOpen, setIsOpen }) {
       {/* User Profile / Logout (Bottom) */}
       <div className="absolute bottom-0 left-0 w-full p-4 border-t border-white/5 bg-premium-black">
         <div className={`flex items-center gap-3 ${isOpen ? '' : 'justify-center'}`}>
-          <div className="w-10 h-10 rounded-full bg-premium-gold/20 flex items-center justify-center text-premium-gold font-bold flex-shrink-0">
-            {user?.name?.[0]?.toUpperCase() || 'U'}
-          </div>
+          {user?.avatarUrl && !imgError ? (
+            <img
+              src={user.avatarUrl}
+              crossOrigin="anonymous"
+              onError={() => setImgError(true)}
+              alt={user.username || user.name}
+              className="w-10 h-10 rounded-full object-cover border border-premium-gold/30 flex-shrink-0"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-premium-gold/20 flex items-center justify-center text-premium-gold font-bold flex-shrink-0">
+              {(user?.name || user?.username || user?.email)?.[0]?.toUpperCase() || 'U'}
+            </div>
+          )}
 
           <div className={`overflow-hidden transition-all duration-300 ${isOpen ? 'w-auto opacity-100' : 'w-0 opacity-0'}`}>
-            <p className="text-sm font-medium text-white truncate">{user?.name}</p>
+            <p className="text-sm font-medium text-white truncate">
+              {user?.email ? user.email.split('@')[0] : (user?.name || user?.username)}
+            </p>
             <p className="text-xs text-gray-500 truncate">{user?.role}</p>
           </div>
 

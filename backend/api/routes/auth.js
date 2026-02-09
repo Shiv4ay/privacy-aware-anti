@@ -34,10 +34,11 @@ async function logAudit(db, userId, action, success, details = {}, req = null) {
         const ip = req ? (req.headers['x-forwarded-for'] || req.socket.remoteAddress) : null;
         const ua = req ? req.get('User-Agent') : null;
 
-        await db.query(`
+        const result = await db.query(`
             INSERT INTO audit_log 
             (user_id, action, resource_type, ip_address, user_agent, success, error_message, metadata)
             VALUES ($1, $2, 'auth', $3, $4, $5, $6, $7)
+            RETURNING id, created_at
         `, [
             userId,
             action,
@@ -47,6 +48,29 @@ async function logAudit(db, userId, action, success, details = {}, req = null) {
             success ? null : (details.error || 'Unknown error'),
             success ? details : null
         ]);
+
+        // Real-time broadcast if setup
+        if (req && req.app && req.app.get('realtime') && result.rows.length > 0) {
+            const auditRow = result.rows[0];
+            const event = {
+                id: auditRow.id,
+                user_id: userId,
+                action: action,
+                resource_type: 'auth',
+                success: success,
+                metadata: details,
+                created_at: auditRow.created_at,
+                username: details.username || 'System'
+            };
+
+            // Try to add username from request if available
+            if (req.user && req.user.username) event.username = req.user.username;
+
+            // Use the shared redis client attached to req
+            if (req.redis && typeof req.redis.publish === 'function') {
+                await req.redis.publish('system_activity', JSON.stringify(event));
+            }
+        }
     } catch (err) {
         console.error('Audit logging failed:', err.message);
     }
@@ -187,7 +211,7 @@ router.post('/login', async (req, res) => {
 
         // Fetch user
         const result = await req.db.query(
-            `SELECT u.id, u.user_id, u.username, u.email, u.password_hash, u.role, u.org_id, u.department, u.is_active, u.is_mfa_enabled, u.failed_login_attempts, o.type as organization_type
+            `SELECT u.id, u.user_id, u.username, u.email, u.password_hash, u.role, u.org_id, u.department, u.is_active, u.is_mfa_enabled, u.failed_login_attempts, u.oauth_avatar_url, u.custom_avatar_url, o.type as organization_type
              FROM users u
              LEFT JOIN organizations o ON u.org_id = o.id
              WHERE u.email = $1`,
@@ -253,7 +277,8 @@ router.post('/login', async (req, res) => {
                 role: user.role,
                 org_id: user.org_id,
                 organization_type: user.organization_type,
-                department: user.department
+                department: user.department,
+                avatarUrl: user.custom_avatar_url || user.oauth_avatar_url
             },
             ...tokens
         });
@@ -381,7 +406,8 @@ router.get('/me', authenticateJWT, async (req, res) => {
                 role: req.user.role,
                 department: req.user.department,
                 org_id: req.user.organizationId || req.user.org_id,
-                is_mfa_enabled: req.user.is_mfa_enabled
+                is_mfa_enabled: req.user.is_mfa_enabled,
+                avatarUrl: req.user.avatarUrl
             }
         });
     } catch (error) {
@@ -762,6 +788,108 @@ router.get('/mfa/status', authenticateJWT, async (req, res) => {
         res.json({ enabled: result.rows[0]?.is_mfa_enabled || false });
     } catch (error) {
         res.status(500).json({ error: 'Failed to check MFA status' });
+    }
+});
+
+// ==========================================
+// GOOGLE OAUTH ROUTES
+// ==========================================
+
+const googleOAuth = require('../auth/oauthManager');
+
+/**
+ * GET /api/auth/google
+ * Initiate Google OAuth flow
+ */
+router.get('/google', (req, res) => {
+    try {
+        if (!googleOAuth.isConfigured()) {
+            return res.status(503).json({ error: 'Google OAuth not configured' });
+        }
+
+        const { url, state } = googleOAuth.getAuthURL();
+
+        // Store state in session/cookie for CSRF protection (optional enhancement)
+        res.json({ authUrl: url, state });
+    } catch (error) {
+        console.error('OAuth initiation error:', error);
+        res.status(500).json({ error: 'Failed to initiate Google login' });
+    }
+});
+
+/**
+ * POST /api/auth/google/callback
+ * Handle Google OAuth callback
+ */
+router.post('/google/callback', async (req, res) => {
+    const client = await req.db.connect();
+    try {
+        const { code, state } = req.body;
+
+        if (!code) {
+            return res.status(400).json({ error: 'Authorization code required' });
+        }
+
+        await client.query('BEGIN');
+
+        // Exchange code for tokens
+        const tokens = await googleOAuth.exchangeCodeForTokens(code);
+
+        // Get user info from Google
+        const userInfo = await googleOAuth.getUserInfo(tokens.access_token);
+
+        // Find or create user
+        const user = await googleOAuth.findOrCreateUser(req.db, userInfo);
+
+        // Generate app tokens
+        const appTokens = jwtManager.generateTokenPair({
+            ...user,
+            user_id: user.user_id || user.id
+        });
+
+        // Create session
+        await client.query(`
+            INSERT INTO auth_sessions 
+            (user_id, refresh_token, expires_at, ip_address, user_agent)
+            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4)
+        `, [user.user_id || user.id, appTokens.refreshToken, req.ip, req.get('User-Agent')]);
+
+        await logAudit(client, user.user_id || user.id, 'oauth_login', true, { provider: 'google' }, req);
+
+        await client.query('COMMIT');
+
+        // Fetch full user details with organization
+        const fullUserResult = await req.db.query(
+            `SELECT u.id, u.user_id, u.username, u.email, u.role, u.org_id, u.department, u.oauth_avatar_url, u.custom_avatar_url, o.type as organization_type
+             FROM users u
+             LEFT JOIN organizations o ON u.org_id = o.id
+             WHERE u.id = $1`,
+            [user.id]
+        );
+
+        const fullUser = fullUserResult.rows[0];
+
+        res.json({
+            message: 'Google login successful',
+            user: {
+                userId: fullUser.user_id || fullUser.id,
+                username: fullUser.username,
+                email: fullUser.email,
+                role: fullUser.role,
+                org_id: fullUser.org_id,
+                organization_type: fullUser.organization_type,
+                department: fullUser.department,
+                avatarUrl: fullUser.custom_avatar_url || fullUser.oauth_avatar_url
+            },
+            ...appTokens
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('OAuth callback error:', error);
+        res.status(500).json({ error: 'OAuth authentication failed', details: error.message });
+    } finally {
+        client.release();
     }
 });
 

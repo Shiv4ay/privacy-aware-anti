@@ -258,6 +258,10 @@ services:
       PRIMARY_MODEL: ${PRIMARY_MODEL}
       LOCAL_CHAT_MODEL: ${LOCAL_CHAT_MODEL}
       ALE_MASTER_KEY: ${ALE_MASTER_KEY}
+      # Google OAuth Configuration
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     volumes:
       - ./backend/api:/app
       - /app/node_modules
@@ -270,7 +274,7 @@ services:
         reservations:
           memory: 128M
     healthcheck:
-      test: [ "CMD", "node", "-e", "const http=require('http'); const req=http.get('http://127.0.0.1:3001/api/health', res=>{ process.exit(res.statusCode===200?0:1) }); req.on('error', ()=>process.exit(1));" ]
+      test: [ "CMD", "node", "-e", "const http=require('http'); const req=http.get('http://127.0.0.1:3001/healthz', res=>{ process.exit(res.statusCode===200?0:1) }); req.on('error', ()=>process.exit(1));" ]
       interval: 10s
       timeout: 5s
       retries: 10

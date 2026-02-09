@@ -8,24 +8,24 @@ import DashboardLayout from './components/DashboardLayout'
 import Dashboard from './pages/Dashboard'
 import SuperAdminDashboard from './pages/SuperAdminDashboard'
 import AdminDashboard from './pages/AdminDashboard'
-import AuditDashboard from './pages/AuditDashboard'
+import SecurityDashboard from './pages/SecurityDashboard'
 import DataDashboard from './pages/DataDashboard'
 import DocumentUpload from './pages/DocumentUpload'
 import Documents from './pages/Documents'
 import Search from './pages/Search'
 import Chat from './pages/Chat'
 import Settings from './pages/Settings'
+import ProfilePage from './pages/ProfilePage'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import OtpVerification from './pages/OtpVerification'
-import './index.css'
-
-import { Toaster } from 'react-hot-toast';
-
+import OAuthCallback from './pages/OAuthCallback'
 import OrgSelectionPage from './pages/OrgSelectionPage'
 import LandingPage from './pages/LandingPage'
+import './index.css'
+import { Toaster } from 'react-hot-toast';
 
 function App() {
   return (
@@ -49,6 +49,7 @@ function App() {
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/otp-verify" element={<OtpVerification />} />
+            <Route path="/auth/google/callback" element={<OAuthCallback />} />
 
             {/* Org Selection (Protected but No Org Required) */}
             <Route path="/org-select" element={
@@ -75,9 +76,14 @@ function App() {
                           <AdminDashboard />
                         </ProtectedRoute>
                       } />
+                      <Route path="/security" element={
+                        <ProtectedRoute roles={['admin', 'super_admin']}>
+                          <SecurityDashboard />
+                        </ProtectedRoute>
+                      } />
                       <Route path="/audit" element={
                         <ProtectedRoute roles={['auditor', 'super_admin']}>
-                          <AuditDashboard />
+                          <SecurityDashboard />
                         </ProtectedRoute>
                       } />
                       <Route path="/data" element={
@@ -90,6 +96,7 @@ function App() {
                       <Route path="/documents" element={<Documents />} />
                       <Route path="/documents/upload" element={<DocumentUpload />} />
                       <Route path="/settings" element={<Settings />} />
+                      <Route path="/profile" element={<ProfilePage />} />
                     </Routes>
                   </DashboardLayout>
                 </ProtectedRoute>

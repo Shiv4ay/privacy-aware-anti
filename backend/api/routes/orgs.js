@@ -9,6 +9,79 @@ const pool = new Pool({
 });
 
 /**
+ * GET /api/orgs/system-status
+ * Get global system statistics and health status (super admin only)
+ */
+router.get('/system-status', async (req, res) => {
+    try {
+        if (req.user.role !== 'super_admin') {
+            return res.status(403).json({ error: 'Super admin access required' });
+        }
+
+        const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
+
+        // 1. Fetch Global Stats
+        const statsQuery = `
+            SELECT 
+                (SELECT COUNT(*) FROM organizations) as org_count,
+                (SELECT COUNT(*) FROM users) as user_count,
+                (SELECT COUNT(*) FROM documents) as doc_count,
+                (SELECT COALESCE(SUM(file_size), 0) FROM documents) as storage_used
+        `;
+        const statsResult = await pool.query(statsQuery);
+
+        // 2. Fetch Recent System Activity (from audit_log)
+        const activityQuery = `
+            SELECT a.id, a.action, a.resource_type, a.created_at, u.username, u.email
+            FROM audit_log a
+            LEFT JOIN users u ON a.user_id::text = u.user_id::text OR a.user_id::text = u.id::text
+            ORDER BY a.created_at DESC
+            LIMIT 5
+        `;
+        const activityResult = await pool.query(activityQuery);
+
+        // 3. Service Health Checks
+        const health = {
+            postgres: true,
+            redis: false,
+            worker: false
+        };
+
+        // Redis Check
+        try {
+            const Redis = require('ioredis');
+            const redis = new Redis(process.env.REDIS_URL || 'redis://redis:6379/0', { maxRetriesPerRequest: 1 });
+            await redis.ping();
+            health.redis = true;
+            await redis.quit();
+        } catch (e) { }
+
+        // Worker Check
+        try {
+            const axios = require('axios');
+            await axios.get(`${WORKER_URL}/health`, { timeout: 1000 });
+            health.worker = true;
+        } catch (e) { }
+
+        res.json({
+            success: true,
+            stats: {
+                totalOrganizations: parseInt(statsResult.rows[0].org_count),
+                totalUsers: parseInt(statsResult.rows[0].user_count),
+                totalDocuments: parseInt(statsResult.rows[0].doc_count),
+                totalStorage: parseInt(statsResult.rows[0].storage_used)
+            },
+            recentActivity: activityResult.rows,
+            health
+        });
+
+    } catch (error) {
+        console.error('[Orgs] System status error:', error);
+        res.status(500).json({ error: 'Failed to fetch system status' });
+    }
+});
+
+/**
  * GET /api/orgs
  * List all organizations (super admin only)
  */
@@ -80,6 +153,11 @@ router.post('/create', async (req, res) => {
             message: `Organization "${newOrg.name}" created successfully`
         });
 
+        // Real-time broadcast
+        if (req.app.get('realtime')) {
+            req.app.get('realtime').io.emit('org_update', { action: 'create', organization: newOrg });
+        }
+
     } catch (error) {
         console.error('[Orgs] Create error:', error);
         res.status(500).json({ error: 'Failed to create organization' });
@@ -125,6 +203,11 @@ router.post('/delete/:id', async (req, res) => {
             success: true,
             message: `Organization "${orgName}" deleted successfully`
         });
+
+        // Real-time broadcast
+        if (req.app.get('realtime')) {
+            req.app.get('realtime').io.emit('org_update', { action: 'delete', orgId });
+        }
 
     } catch (error) {
         console.error('[Orgs] Delete error:', error);
