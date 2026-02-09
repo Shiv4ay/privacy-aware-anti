@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
-import { Lock, Mail, ArrowRight, Loader2, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Lock, Mail, ArrowRight, Loader2, ShieldCheck, ShieldAlert, Eye, EyeOff } from 'lucide-react';
+import GoogleOAuthButton from '../components/GoogleOAuthButton';
 import toast from 'react-hot-toast';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [otp, setOtp] = useState('');
   const [showMfa, setShowMfa] = useState(false);
   const [mfaToken, setMfaToken] = useState(null);
@@ -72,7 +74,11 @@ export default function Login() {
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-premium-black relative overflow-hidden">
-      <div className="glass-panel p-8 rounded-2xl shadow-2xl w-full max-w-md">
+      {/* Background Accents */}
+      <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-premium-gold/5 rounded-full blur-[100px]" />
+      <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-900/10 rounded-full blur-[100px]" />
+
+      <div className="glass-panel p-8 rounded-2xl shadow-2xl w-full max-w-md relative z-10">
 
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-premium-gold/10 mb-4">
@@ -85,6 +91,23 @@ export default function Login() {
             {showMfa ? 'Enter the 6-digit code from your app' : 'Sign in to access your secure workspace'}
           </p>
         </div>
+
+        {!showMfa && (
+          <>
+            {/* Google OAuth Button */}
+            <GoogleOAuthButton mode="signin" className="mb-4" />
+
+            {/* Divider */}
+            <div className="relative my-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-700"></div>
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-4 bg-premium-black text-gray-400">Or continue with email</span>
+              </div>
+            </div>
+          </>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6" autoComplete="off">
           {!showMfa ? (
@@ -111,13 +134,20 @@ export default function Login() {
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
                   <input
                     ref={passRef}
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="glass-input w-full pl-10 pr-4 py-3 rounded-xl"
+                    className="glass-input w-full pl-10 pr-12 py-3 rounded-xl"
                     placeholder="••••••••"
                     required
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
                 </div>
               </div>
             </>

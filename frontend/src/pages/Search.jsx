@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import client from '../api/index';
 import { Search as SearchIcon, Sparkles, Loader2, FileText, ChevronRight, AlertTriangle, Shield, Eye, Lock } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -20,6 +21,70 @@ export default function Search() {
   const [privacyInfo, setPrivacyInfo] = useState(null);
   const [rbacWarning, setRbacWarning] = useState(null);
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    const query = searchParams.get('q');
+    if (query) {
+      setQ(query);
+      // We need a ref to the form submit or just call doSearch wrap
+      triggerSearch(query);
+    }
+  }, [searchParams]);
+
+  const triggerSearch = async (queryText) => {
+    if (!queryText || queryText.trim().length === 0) return;
+
+    setLoading(true);
+    setError(null);
+    setResults([]);
+    setPrivacyInfo(null);
+    setRbacWarning(null);
+
+    const detectedPII = detectPII(queryText);
+    if (detectedPII.length > 0) {
+      setPrivacyInfo({
+        detected: detectedPII,
+        message: `PII detected: ${detectedPII.join(', ')}. These will be redacted in audit logs.`
+      });
+    }
+
+    try {
+      const res = await client.post('/search', { query: queryText.trim() });
+
+      if (res.data?.query_redacted && res.data.query_redacted !== (res.data.query || queryText)) {
+        setPrivacyInfo(prev => ({
+          ...prev,
+          redacted: res.data.query_redacted,
+          original: res.data.query || queryText
+        }));
+      }
+
+      if (res.data?.decision === 'denied' || res.data?.blocked) {
+        setRbacWarning({
+          message: res.data.message || 'Access denied based on your role/permissions',
+          policy: res.data.policy_id || null
+        });
+      }
+
+      const searchResults = res.data?.results || res.data?.hits || [];
+      setResults(searchResults);
+      toast.success(`Found ${searchResults.length} results`);
+    } catch (err) {
+      console.error('Search error', err);
+      if (err?.response?.status === 403) {
+        setRbacWarning({
+          message: err?.response?.data?.message || 'Access denied: You do not have permission to search',
+          policy: err?.response?.data?.policy_id || null
+        });
+      }
+      const serverMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Search failed';
+      setError(serverMsg);
+      toast.error(serverMsg);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const detectPII = (text) => {
     const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
@@ -36,62 +101,7 @@ export default function Search() {
 
   const doSearch = async (e) => {
     e.preventDefault();
-    if (!q || q.trim().length === 0) {
-      toast.error('Please enter a search query');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    setResults([]);
-    setPrivacyInfo(null);
-    setRbacWarning(null);
-
-    const detectedPII = detectPII(q);
-    if (detectedPII.length > 0) {
-      setPrivacyInfo({
-        detected: detectedPII,
-        message: `PII detected: ${detectedPII.join(', ')}. These will be redacted in audit logs.`
-      });
-    }
-
-    try {
-      const res = await client.post('/search', { query: q.trim() });
-
-      if (res.data?.query_redacted && res.data.query_redacted !== (res.data.query || q)) {
-        setPrivacyInfo(prev => ({
-          ...prev,
-          redacted: res.data.query_redacted,
-          original: res.data.query || q
-        }));
-      }
-
-      if (res.data?.decision === 'denied' || res.data?.blocked) {
-        setRbacWarning({
-          message: res.data.message || 'Access denied based on your role/permissions',
-          policy: res.data.policy_id || null
-        });
-      }
-
-      const searchResults = res.data?.results || res.data?.hits || [];
-      setResults(searchResults);
-      toast.success(`Found ${searchResults.length} results`);
-    } catch (err) {
-      console.error('Search error', err);
-
-      if (err?.response?.status === 403) {
-        setRbacWarning({
-          message: err?.response?.data?.message || 'Access denied: You do not have permission to search',
-          policy: err?.response?.data?.policy_id || null
-        });
-      }
-
-      const serverMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || 'Search failed';
-      setError(serverMsg);
-      toast.error(serverMsg);
-    } finally {
-      setLoading(false);
-    }
+    triggerSearch(q);
   };
 
   return (

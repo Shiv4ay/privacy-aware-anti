@@ -40,7 +40,8 @@ export function AuthProvider({ children }) {
           role: userData.role,
           // Map org_id to organization for consistency
           organization: userData.organization || userData.org_id,
-          organization_type: userData.organization_type
+          organization_type: userData.organization_type,
+          avatarUrl: userData.avatarUrl || userData.avatar
         });
       } catch (error) {
         console.error('[AuthContext] Failed to load user:', error.message);
@@ -87,10 +88,11 @@ export function AuthProvider({ children }) {
     const userObj = {
       ...userData,
       organization: userData.org_id || userData.organization,
-      organization_type: userData.organization_type
+      organization_type: userData.organization_type,
+      avatarUrl: userData.avatarUrl || userData.avatar
     };
     setUser(userObj);
-    console.log('[AuthContext] Login successful:', userObj.email, 'Org:', userObj.organization);
+    console.log('[AuthContext] Login successful:', userObj.email, 'Avatar:', userObj.avatarUrl || 'None');
 
     return { ...res.data, user: userObj };
   };
@@ -118,7 +120,8 @@ export function AuthProvider({ children }) {
     const userObj = {
       ...userData,
       organization: userData.org_id || userData.organization,
-      organization_type: userData.organization_type
+      organization_type: userData.organization_type,
+      avatarUrl: userData.avatarUrl || userData.avatar
     };
     setUser(userObj);
     console.log('[AuthContext] MFA Login successful:', userObj.email);

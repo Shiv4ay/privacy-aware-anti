@@ -4,8 +4,7 @@ const router = express.Router();
 
 const { authenticateJWT } = require('../middleware/authMiddleware');
 
-// Apply auth middleware to all routes in this router
-router.use(authenticateJWT);
+// Use authentication on specific routes
 
 const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
 
@@ -13,7 +12,7 @@ const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
  * POST /chat (mounted at /api/chat)
  * Full AI chat with document context
  */
-router.post('/chat', async (req, res) => {
+router.post('/chat', authenticateJWT, async (req, res) => {
   try {
     const { query } = req.body;
 
@@ -52,7 +51,7 @@ router.post('/chat', async (req, res) => {
 /**
  * POST /search (mounted at /api/search)
  */
-router.post('/search', async (req, res) => {
+router.post('/search', authenticateJWT, async (req, res) => {
   try {
     const { query, top_k } = req.body;
 
