@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Shield, Lock, AlertTriangle, Eye, RefreshCw, Activity, Search, FileText, User } from 'lucide-react';
 import client from '../api/index';
 import toast from 'react-hot-toast';
+import { io } from 'socket.io-client';
 
 export default function SecurityDashboard() {
     const [stats, setStats] = useState(null);
@@ -14,7 +15,64 @@ export default function SecurityDashboard() {
     useEffect(() => {
         fetchData();
         const interval = setInterval(() => fetchStats(), 30000);
-        return () => clearInterval(interval);
+
+        const socketUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+        const socket = io(socketUrl, {
+            withCredentials: true,
+            transports: ['websocket', 'polling']
+        });
+
+        socket.on('connect', () => {
+            console.log('🔌 Security Dashboard Connected to Real-time Gateway');
+            socket.emit('subscribe:system');
+        });
+
+        socket.on('activity', (newActivity) => {
+            console.log('⚡ Security Activity Received:', newActivity);
+
+            // 1. Instantly update the stat cards
+            setStats(prevStats => {
+                if (!prevStats) return null;
+                const newStats = { ...prevStats };
+
+                if (newActivity.action === 'search' || newActivity.action === 'chat') {
+                    newStats.totalQueries = (newStats.totalQueries || 0) + 1;
+                    if (newActivity.success === false) {
+                        newStats.blockedQueries = (newStats.blockedQueries || 0) + 1;
+                    }
+                }
+
+                if (newActivity.metadata?.pii_detected || newActivity.metadata?.pii_detected === 'true') {
+                    newStats.piiRedacted = (newStats.piiRedacted || 0) + 1;
+                }
+
+                // Recalculate score based on formula
+                const total = newStats.totalQueries || 1;
+                const blocked = newStats.blockedQueries || 0;
+                newStats.privacyScore = Math.max(0, 100 - ((blocked / total) * 100)).toFixed(1);
+
+                return newStats;
+            });
+
+            // 2. Prepend log if on page 1 (optimistic UI update)
+            setLogs(prevLogs => {
+                const syntheticLog = {
+                    id: newActivity.id || Date.now(),
+                    action: newActivity.action,
+                    created_at: newActivity.created_at || new Date().toISOString(),
+                    success: newActivity.success,
+                    metadata: newActivity.metadata || {},
+                    error_message: newActivity.metadata?.error_message || (!newActivity.success && "Blocked/Failed action"),
+                    username: newActivity.username || 'System'
+                };
+                return [syntheticLog, ...prevLogs].slice(0, 20);
+            });
+        });
+
+        return () => {
+            clearInterval(interval);
+            socket.disconnect();
+        };
     }, []);
 
     useEffect(() => {
@@ -212,11 +270,20 @@ export default function SecurityDashboard() {
                                         {new Date(log.created_at).toLocaleString()}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-xs">
-                                                {log.username?.[0] || 'U'}
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-white/10 to-white/5 flex items-center justify-center text-sm font-bold border border-white/10 text-gray-300">
+                                                {(log.username || 'System')?.[0]?.toUpperCase()}
                                             </div>
-                                            <span className="text-sm font-medium text-white">{log.username || 'System'}</span>
+                                            <div className="flex flex-col">
+                                                <span className="text-sm font-bold text-white tracking-wide">
+                                                    {log.username || 'System Agent'}
+                                                </span>
+                                                {log.email && (
+                                                    <span className="text-xs text-premium-gold font-mono mt-0.5 opacity-80">
+                                                        {log.email}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
@@ -276,10 +343,20 @@ export default function SecurityDashboard() {
 // Helpers & Components
 
 function formatDetails(log) {
-    if (log.error_message) return log.error_message;
-    if (log.metadata?.pii_detected) return `PII Redacted: ${log.metadata.pii_types?.join(', ') || 'Sensitive Data'}`;
-    if (log.action === 'search') return 'Search Query Processed';
-    return JSON.stringify(log.metadata).substring(0, 50) + (JSON.stringify(log.metadata).length > 50 ? '...' : '');
+    if (log.error_message) return <span className="text-red-400">{log.error_message}</span>;
+    if (log.metadata?.pii_detected) return <span className="text-yellow-400 font-bold">PII Redacted: <span className="font-normal text-gray-300">{log.metadata.pii_types?.join(', ') || 'Sensitive Data'}</span></span>;
+    if (log.action === 'search' && log.metadata?.query_redacted) {
+        return <span><span className="text-gray-500 mr-2 uppercase text-[10px] tracking-widest font-black flex-shrink-0">Search:</span><span className="text-gray-200">"{log.metadata.query_redacted}"</span></span>;
+    }
+    if (log.action === 'chat' && log.metadata?.query_redacted) {
+        return <span><span className="text-gray-500 mr-2 uppercase text-[10px] tracking-widest font-black flex-shrink-0">Chat:</span><span className="text-gray-200">"{log.metadata.query_redacted}"</span></span>;
+    }
+    if (log.action === 'oauth_login') {
+        const provider = log.metadata?.provider || 'OAuth';
+        return <span><span className="text-blue-400 font-bold">Authenticated</span> <span className="text-gray-500 text-xs">via {provider}</span></span>;
+    }
+    const raw = JSON.stringify(log.metadata) || '';
+    return <span className="text-gray-500 opacity-70">{raw.length > 50 ? raw.substring(0, 50) + '...' : raw}</span>;
 }
 
 function StatCard({ title, value, subtext, icon: Icon, color, onClick, isActive }) {
@@ -293,8 +370,8 @@ function StatCard({ title, value, subtext, icon: Icon, color, onClick, isActive 
     return (
         <div
             onClick={onClick}
-            className={`p-6 rounded-xl bg-gradient-to-br border backdrop-blur-sm cursor-pointer transition-all duration-200 
-                ${colors[color].split(' ').slice(0, 3).join(' ')} 
+            className={`p-6 rounded-xl bg-gradient-to-br border backdrop-blur-sm cursor-pointer transition-all duration-200
+                ${colors[color].split(' ').slice(0, 3).join(' ')}
                 ${isActive ? 'ring-2 ring-offset-2 ring-offset-black ring-premium-gold scale-[1.02]' : 'hover:scale-[1.02] hover:border-premium-gold/50'}
             `}
         >

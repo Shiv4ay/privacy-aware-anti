@@ -115,8 +115,24 @@ const upload = multer({
 // Express App Setup
 const app = express();
 
-// 0. Public Health Check (Root level - for Docker)
-app.get('/healthz', async (req, res) => {
+
+// 1. Basic Middleware
+app.use((req, res, next) => { console.log(`[DEBUG] Request ${req.method} ${req.url} started`); next(); });
+
+app.use(cors({
+    origin: function (origin, callback) { return callback(null, true); },
+    credentials: true
+}));
+
+app.use((req, res, next) => { console.log('[DEBUG] CORS passed'); next(); });
+
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+app.use((req, res, next) => { console.log('[DEBUG] Body parser passed'); next(); });
+
+// 0. Public Health Check (Root level - for Docker & Frontend)
+app.get(['/healthz', '/api/health'], async (req, res) => {
     try {
         const health = {
             status: 'ok',
@@ -137,21 +153,6 @@ app.get('/healthz', async (req, res) => {
         res.status(500).json({ status: 'error', message: err.message });
     }
 });
-
-// 1. Basic Middleware
-app.use((req, res, next) => { console.log(`[DEBUG] Request ${req.method} ${req.url} started`); next(); });
-
-app.use(cors({
-    origin: function (origin, callback) { return callback(null, true); },
-    credentials: true
-}));
-
-app.use((req, res, next) => { console.log('[DEBUG] CORS passed'); next(); });
-
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-app.use((req, res, next) => { console.log('[DEBUG] Body parser passed'); next(); });
 
 // 2. Security Headers (Phase 4)
 configureSecurityHeaders(app);

@@ -10,6 +10,7 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const jwtManager = require('../auth/jwtManager');
 const { authenticateJWT } = require('../middleware/authMiddleware');
+const { loginLimiter } = require('../middleware/rateLimiter');
 const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
 
@@ -199,7 +200,7 @@ router.post('/register', async (req, res) => {
  * POST /api/auth/login
  * Login with email/password
  */
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
     console.log('[DEBUG] Login attempt for:', req.body.email);
     try {
         let { email, password } = req.body;
