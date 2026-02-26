@@ -330,4 +330,74 @@ router.get('/documents', async (req, res) => {
     }
 });
 
+// PUT /api/admin/users/:id/reactivate - Manually unblock a suspended user
+router.put('/users/:id/reactivate', requireAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+
+        // Verify the admin has permission to modify this user
+        if (req.user.role !== 'super_admin') {
+            const userCheck = await pool.query('SELECT org_id FROM users WHERE id = $1', [userId]);
+            if (userCheck.rows.length === 0 || userCheck.rows[0].org_id !== req.user.org_id) {
+                return res.status(403).json({ error: 'Access denied: User belongs to a different organization' });
+            }
+        }
+
+        // Reactivate the user and reset their failed attempts/locks
+        await pool.query(
+            'UPDATE users SET is_active = TRUE, failed_login_attempts = 0, locked_until = NULL WHERE id = $1',
+            [userId]
+        );
+
+        // Audit log
+        await pool.query(
+            `INSERT INTO audit_log (user_id, action, resource_type, resource_id, success, error_message, ip_address, user_agent, metadata)
+             VALUES ($1, 'admin_reactivate_user', 'users', $2, TRUE, 'User manually reactivated by Admin', $3, $4, $5)`,
+            [req.user.id, userId, req.ip, req.get('User-Agent'), { admin_id: req.user.id }]
+        );
+
+        res.json({ success: true, message: 'User successfully reactivated' });
+    } catch (error) {
+        console.error('Reactivate User Error:', error);
+        res.status(500).json({ error: 'Failed to reactivate user' });
+    }
+});
+
+// PUT /api/admin/users/:id/suspend - Manually suspend a user
+router.put('/users/:id/suspend', requireAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+
+        // Protect super_admin from suspension by lower admins
+        const targetUser = await pool.query('SELECT role, org_id FROM users WHERE id = $1', [userId]);
+        if (targetUser.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+        if (targetUser.rows[0].role === 'super_admin' && req.user.role !== 'super_admin') {
+            return res.status(403).json({ error: 'Cannot suspend a super admin' });
+        }
+
+        if (req.user.role !== 'super_admin' && targetUser.rows[0].org_id !== req.user.org_id) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        // Suspend user and invalidate existing refresh tokens to force kill sessions
+        await pool.query('UPDATE users SET is_active = FALSE WHERE id = $1', [userId]);
+        await pool.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [userId]);
+
+        // Audit log
+        await pool.query(
+            `INSERT INTO audit_log (user_id, action, resource_type, resource_id, success, error_message, ip_address, user_agent, metadata)
+             VALUES ($1, 'admin_suspend_user', 'users', $2, TRUE, 'User manually suspended by Admin', $3, $4, $5)`,
+            [req.user.id, userId, req.ip, req.get('User-Agent'), { admin_id: req.user.id }]
+        );
+
+        res.json({ success: true, message: 'User successfully suspended' });
+    } catch (error) {
+        console.error('Suspend User Error:', error);
+        res.status(500).json({ error: 'Failed to suspend user' });
+    }
+});
+
 module.exports = router;

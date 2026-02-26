@@ -1,131 +1,133 @@
 /**
  * Rate Limiting Middleware
- * Prevents brute force attacks with intelligent rate limiting
- * 
- * Features:
- * - Login: 5 attempts per 15 minutes
- * - Password reset: 3 attempts per hour
- * - API calls: 100 requests per minute per user
- * - Account lockout after 5 failed attempts
+ * Prevents brute force attacks with intelligent rate limiting backed by Redis
  */
 
 const rateLimit = require('express-rate-limit');
+const RedisStore = require('rate-limit-redis').default || require('rate-limit-redis');
+const Redis = require('ioredis');
+
+// Connect to existing Redis instance
+const redisClient = new Redis(process.env.REDIS_URL || 'redis://redis:6379/0', {
+    retryStrategy: (times) => Math.min(times * 50, 2000),
+    maxRetriesPerRequest: 3
+});
+
+redisClient.on('error', (err) => console.warn('RateLimiter Redis warning:', err.message));
 
 /**
  * Safely normalize IP address for use in keys
- * Handles IPv6, IPv4, and edge cases
  */
 function normalizeIP(ip) {
     if (!ip) return 'unknown';
-    // Remove IPv6 prefix if present
     const normalized = String(ip).replace(/^::ffff:/, '');
-    // Replace all special characters with underscores to avoid parsing issues
     return normalized.replace(/[^a-zA-Z0-9]/g, '_');
 }
 
 /**
- * Login rate limiter - 5 attempts per 15 minutes
+ * Custom handler that blocks the request AND logs it instantly to the Security Audit UI
  */
-const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5,
-    message: 'Too many login attempts from this IP, please try again after 15 minutes',
-    standardHeaders: true,
-    legacyHeaders: false,
-    skipSuccessfulRequests: true, // Don't count successful logins
-    keyGenerator: (req) => {
-        // Rate limit by IP + email combination
-        const email = (req.body && req.body.email) || 'unknown';
+const securityThreatHandler = (req, res, next, options) => {
+    try {
+        const userId = req.user?.userId || null;
         const safeIP = normalizeIP(req.ip);
-        return `login_${safeIP}_${email}`;
-    },
-    validate: false
-});
+
+        // Construct the Audit Log payload 
+        const auditPayload = {
+            type: "audit_log",
+            action: "rate_limit_exceeded",
+            user_id: userId,
+            resource_type: "api_endpoint",
+            resource_id: null,
+            success: false, // Blocked
+            error_message: "Rate limit threshold breached (DDoS protection)",
+            details: {
+                endpoint: req.originalUrl,
+                method: req.method,
+                ip: safeIP,
+                limit_rule: options.message
+            },
+            timestamp: new Date().toISOString()
+        };
+
+        // Fire and forget to the realtime dashboard
+        redisClient.publish('system_activity', JSON.stringify(auditPayload));
+
+        // Let the worker know to insert this into the DB for permanent records
+        redisClient.lpush("audit_queue", JSON.stringify(auditPayload));
+
+        console.warn(`[SECURITY WALL] Rate limit breached by IP: ${safeIP} on ${req.originalUrl}`);
+    } catch (err) {
+        console.error("Failed to broadcast rate limit alert:", err);
+    }
+
+    res.status(429).json({ status: 'error', message: options.message || 'Too many requests' });
+};
+
+// Common RedisStore config factory
+const createRedisStore = (prefix) => {
+    return new RedisStore({
+        sendCommand: (...args) => redisClient.call(...args),
+        prefix: `rl_${prefix}_`
+    });
+};
 
 /**
- * Password reset rate limiter - 3 attempts per hour
+ * AI Rate Limiter - STRICT (20 requests per minute)
+ * Protects expensive LLM /search and /chat endpoints
  */
-const passwordResetLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 3,
-    message: 'Too many password reset requests, please try again after 1 hour',
+const aiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => {
-        const email = (req.body && req.body.email) || 'unknown';
-        const safeIP = normalizeIP(req.ip);
-        return `pwd_reset_${safeIP}_${email}`;
-    },
-    validate: false
-});
-
-/**
- * Registration rate limiter - 3 per hour per IP
- */
-const registrationLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000,
-    max: 3,
-    message: 'Too many registration attempts, please try again later',
-    // Default keyGenerator uses IP, which is fine if we don't override it
-    // But if we want consistent prefixes:
-    keyGenerator: (req) => `register_${normalizeIP(req.ip)}`,
-    validate: false
+    message: 'Artificial Intelligence capacity limit reached. Please wait a moment.',
+    store: createRedisStore('ai'),
+    keyGenerator: (req) => req.user?.userId ? `user_${req.user.userId}` : `ip_${normalizeIP(req.ip)}`,
+    handler: securityThreatHandler
 });
 
 /**
  * General API rate limiter - 100 requests per minute
  */
 const apiLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
+    windowMs: 60 * 1000,
     max: 100,
-    message: 'Too many requests, please slow down',
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => {
-        try {
-            // Use user ID if authenticated, otherwise IP
-            const safeIP = normalizeIP(req.ip);
-            console.log(`[DEBUG] RateLimit KeyGen: IP=${safeIP} User=${req.user?.userId}`);
-            return req.user?.userId ? `user_${req.user.userId}` : `ip_${safeIP}`;
-        } catch (e) {
-            console.error('[DEBUG] RateLimit KeyGen Error:', e);
-            throw e;
-        }
-    },
-    skip: (req) => {
-        // Skip rate limiting for super admins
-        return req.user?.role === 'super_admin';
-    },
-    validate: false
+    message: 'Too many API requests, please slow down',
+    store: createRedisStore('api'),
+    keyGenerator: (req) => req.user?.userId ? `user_${req.user.userId}` : `ip_${normalizeIP(req.ip)}`,
+    skip: (req) => req.user?.role === 'super_admin' || req.originalUrl.includes('/health'),
+    handler: securityThreatHandler
 });
 
 /**
- * Strict rate limiter for sensitive operations - 10 per hour
+ * Login rate limiter - 5 attempts per 15 minutes
  */
-const strictLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000,
-    max: 10,
-    message: 'Too many requests for this sensitive operation',
-    keyGenerator: (req) => req.user?.userId ? `strict_user_${req.user.userId}` : `strict_ip_${normalizeIP(req.ip)}`,
-    validate: false
-});
-
-/**
- * MFA setup limiter - Prevent MFA spam
- */
-const mfaLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000,
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
     max: 5,
-    message: 'Too many MFA setup attempts',
-    keyGenerator: (req) => req.user?.userId ? `mfa_${req.user.userId}` : `mfa_ip_${normalizeIP(req.ip)}`,
-    validate: false
+    message: 'Too many login attempts from this IP, please try again after 15 minutes',
+    store: createRedisStore('login'),
+    keyGenerator: (req) => `login_${normalizeIP(req.ip)}_${(req.body && req.body.email) || 'unknown'}`,
+    handler: securityThreatHandler
+});
+
+/**
+ * Password reset limiter - 3 attempts per hour
+ */
+const passwordResetLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 3,
+    message: 'Too many password reset requests',
+    store: createRedisStore('pwd'),
+    handler: securityThreatHandler
 });
 
 module.exports = {
     loginLimiter,
     passwordResetLimiter,
-    registrationLimiter,
     apiLimiter,
-    strictLimiter,
-    mfaLimiter
+    aiLimiter
 };

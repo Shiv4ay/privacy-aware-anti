@@ -4,6 +4,7 @@ import client from '../api/index';
 import { useAuth } from '../contexts/AuthContext';
 import { Send, Bot, User, Loader2, MessageSquare, Sparkles, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
+import PIIText from '../components/ui/PIIText';
 
 export default function Chat() {
   const [message, setMessage] = useState('');
@@ -156,7 +157,9 @@ export default function Chat() {
                 ? 'bg-blue-600/20 border border-blue-500/30 text-blue-100'
                 : 'bg-white/10 border border-white/10 text-gray-100'
                 }`}>
-                <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{m.text}</div>
+                <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                  {m.from === 'ai' ? <PIIText text={m.text} userRole={user?.role} /> : m.text}
+                </div>
                 {m.contextUsed && m.from === 'ai' && (
                   <div className="mt-1 pt-1 border-t border-white/10 text-[10px] text-premium-gold opacity-80 flex items-center gap-1">
                     <Sparkles className="w-2 h-2" /> Context Used

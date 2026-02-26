@@ -42,10 +42,17 @@ router.get('/system-status', async (req, res) => {
 
         // 3. Service Health Checks
         const health = {
-            postgres: true,
+            postgres: false,
             redis: false,
-            worker: false
+            worker: false,
+            minio: false
         };
+
+        // Postgres Check
+        try {
+            await pool.query('SELECT 1');
+            health.postgres = true;
+        } catch (e) { console.error('[Health] Postgres check failed', e); }
 
         // Redis Check
         try {
@@ -54,14 +61,64 @@ router.get('/system-status', async (req, res) => {
             await redis.ping();
             health.redis = true;
             await redis.quit();
-        } catch (e) { }
+        } catch (e) { console.error('[Health] Redis check failed', e); }
 
         // Worker Check
         try {
             const axios = require('axios');
             await axios.get(`${WORKER_URL}/health`, { timeout: 1000 });
             health.worker = true;
-        } catch (e) { }
+        } catch (e) { console.error('[Health] Worker check failed', e); }
+
+        // MinIO Check (using a quick HTTP ping to the endpoint since we don't have the MinIO client instantiated here)
+        try {
+            const Minio = require('minio');
+            const url = require('url');
+
+            function parseMinio(raw) {
+                if (!raw) return null;
+                raw = String(raw).trim();
+                if (raw.startsWith('http://') || raw.startsWith('https://')) {
+                    const p = url.parse(raw);
+                    const port = p.port ? parseInt(p.port, 10) : (p.protocol === 'https:' ? 443 : 80);
+                    return {
+                        host: p.hostname,
+                        port: (!isNaN(port) && port > 0 && port <= 65535) ? port : 9000,
+                        useSSL: p.protocol === 'https:'
+                    };
+                }
+                if (raw.includes('/')) raw = raw.split('/')[0];
+                if (raw.includes(':')) {
+                    const parts = raw.split(':');
+                    const port = parseInt(parts[1] || '9000', 10);
+                    return {
+                        host: parts[0],
+                        port: (!isNaN(port) && port > 0 && port <= 65535) ? port : 9000,
+                        useSSL: false
+                    };
+                }
+                return { host: raw, port: 9000, useSSL: false };
+            }
+
+            const MINIO_RAW = process.env.MINIO_ENDPOINT || `${process.env.MINIO_HOST || 'minio'}:${process.env.MINIO_PORT || '9000'}`;
+            const _m = parseMinio(MINIO_RAW);
+
+            const minioClient = new Minio.Client({
+                endPoint: _m.host,
+                port: Number(_m.port) || 9000,
+                useSSL: !!_m.useSSL,
+                accessKey: process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || 'minioadmin',
+                secretKey: process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || 'minioadmin123'
+            });
+
+            await new Promise((resolve, reject) => {
+                minioClient.listBuckets((err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+            health.minio = true;
+        } catch (e) { console.error('[Health] MinIO check failed', e); }
 
         res.json({
             success: true,

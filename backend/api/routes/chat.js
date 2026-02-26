@@ -3,6 +3,7 @@ const axios = require('axios');
 const router = express.Router();
 
 const { authenticateJWT } = require('../middleware/authMiddleware');
+const { aiLimiter } = require('../middleware/rateLimiter');
 
 // Use authentication on specific routes
 
@@ -12,7 +13,7 @@ const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
  * POST /chat (mounted at /api/chat)
  * Full AI chat with document context
  */
-router.post('/chat', authenticateJWT, async (req, res) => {
+router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
   try {
     const { query } = req.body;
 
@@ -51,7 +52,7 @@ router.post('/chat', authenticateJWT, async (req, res) => {
 /**
  * POST /search (mounted at /api/search)
  */
-router.post('/search', authenticateJWT, async (req, res) => {
+router.post('/search', authenticateJWT, aiLimiter, async (req, res) => {
   try {
     const { query, top_k } = req.body;
 

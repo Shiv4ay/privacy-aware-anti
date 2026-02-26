@@ -20,6 +20,9 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Security Guardrails
+from security.prompt_guard import scan_prompt
+
 import psycopg2
 from psycopg2.extras import Json as PGJson
 from psycopg2.pool import SimpleConnectionPool
@@ -358,10 +361,10 @@ def redact_text(text: str) -> str:
     if not text:
         return text
     out = text
-    out = EMAIL_RE.sub('[EMAIL_REDACTED]', out)
-    out = SSN_RE.sub('[SSN_REDACTED]', out)
-    out = PHONE_RE.sub('[PHONE_REDACTED]', out)
-    out = ADDRESS_RE.sub('[ADDRESS_REDACTED]', out)
+    out = EMAIL_RE.sub(lambda m: f'[EMAIL:{m.group()}]', out)
+    out = SSN_RE.sub(lambda m: f'[SSN:{m.group()}]', out)
+    out = PHONE_RE.sub(lambda m: f'[PHONE:{m.group()}]', out)
+    out = ADDRESS_RE.sub(lambda m: f'[ADDRESS:{m.group()}]', out)
     return out
 
 def hash_query(text: str) -> str:
@@ -1347,6 +1350,25 @@ def search_documents(request: SearchRequest):
     try:
         # Redact and hash query for audit
         raw_query = request.query or ""
+        
+        # 0. SECURITY FIREWALL (Prompt Injection Guardrails)
+        if scan_prompt(raw_query):
+            logger.warning(f"[SECURITY] Blocked malicious jailbreak attempt in /search from User {request.user_id}")
+            query_redacted = redact_text(raw_query)
+            try:
+                insert_audit_log(
+                    request.user_id,
+                    "jailbreak_attempt",
+                    "search_engine",
+                    None,
+                    {"query_hash": hash_query(raw_query), "query_redacted": query_redacted},
+                    success=False,
+                    error_message="Security Violation: Malicious Prompt Injection Detected"
+                )
+            except Exception:
+                pass
+            raise HTTPException(status_code=403, detail="Security Warning: Malicious Prompt Detected. Action logged.")
+            
         query_redacted = redact_text(raw_query)
         query_hash = hash_query(raw_query)
 
@@ -1554,6 +1576,24 @@ async def chat_with_documents(req: Request):
 
         query = query.strip()
 
+        # 0. SECURITY FIREWALL (Prompt Injection Guardrails)
+        if scan_prompt(query):
+            logger.warning(f"[SECURITY] Blocked malicious jailbreak attempt in /chat from User {user_id}")
+            query_redacted = redact_text(query)
+            try:
+                insert_audit_log(
+                    user_id,
+                    "jailbreak_attempt",
+                    "chat_engine",
+                    None,
+                    {"query_hash": hash_query(query), "query_redacted": query_redacted},
+                    success=False,
+                    error_message="Security Violation: Malicious Prompt Injection Detected"
+                )
+            except Exception:
+                pass
+            raise HTTPException(status_code=403, detail="Security Warning: Malicious Prompt Detected. Action logged.")
+
         # Phase 3 Guardrails: Query Safety Check
         if GuardrailManager:
             is_safe, error_msg = GuardrailManager.check_query(query)
@@ -1614,14 +1654,34 @@ async def chat_with_documents(req: Request):
             conversation_history=conversation_history
         )
 
+        # ── PII Redaction: sanitize the LLM response before returning ──────────
+        # The LLM may output raw PII (phone, email, etc.) from its training memory.
+        # We use safe_redact_text which first FREEZES existing [TYPE:value] tokens
+        # so they are never double-wrapped by a second pass.
+        _TOKEN_RE = re.compile(r'\[[A-Z]+:[^\]]+\]|\[[A-Z]+_REDACTED\]')
+        _placeholders = {}
+
+        def _freeze(m):
+            key = f'\x00TOKEN{len(_placeholders)}\x00'
+            _placeholders[key] = m.group()
+            return key
+
+        _frozen = _TOKEN_RE.sub(_freeze, response_text)
+        _redacted = redact_text(_frozen)
+        for k, v in _placeholders.items():
+            _redacted = _redacted.replace(k, v)
+        response_text = _redacted
+
+
         # Audit Log for Chat (Capture PII Redaction)
         try:
             # Check for PII markers in the response
             pii_types = []
-            if "[EMAIL_REDACTED]" in response_text: pii_types.append("email")
-            if "[PHONE_REDACTED]" in response_text: pii_types.append("phone")
-            if "[SSN_REDACTED]" in response_text: pii_types.append("ssn")
-            if "[ADDRESS_REDACTED]" in response_text: pii_types.append("address")
+            if re.search(r'\[EMAIL:', response_text):   pii_types.append("email")
+            if re.search(r'\[PHONE:', response_text):   pii_types.append("phone")
+            if re.search(r'\[SSN:', response_text):     pii_types.append("ssn")
+            if re.search(r'\[ADDRESS:', response_text): pii_types.append("address")
+            if re.search(r'\[COMPANY:', response_text): pii_types.append("company")
             
             pii_detected = len(pii_types) > 0
             
@@ -1649,6 +1709,7 @@ async def chat_with_documents(req: Request):
             "context_used": bool(context),
             "status": "success"
         }
+
 
     except HTTPException:
         # re-raise to let FastAPI send the right HTTP status & detail
