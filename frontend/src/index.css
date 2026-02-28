@@ -16,6 +16,16 @@
     @apply w-full;
     min-height: 100vh;
   }
+
+  textarea,
+  input,
+  textarea:focus,
+  input:focus,
+  textarea:active,
+  input:active {
+    outline: none !important;
+    box-shadow: none !important;
+  }
 }
 
 @layer components {
