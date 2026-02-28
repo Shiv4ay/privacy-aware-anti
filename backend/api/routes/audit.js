@@ -3,119 +3,98 @@ const router = express.Router();
 
 /**
  * GET /api/audit/stats
- * Real-time security metrics
+ *
+ * audit_logs columns: id, user_id, action, resource_type, resource_id,
+ *                     details (JSONB), ip_address, user_agent, created_at
+ * NOTE: There is NO top-level `success` column.
  */
 router.get('/stats', async (req, res) => {
     try {
-        const { organizationId } = req.query;
-        // Base query conditions
-        let whereClause = '';
-        let params = [];
+        const db = req.db;
 
-        if (organizationId) {
-            // If we had org_id in audit_log or joined with users, we'd filter here.
-            // For now, simpler implementation or join users if needed.
-            // Assuming basic system-wide stats if super_admin, or filter by user's actions if regular admin?
-            // Let's stick to system-wide for Super Admin, and maybe implemented later for Org Admin.
-        }
+        const [totalRes, blockedRes, piiRes] = await Promise.all([
+            db.query("SELECT COUNT(*) FROM audit_logs WHERE action IN ('search','chat')"),
+            db.query("SELECT COUNT(*) FROM audit_logs WHERE action IN ('search','chat') AND details->>'success' = 'false'"),
+            db.query("SELECT COUNT(*) FROM audit_logs WHERE details->>'pii_detected' = 'true'"),
+        ]);
 
-        // 1. Total Queries (actions='search' or 'chat')
-        const totalQueries = await req.db.query(
-            "SELECT COUNT(*) FROM audit_log WHERE action IN ('search', 'chat')"
-        );
-
-        // 2. Blocked Queries (success=false AND action IN ('search', 'chat'))
-        const blockedQueries = await req.db.query(
-            "SELECT COUNT(*) FROM audit_log WHERE action IN ('search', 'chat') AND success = FALSE"
-        );
-
-        // 3. PII Redacted (count where metadata->>'pii_detected' is true or not null)
-        // Adjust based on actual metadata structure. Assuming metadata has { "pii_detected": true } or similar.
-        const piiRedacted = await req.db.query(
-            "SELECT COUNT(*) FROM audit_log WHERE metadata->>'pii_detected' = 'true'"
-        );
-
-        // 4. Privacy Score (Mock calculation for now, or derived from % allowed vs blocked)
-        const total = parseInt(totalQueries.rows[0].count) || 1;
-        const blocked = parseInt(blockedQueries.rows[0].count) || 0;
+        const total = parseInt(totalRes.rows[0].count) || 1;
+        const blocked = parseInt(blockedRes.rows[0].count) || 0;
         const score = Math.max(0, 100 - ((blocked / total) * 100)).toFixed(1);
 
         res.json({
             stats: {
-                totalQueries: parseInt(totalQueries.rows[0].count),
-                blockedQueries: parseInt(blockedQueries.rows[0].count),
-                piiRedacted: parseInt(piiRedacted.rows[0].count),
+                totalQueries: parseInt(totalRes.rows[0].count),
+                blockedQueries: parseInt(blockedRes.rows[0].count),
+                piiRedacted: parseInt(piiRes.rows[0].count),
                 privacyScore: parseFloat(score)
             }
         });
-    } catch (error) {
-        console.error('Audit Stats Error:', error);
-        res.status(500).json({ error: 'Failed to fetch security stats' });
+    } catch (err) {
+        console.error('Audit Stats Error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch security stats', details: err.message });
     }
 });
 
 /**
  * GET /api/audit/logs
- * Paginated access logs
+ *
+ * Fully null-safe — derives success from details->>'success' string comparison
+ * (no ::boolean cast which throws when value is absent or malformed).
  */
 router.get('/logs', async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 20;
+        const db = req.db;
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limit = Math.min(100, parseInt(req.query.limit) || 20);
         const offset = (page - 1) * limit;
 
         const { status, pii } = req.query;
-        let whereConditions = [];
-        let params = [];
-        let paramIndex = 1;
+        const conditions = [];
 
-        if (status === 'allowed') {
-            whereConditions.push(`a.success = TRUE`);
-        } else if (status === 'blocked') {
-            whereConditions.push(`a.success = FALSE`);
-        }
+        // Use string comparison — no ::boolean that blows up on NULL
+        if (status === 'allowed') conditions.push(`(details->>'success' IS NULL OR details->>'success' != 'false')`);
+        if (status === 'blocked') conditions.push(`details->>'success' = 'false'`);
+        if (pii === 'true') conditions.push(`details->>'pii_detected' = 'true'`);
 
-        if (pii === 'true') {
-            whereConditions.push(`a.metadata->>'pii_detected' = 'true'`);
-        }
+        const whereClause = conditions.length > 0
+            ? 'WHERE ' + conditions.join(' AND ')
+            : '';
 
-        const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
-
-        // pagination params
-        params.push(limit); // $1
-        params.push(offset); // $2
-
-        // Adjust params indexing for the main query if we had strict param usage, 
-        // but here the WHERE clause is literal string injection for conditions (safe internal values) 
-        // or we could use parameterized queries for status/pii if they were user inputs. 
-        // Since status/pii are controlled enums effectively, we'll keep it simple for now but using params is better.
-        // Let's stick to the previous pattern but insert the WHERE clause.
-
-        const query = `
-            SELECT a.id, a.action, a.resource_type, a.created_at, a.success, a.error_message, a.metadata,
-                   u.username, u.email, u.role
-            FROM audit_log a
-            LEFT JOIN users u ON a.user_id = u.user_id
+        const logsRes = await db.query(`
+            SELECT
+                a.id,
+                a.user_id,
+                a.action,
+                a.resource_type,
+                a.created_at,
+                a.ip_address,
+                a.details                                                   AS metadata,
+                CASE WHEN a.details->>'success' = 'false'
+                     THEN false ELSE true END                               AS success,
+                COALESCE(u.username, 'System Agent')                        AS username,
+                u.email,
+                ur.name                                                     AS role
+            FROM  audit_logs  a
+            LEFT  JOIN users      u  ON a.user_id  = u.id
+            LEFT  JOIN user_roles ur ON u.role_id   = ur.id
             ${whereClause}
             ORDER BY a.created_at DESC
-            LIMIT $1 OFFSET $2
-        `;
+            LIMIT  $1 OFFSET $2
+        `, [limit, offset]);
 
-        const result = await req.db.query(query, [limit, offset]);
-        const countResult = await req.db.query(`SELECT COUNT(*) FROM audit_log a ${whereClause}`);
+        const countRes = await db.query(
+            `SELECT COUNT(*) FROM audit_logs a ${whereClause}`
+        );
+        const total = parseInt(countRes.rows[0].count) || 0;
 
         res.json({
-            logs: result.rows,
-            pagination: {
-                total: parseInt(countResult.rows[0].count),
-                page,
-                limit,
-                pages: Math.ceil(parseInt(countResult.rows[0].count) / limit)
-            }
+            logs: logsRes.rows,
+            pagination: { total, page, limit, pages: Math.ceil(total / limit) }
         });
-    } catch (error) {
-        console.error('Audit Logs Error:', error);
-        res.status(500).json({ error: 'Failed to fetch audit logs' });
+    } catch (err) {
+        console.error('Audit Logs Error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch audit logs', details: err.message });
     }
 });
 

@@ -349,8 +349,8 @@ class DocumentChunk(BaseModel):
 # Privacy helpers (redaction + hashing)
 # -----------------------------
 EMAIL_RE = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')
-# Fixed phone regex - removed word boundaries that fail with parentheses
-PHONE_RE = re.compile(r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?:\s*(?:x|ext)\s*\d+)?')
+# Phone regex: requires digits-only or formatted blocks; must end at word boundary
+PHONE_RE = re.compile(r'\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\ ]?\d{3}[-.\s]?\d{4}(?:\s*(?:x|ext)\.?\s*\d+)?\b')
 SSN_RE = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
 # Address pattern - matches common address formats with box numbers, APO/FPO, street addresses
 ADDRESS_RE = re.compile(r'(?:(?:P\.?O\.?|PSC)\s+(?:Box\s+)?\d+(?:,?\s+Box\s+\d+)?(?:,\s+APO|FPO|DPO)\s+[A-Z]{2}\s+\d{5})|(?:\d+\s+[A-Za-z0-9\s,]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Way|Place|Pl)(?:\s+(?:Apt|Unit|Suite|Ste|#)\s*[\w-]+)?(?:,\s*[A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5})?)')
@@ -1670,6 +1670,10 @@ async def chat_with_documents(req: Request):
         _redacted = redact_text(_frozen)
         for k, v in _placeholders.items():
             _redacted = _redacted.replace(k, v)
+
+        # Strip stray brackets that wrap a PII token: [[EMAIL:x]] → [EMAIL:x]
+        # This happens when the LLM formats values in markdown link style: [value]
+        _redacted = re.sub(r'\[+(\[(?:EMAIL|PHONE|SSN|ADDRESS|COMPANY|REDACTED)[^\]]*\])\]+', r'\1', _redacted)
         response_text = _redacted
 
 
@@ -1707,7 +1711,9 @@ async def chat_with_documents(req: Request):
             "query": query,
             "response": response_text,
             "context_used": bool(context),
-            "status": "success"
+            "status": "success",
+            "pii_detected": pii_detected,
+            "pii_types": pii_types
         }
 
 
@@ -1909,10 +1915,19 @@ async def trigger_ingestion(request: IngestionRequest, background_tasks: Backgro
 # ============================================================================
 
 @app.post("/process-batch")
-async def process_documents_batch(org_id: int, batch_size: int = 100, max_documents: Optional[int] = None):
-    """Process pending documents in batches to generate embeddings."""
-    logger.info(f"Batch processing started: org_id={org_id}, batch_size={batch_size}")
+async def process_documents_batch(org_id: int, background_tasks: BackgroundTasks, batch_size: int = 100, max_documents: Optional[int] = None):
+    """Trigger background batch processing for pending documents."""
+    logger.info(f"Background batch processing triggered: org_id={org_id}")
     
+    background_tasks.add_task(run_batch_processing, org_id, batch_size, max_documents)
+    
+    return {
+        "status": "accepted",
+        "message": f"Background processing started for org_id={org_id}"
+    }
+
+async def run_batch_processing(org_id: int, batch_size: int = 100, max_documents: Optional[int] = None):
+    """Internal loop for background batch processing."""
     total_processed = 0
     total_failed = 0
     failed_docs = []
@@ -2016,23 +2031,10 @@ async def process_documents_batch(org_id: int, batch_size: int = 100, max_docume
         cursor.close()
         put_conn(conn)
         
-        conn_check = get_conn()
-        cursor_check = conn_check.cursor()
-        cursor_check.execute("SELECT COUNT(*) FROM documents WHERE org_id = %s AND status = 'pending'", (org_id,))
-        remaining = cursor_check.fetchone()[0]
-        cursor_check.close()
-        put_conn(conn_check)
+        logger.info(f"Background processing finished for org_id={org_id}. Processed: {total_processed}, Failed: {total_failed}")
         
-        return {
-            "success": True,
-            "processed": total_processed,
-            "failed": total_failed,
-            "remaining": remaining,
-            "progress_percentage": round((total_processed / (total_processed + remaining)) * 100, 2) if (total_processed + remaining) > 0 else 0
-        }
     except Exception as e:
-        logger.exception(f"Batch processing error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Background batch processing error for org_id {org_id}: {e}")
 
 @app.get("/processing-status")
 async def get_processing_status(org_id: int):

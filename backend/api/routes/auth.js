@@ -50,6 +50,17 @@ async function logAudit(db, userId, action, success, details = {}, req = null) {
             success ? details : null
         ]);
 
+        // Also write to audit_logs (the table SecurityDashboard reads from)
+        const auditLogsDetails = {
+            success: success ? 'true' : 'false',
+            ...(success ? details : { error: details.error || 'Unknown error' }),
+        };
+
+        await db.query(`
+            INSERT INTO audit_logs (user_id, action, resource_type, details, ip_address, user_agent, created_at)
+            VALUES ($1, $2, 'auth', $3, $4, $5, NOW())
+        `, [userId, action, JSON.stringify(auditLogsDetails), ip, ua]);
+
         // Real-time broadcast if setup
         if (req && req.app && req.app.get('realtime') && result.rows.length > 0) {
             const auditRow = result.rows[0];
@@ -59,7 +70,7 @@ async function logAudit(db, userId, action, success, details = {}, req = null) {
                 action: action,
                 resource_type: 'auth',
                 success: success,
-                metadata: details,
+                metadata: auditLogsDetails,
                 created_at: auditRow.created_at,
                 username: details.username || 'System'
             };
@@ -71,10 +82,17 @@ async function logAudit(db, userId, action, success, details = {}, req = null) {
             if (req.redis && typeof req.redis.publish === 'function') {
                 await req.redis.publish('system_activity', JSON.stringify(event));
             }
+
+            // Direct emit fallback
+            const realtime = req.app.get('realtime');
+            if (realtime?.io) {
+                realtime.io.to('system_admins').emit('activity', event);
+            }
         }
     } catch (err) {
         console.error('Audit logging failed:', err.message);
     }
+
 }
 
 // ==========================================

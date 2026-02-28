@@ -4,10 +4,12 @@ import { useAuth } from '../contexts/AuthContext';
 import {
     Users, UserPlus, Database, Activity, FileText,
     Server, Shield, AlertTriangle, CheckCircle2, XCircle,
-    RefreshCw, Lock, Trash2, Mail, Building2, Zap, LayoutDashboard
+    RefreshCw, Lock, Trash2, Mail, Building2, Zap, LayoutDashboard,
+    Loader2, Play, ChevronRight
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { io } from 'socket.io-client';
+import { Link } from 'react-router-dom';
 import DataUpload from '../components/DataUpload';
 import AmbientBackground from '../components/ui/AmbientBackground';
 import AnimatedCard from '../components/ui/AnimatedCard';
@@ -179,29 +181,68 @@ export default function AdminDashboard() {
                     </div>
 
                     {/* System Health Panel */}
-                    <AnimatedCard className="glass-panel-strong p-6 rounded-2xl animate-fade-in border border-white/10 relative overflow-hidden bg-gradient-to-br from-white/[0.02] to-transparent shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-                        <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
-                            <Server className="w-48 h-48 text-premium-gold" />
-                        </div>
-
-                        <div className="flex items-center justify-between mb-6 relative z-10">
-                            <h2 className="text-xl font-bold text-white flex items-center gap-3 tracking-wide">
-                                <Activity className="w-5 h-5 text-green-400 animate-pulse" />
-                                Infrastructure Telemetry
-                            </h2>
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_10px_#22c55e] animate-pulse"></div>
-                                <span className="text-[10px] uppercase tracking-widest text-green-400 font-bold">Live Stream</span>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
+                        <AnimatedCard className="lg:col-span-2 glass-panel-strong p-6 rounded-2xl border border-white/10 relative overflow-hidden bg-gradient-to-br from-white/[0.02] to-transparent shadow-[0_0_30px_rgba(0,0,0,0.5)]">
+                            <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                                <Server className="w-48 h-48 text-premium-gold" />
                             </div>
-                        </div>
 
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 relative z-10">
-                            <HealthIndicator name="Postgres Core" status={systemHealth?.postgres} icon={Database} />
-                            <HealthIndicator name="Redis Stream" status={systemHealth?.redis} icon={Zap} />
-                            <HealthIndicator name="AI Sentinel" status={systemHealth?.worker} icon={Shield} />
-                            <HealthIndicator name="Vault (MinIO)" status={systemHealth?.minio} icon={Lock} />
-                        </div>
-                    </AnimatedCard>
+                            <div className="flex items-center justify-between mb-6 relative z-10">
+                                <h2 className="text-xl font-bold text-white flex items-center gap-3 tracking-wide">
+                                    <Activity className="w-5 h-5 text-green-400 animate-pulse" />
+                                    Infrastructure Telemetry
+                                </h2>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_10px_#22c55e] animate-pulse"></div>
+                                    <span className="text-[10px] uppercase tracking-widest text-green-400 font-bold">Live Stream</span>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 relative z-10">
+                                <HealthIndicator name="Postgres Core" status={systemHealth?.postgres} icon={Database} />
+                                <HealthIndicator name="Redis Stream" status={systemHealth?.redis} icon={Zap} />
+                                <HealthIndicator name="AI Sentinel" status={systemHealth?.worker} icon={Shield} />
+                                <HealthIndicator name="Vault (MinIO)" status={systemHealth?.minio} icon={Lock} />
+                            </div>
+                        </AnimatedCard>
+
+                        {/* Processing Status Quick Look */}
+                        <AnimatedCard className="glass-panel p-6 rounded-2xl border border-white/10 flex flex-col justify-center">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest">Processing Status</h3>
+                                {stats?.pendingDocuments > 0 ? (
+                                    <span className="flex items-center gap-1 text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/30">
+                                        <Loader2 className="w-2 h-2 animate-spin" /> In Progress
+                                    </span>
+                                ) : (
+                                    <span className="flex items-center gap-1 text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                                        <CheckCircle2 className="w-2 h-2" /> Synced
+                                    </span>
+                                )}
+                            </div>
+                            <div className="space-y-4">
+                                <div className="flex justify-between items-end">
+                                    <div>
+                                        <span className="text-2xl font-bold text-white">{stats?.totalDocuments || 0}</span>
+                                        <span className="text-gray-500 text-xs ml-2">Total</span>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className="text-xl font-bold text-emerald-400">{stats?.processedDocuments || 0}</span>
+                                        <span className="text-gray-500 text-xs ml-2">Indexed</span>
+                                    </div>
+                                </div>
+                                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                    <div
+                                        className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-1000"
+                                        style={{ width: `${Math.round(((stats?.processedDocuments || 0) / (stats?.totalDocuments || 1)) * 100)}%` }}
+                                    ></div>
+                                </div>
+                                <Link to="/data" className="text-[10px] text-premium-gold hover:text-white transition-colors flex items-center justify-center gap-1 mt-2 uppercase font-black tracking-widest">
+                                    Manage Processing Details <ChevronRight className="w-3 h-3" />
+                                </Link>
+                            </div>
+                        </AnimatedCard>
+                    </div>
 
                     {/* Core Metrics */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in" style={{ animationDelay: '100ms' }}>
