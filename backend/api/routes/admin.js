@@ -102,6 +102,17 @@ router.get('/stats', requireAdmin, async (req, res) => {
             pool.query(filesQuery, params)
         ]);
 
+        // Calculate processing counts
+        let procQuery = "SELECT status, COUNT(*) as count FROM documents";
+        if (!isSuperAdmin) procQuery += " WHERE org_id = $1";
+        procQuery += " GROUP BY status";
+        const procRes = await pool.query(procQuery, params);
+        const procStats = { processed: 0, pending: 0 };
+        procRes.rows.forEach(r => {
+            if (r.status === 'processed') procStats.processed = parseInt(r.count);
+            else procStats.pending += parseInt(r.count);
+        });
+
         let orgName = 'Global Overview';
         if (!isSuperAdmin && org_id) {
             const orgResult = await pool.query('SELECT name FROM organizations WHERE id = $1', [org_id]);
@@ -112,6 +123,8 @@ router.get('/stats', requireAdmin, async (req, res) => {
             success: true,
             stats: {
                 totalDocuments: parseInt(docsResult.rows[0]?.total || 0),
+                processedDocuments: procStats.processed,
+                pendingDocuments: procStats.pending,
                 totalUsers: parseInt(usersResult.rows[0]?.total || 0),
                 organizationName: orgName,
                 dataSourcesCount: filesResult.rows.length,

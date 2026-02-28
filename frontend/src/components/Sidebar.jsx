@@ -10,6 +10,7 @@ import {
   Settings,
   Shield,
   Users,
+  Database,
   ChevronLeft,
   ChevronRight,
   LogOut
@@ -43,9 +44,14 @@ export default function Sidebar({ isOpen, setIsOpen }) {
   if (user?.role === 'super_admin') {
     menuItems.push({ icon: Shield, label: 'Super Admin', path: '/super-admin' });
   }
-  if (user?.role === 'admin' || user?.role === 'super_admin') {
-    menuItems.push({ icon: Shield, label: 'Audit Log', path: '/security' });
-    menuItems.push({ icon: Users, label: 'Admin', path: '/admin' });
+  if (user?.role === 'admin' || user?.role === 'super_admin' || user?.role === 'data_steward') {
+    if (user?.role === 'admin' || user?.role === 'super_admin') {
+      menuItems.push({ icon: Shield, label: 'Audit Log', path: '/security' });
+      menuItems.push({ icon: Users, label: 'Admin', path: '/admin' });
+    }
+    if (user?.role === 'data_steward' || user?.role === 'super_admin') {
+      menuItems.push({ icon: Database, label: 'Data Steward', path: '/data' });
+    }
   }
 
   menuItems.push({ icon: Settings, label: 'Settings', path: '/settings' });

@@ -14,10 +14,11 @@ const PII_CONFIG = {
 /**
  * Master pattern — order matters (most specific first):
  *  1. [TYPE:actual_value]   — new value-preserving format
- *  2. [TYPE_REDACTED]       — legacy backend token
- *  3. [REDACTED]            — LLM self-redaction label
+ *  2. [TYPE_REDACTED]       — legacy backend token (e.g. [PHONE_REDACTED])
+ *  3. [REDACTED_TYPE]       — reversed format  (e.g. [REDACTED_PHONE])
+ *  4. [REDACTED]            — LLM self-redaction label
  */
-const PII_PATTERN = /\[(?:EMAIL|SSN|PHONE|ADDRESS|COMPANY):[^\]]+\]|\[(?:EMAIL|SSN|PHONE|ADDRESS|COMPANY)_REDACTED\]|\[REDACTED\]/g;
+const PII_PATTERN = /\[(?:EMAIL|SSN|PHONE|ADDRESS|COMPANY):[^\]]+\]|\[(?:EMAIL|SSN|PHONE|ADDRESS|COMPANY)_REDACTED\]|\[REDACTED_(?:EMAIL|SSN|PHONE|ADDRESS|COMPANY)\]|\[REDACTED\]/g;
 
 function parsePIIToken(token) {
     // [TYPE:actual_value]
@@ -28,11 +29,16 @@ function parsePIIToken(token) {
     const legacy = token.match(/^\[([A-Z]+)_REDACTED\]$/);
     if (legacy) return { type: legacy[1], value: null };
 
+    // [REDACTED_TYPE]  — reversed format from LLM/backend
+    const reversed = token.match(/^\[REDACTED_([A-Z]+)\]$/);
+    if (reversed) return { type: reversed[1], value: null };
+
     // [REDACTED]  — LLM wrote this; we don't know the type
     if (token === '[REDACTED]') return { type: 'REDACTED', value: null };
 
     return { type: 'REDACTED', value: null };
 }
+
 
 /**
  * Single blurred PII badge.
@@ -104,6 +110,22 @@ export default function PIIText({ text, userRole, className = '' }) {
         last = re.lastIndex;
     }
     if (last < text.length) parts.push({ plain: text.slice(last) });
+
+    // ── Cleanup stray [ ] brackets that surround PII tokens ─────────────────
+    // e.g. LLM writes [john@example.com] → backend produces [[EMAIL:john@...]]
+    // → frontend sees plain "[" + badge + "]" → strip those lone bracket chars
+    for (let i = 0; i < parts.length; i++) {
+        if (parts[i].token) {
+            // Strip trailing [ from preceding plain part
+            if (i > 0 && parts[i - 1].plain) {
+                parts[i - 1].plain = parts[i - 1].plain.replace(/\[+\s*$/, '');
+            }
+            // Strip leading ] (with optional space) from following plain part
+            if (i < parts.length - 1 && parts[i + 1].plain) {
+                parts[i + 1].plain = parts[i + 1].plain.replace(/^\s*\]+/, '');
+            }
+        }
+    }
 
     return (
         <span className={className}>
