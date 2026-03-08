@@ -106,7 +106,7 @@ function MessageBubble({ msg, user, onRegenerate }) {
           }`}>
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
             {msg.from === 'ai'
-              ? <PIIText text={msg.text} userRole={user?.role} />
+              ? <PIIText text={msg.text} userRole={user?.role} piiMap={msg.piiMap} />
               : msg.text
             }
           </div>
@@ -197,23 +197,28 @@ export default function Chat() {
     setLoading(true);
 
     try {
-      const history = messages.slice(-6).map(m => ({
+      const history = messages.slice(-12).map(m => ({
         role: m.from === 'user' ? 'user' : 'assistant',
         content: m.text
       }));
 
+      // Use the non-streaming /chat endpoint as primary
+      // This returns pii_map for admin click-to-reveal and properly handles
+      // conversation history through build_search_query
       const res = await client.post('/chat', {
         query: text,
-        conversation_history: history
+        conversation_history: history,
       });
 
       setMessages(prev => [...prev, {
-        id: Date.now() + 1,
+        id: Date.now() + 2,
         text: res.data?.response || res.data?.message || 'No response received.',
         from: 'ai',
         timestamp: new Date(),
-        contextUsed: res.data?.context_used || false
+        contextUsed: res.data?.context_used || false,
+        piiMap: res.data?.pii_map || null
       }]);
+
     } catch (err) {
       const msg = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Connection error';
       toast.error(`Error: ${msg}`);
@@ -460,8 +465,8 @@ export default function Chat() {
                     onClick={toggleListening}
                     title="Voice Input"
                     className={`p-1.5 transition-colors rounded-full ${isListening
-                        ? 'text-red-500 bg-red-500/10 animate-pulse'
-                        : 'text-gray-400 hover:text-white hover:bg-white/10'
+                      ? 'text-red-500 bg-red-500/10 animate-pulse'
+                      : 'text-gray-400 hover:text-white hover:bg-white/10'
                       }`}
                   >
                     <Mic className="w-5 h-5" />

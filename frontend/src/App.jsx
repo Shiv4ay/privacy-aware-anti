@@ -87,7 +87,7 @@ function App() {
                         </ProtectedRoute>
                       } />
                       <Route path="/data" element={
-                        <ProtectedRoute roles={['data_steward', 'super_admin']}>
+                        <ProtectedRoute roles={['data_steward', 'super_admin', 'admin']}>
                           <DataDashboard />
                         </ProtectedRoute>
                       } />

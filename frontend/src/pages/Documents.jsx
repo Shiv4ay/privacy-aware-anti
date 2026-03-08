@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import client from '../api/index';
 import { useAuth } from '../contexts/AuthContext';
-import { FileText, Search, Filter, ChevronLeft, ChevronRight, Download, Trash2, Eye, Calendar, Database, MessageSquare, UploadCloud } from 'lucide-react';
+import { FileText, Search, Filter, ChevronLeft, ChevronRight, Download, Trash2, Eye, Calendar, Database, MessageSquare, UploadCloud, RefreshCw, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function Documents() {
@@ -23,6 +23,7 @@ export default function Documents() {
         total: 0,
         totalPages: 0
     });
+    const [isSyncing, setIsSyncing] = useState(false);
 
     const isStudent = user?.role === 'student';
 
@@ -83,9 +84,11 @@ export default function Documents() {
 
     const formatTimeAgo = (dateString) => {
         if (!dateString) return 'Unknown';
-        const date = new Date(dateString);
+        // Append 'Z' to treat Postgres timestamp without timezone as UTC
+        const utcDateString = dateString.endsWith('Z') ? dateString : `${dateString}Z`;
+        const date = new Date(utcDateString);
         const now = new Date();
-        const diff = now - date;
+        const diff = Math.max(0, now - date); // Ensure it's not negative if slight server-client clock skew
         const minutes = Math.floor(diff / 60000);
         const hours = Math.floor(diff / 3600000);
         const days = Math.floor(diff / 86400000);
@@ -130,6 +133,22 @@ export default function Documents() {
         }
     };
 
+    const handleSyncKnowledgeBase = async () => {
+        setIsSyncing(true);
+        try {
+            const res = await client.post('/documents/process-all', {});
+            if (res.data.success) {
+                toast.success('Knowledge Base sync triggered! Indexing will continue in the background.');
+                // Polling for stats/documents will eventually show progress
+            }
+        } catch (err) {
+            console.error('Sync error:', err);
+            toast.error(err.response?.data?.error || 'Failed to trigger sync');
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
     // Check if user can upload (logic matching Sidebar)
     const canUpload = true; // DEBUG: Force visible
 
@@ -145,15 +164,29 @@ export default function Documents() {
                         {pagination.total.toLocaleString()} {isStudent ? 'available resources' : 'total documents'}
                     </p>
                 </div>
-                {canUpload && (
-                    <button
-                        onClick={() => navigate('/documents/upload')}
-                        className="btn-primary px-6 py-3 rounded-xl flex items-center gap-2 font-semibold shadow-lg shadow-premium-gold/20 hover:shadow-premium-gold/40 transition-all"
-                    >
-                        <UploadCloud className="w-5 h-5" />
-                        Add Content
-                    </button>
-                )}
+                <div className="flex items-center gap-3">
+                    {!isStudent && user?.role !== 'student' && (
+                        <button
+                            onClick={handleSyncKnowledgeBase}
+                            disabled={isSyncing}
+                            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${isSyncing
+                                ? 'bg-amber-500/10 text-amber-500/50 border border-amber-500/20 cursor-not-allowed'
+                                : 'bg-status-warning/10 text-status-warning border border-status-warning/20 hover:bg-status-warning/20 shadow-lg shadow-status-warning/10'}`}
+                        >
+                            {isSyncing ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCw className="w-5 h-5" />}
+                            Sync Knowledge Base
+                        </button>
+                    )}
+                    {canUpload && (
+                        <button
+                            onClick={() => navigate('/documents/upload')}
+                            className="btn-primary px-6 py-3 rounded-xl flex items-center gap-2 font-semibold shadow-lg shadow-premium-gold/20 hover:shadow-premium-gold/40 transition-all"
+                        >
+                            <UploadCloud className="w-5 h-5" />
+                            Add Content
+                        </button>
+                    )}
+                </div>
             </div>
 
             {/* Statistics Cards (Hidden for students to simplify view, or kept for context? Let's keep simpler for students) */}

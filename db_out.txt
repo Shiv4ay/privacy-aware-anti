@@ -1,0 +1,64 @@
+Organizations: [
+  {
+    id: 1,
+    name: 'PES University',
+    type: 'University',
+    domain: null,
+    logo: null,
+    created_at: 2026-02-02T10:08:23.673Z,
+    privacy_level: 'standard'
+  },
+  {
+    id: 4,
+    name: 'PES University (MCA Dept)',
+    type: 'University',
+    domain: 'https://pes.edu',
+    logo: null,
+    created_at: 2026-03-07T12:10:35.756Z,
+    privacy_level: 'standard'
+  }
+]
+Users: [
+  {
+    id: 5,
+    user_id: '1156d167-4b03-4cf5-9d17-45d9daf50161',
+    email: 'sibasundar2001@gmail.com',
+    org_id: null
+  },
+  {
+    id: 1,
+    user_id: '8125dc16-fc01-4584-862d-38759bff8bee',
+    email: 'admin@mit.edu',
+    org_id: null
+  },
+  {
+    id: 4,
+    user_id: '4841340b-be17-432b-accf-94f206dd5a76',
+    email: 'sibasundar2102@gmail.com',
+    org_id: 1
+  },
+  {
+    id: 3,
+    user_id: 'c4d40085-ffd9-448b-b1b4-345aa9cd8278',
+    email: 'hostingweb2102@gmail.com',
+    org_id: null
+  }
+]
+Mappings: [
+  {
+    id: 1,
+    user_id: 4,
+    org_id: 1,
+    role: 'admin',
+    department: null,
+    created_at: 2026-03-07T12:53:18.145Z
+  },
+  {
+    id: 2,
+    user_id: 4,
+    org_id: 4,
+    role: 'admin',
+    department: 'MCA',
+    created_at: 2026-03-07T12:53:18.145Z
+  }
+]

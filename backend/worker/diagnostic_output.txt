@@ -1,0 +1,22 @@
+--- RAW RECORD ---
+roll_number: STU20240507 | student_id: STU20240507 | batch: 2024 | course: B.Tech | current_company: Microsoft | current_position: Software Engineer | linkedin_profile: https://linkedin.com/in/john-fritz | email: john.fritz@gmail.com | phone: 292-836-5346 | is_placed: True | first_name: John | last_name: Fritz
+
+--- MERGED NAMES ---
+full_name: John Fritz | roll_number: STU20240507 | student_id: STU20240507 | batch: 2024 | course: B.Tech | current_company: Microsoft | current_position: Software Engineer | linkedin_profile: https://linkedin.com/in/john-fritz | email: john.fritz@gmail.com | phone: 292-836-5346 | is_placed: True
+
+--- REDACTED CONTENT ---
+full_name: [PERSON:idx_0] | roll_number: STU20240507 | student_id: STU20240507 | batch: 2024 | course: [REDACTED:idx_5]TED:idx_4] | current_company: [COMPANY:idx_0] | current_position: Software Engineer | linkedin_profile: [REDACTED:idx_3] | email: [REDACTED:idx_2]idx_0]:idx_1] | phone: [PHONE:idx_0]x_0] | is_placed: True
+
+--- PII MAP ---
+{
+  "[REDACTED:idx_0]": "292-836-5346",
+  "[PHONE:idx_0]": "292-836-5346",
+  "[REDACTED:idx_1]": "gmail.com",
+  "[EMAIL:idx_0]": "john.fritz@gmail.com",
+  "[REDACTED:idx_2]": "john.fr",
+  "[REDACTED:idx_3]": "https://linkedin.com/in/john-fritz",
+  "[COMPANY:idx_0]": "Microsoft",
+  "[REDACTED:idx_4]": "B.Tech",
+  "[REDACTED:idx_5]": "B.Tech",
+  "[PERSON:idx_0]": "John Fritz"
+}

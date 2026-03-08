@@ -82,13 +82,42 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
 
     const org_id = req.user?.org_id || 1;
 
+    // Fetch the organization's configured privacy level from the database
+    let privacy_level = 'standard';
+    try {
+      const orgResult = await req.db.query('SELECT privacy_level FROM organizations WHERE id = $1', [org_id]);
+      if (orgResult.rows.length > 0 && orgResult.rows[0].privacy_level) {
+        privacy_level = orgResult.rows[0].privacy_level;
+      }
+    } catch (dbErr) {
+      console.error('[Chat API] Failed to fetch org privacy level:', dbErr);
+      // Default to 'standard' on error
+    }
+
     const response = await axios.post(`${WORKER_URL}/chat`, {
       query: query.trim(),
+      privacy_level,
       org_id,
+      user_id: req.user?.id,
       user_role: req.user?.role || 'student',
       department: req.user?.department || null,
       user_category: req.user?.user_category || null,
+      conversation_history: req.body.conversation_history || [],
     }, { timeout: 300000 });
+
+    if (response.data?.status === 'blocked') {
+      await logAndBroadcast(req, {
+        action: 'jailbreak_attempt',
+        success: false,
+        details: {
+          success: 'false',
+          query_redacted: query.trim().substring(0, 200),
+          error_message: response.data?.response || 'Security Violation: Malicious Prompt Injection Detected',
+          org_id
+        }
+      });
+      return res.json(response.data);
+    }
 
     // Audit log BEFORE sending response (await ensures it runs)
     await logAndBroadcast(req, {
@@ -107,6 +136,20 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
   } catch (error) {
     console.error('Chat error:', error.message);
 
+    if (error.response?.status === 403) {
+      await logAndBroadcast(req, {
+        action: 'jailbreak_attempt',
+        success: false,
+        details: {
+          success: 'false',
+          query_redacted: (req.body?.query || '').substring(0, 200),
+          error_message: error.response?.data?.detail || 'Security Violation: Malicious Prompt Injection Detected'
+        }
+      });
+      // Send 403 back to frontend so "Simulate Attack" toast catches it
+      return res.status(403).json({ error: error.response?.data?.detail || 'Forbidden' });
+    }
+
     await logAndBroadcast(req, {
       action: 'chat',
       success: false,
@@ -123,6 +166,85 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
       context_used: false,
       status: 'success'
     });
+  }
+});
+
+/**
+ * POST /chat/stream (mounted at /api/chat/stream)
+ * Phase 6.5: SSE streaming proxy — pipes token-by-token from Python worker
+ */
+router.post('/chat/stream', authenticateJWT, aiLimiter, async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query || !query.trim()) {
+      return res.status(400).json({ error: 'Query is required' });
+    }
+
+    const org_id = req.user?.org_id || 1;
+
+    // Fetch org privacy level
+    let privacy_level = 'standard';
+    try {
+      const orgResult = await req.db.query('SELECT privacy_level FROM organizations WHERE id = $1', [org_id]);
+      if (orgResult.rows.length > 0 && orgResult.rows[0].privacy_level) {
+        privacy_level = orgResult.rows[0].privacy_level;
+      }
+    } catch (dbErr) {
+      console.error('[ChatStream API] Failed to fetch org privacy level:', dbErr);
+    }
+
+    // Set SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    // Forward to Python worker stream endpoint
+    const workerRes = await axios.post(`${WORKER_URL}/chat/stream`, {
+      query: query.trim(),
+      privacy_level,
+      org_id,
+      user_id: req.user?.id,
+      user_role: req.user?.role || 'student',
+      conversation_history: req.body.conversation_history || [],
+    }, {
+      responseType: 'stream',
+      timeout: 300000,
+    });
+
+    // Pipe the SSE stream directly to the client
+    workerRes.data.pipe(res);
+
+    workerRes.data.on('end', () => {
+      // Audit log (best-effort, non-blocking)
+      logAndBroadcast(req, {
+        action: 'chat',
+        success: true,
+        details: {
+          success: 'true',
+          query_redacted: query.trim().substring(0, 200),
+          streaming: true,
+          org_id,
+        },
+      }).catch(() => { });
+      res.end();
+    });
+
+    workerRes.data.on('error', (err) => {
+      console.error('[ChatStream] Stream error:', err.message);
+      res.end();
+    });
+
+  } catch (error) {
+    console.error('[ChatStream] Error:', error.message);
+    if (!res.headersSent) {
+      return res.status(error.response?.status || 500).json({
+        error: error.response?.data?.detail || error.message || 'Streaming failed',
+      });
+    }
+    res.end();
   }
 });
 
@@ -164,6 +286,19 @@ router.post('/search', authenticateJWT, aiLimiter, async (req, res) => {
     return res.json(response.data);
   } catch (error) {
     console.error('Search error:', error.message);
+
+    if (error.response?.status === 403) {
+      await logAndBroadcast(req, {
+        action: 'jailbreak_attempt',
+        success: false,
+        details: {
+          success: 'false',
+          query_redacted: (req.body?.query || '').substring(0, 200),
+          error_message: error.response?.data?.detail || 'Security Violation: Malicious Prompt Injection Detected'
+        }
+      });
+      return res.status(403).json({ error: error.response?.data?.detail || 'Forbidden' });
+    }
 
     await logAndBroadcast(req, {
       action: 'search',

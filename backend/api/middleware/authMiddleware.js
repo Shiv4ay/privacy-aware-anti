@@ -79,12 +79,22 @@ async function authenticateJWT(req, res, next) {
             }
 
             try {
+                // Use org from token so /auth/me returns the org the user logged in with (e.g. after MFA)
+                const tokenOrgId = payload.organizationId ?? payload.org_id ?? null;
                 const userResult = await req.db.query(
-                    `SELECT id, user_id, username, email, role, department, org_id, 
-                    is_active, is_mfa_enabled, oauth_avatar_url, custom_avatar_url 
-             FROM users 
-             WHERE user_id = $1`,
-                    [payload.userId]
+                    `SELECT u.id, u.user_id, u.username, u.email, 
+                            COALESCE(m.role, u.role) as role, 
+                            COALESCE(m.department, u.department) as department, 
+                            COALESCE($2::int, m.org_id, u.org_id) as org_id,
+                            u.is_active, u.is_mfa_enabled, u.oauth_avatar_url, u.custom_avatar_url,
+                            COALESCE(sel_o.name, o.name) as organization_name,
+                            COALESCE(sel_o.type, o.type) as organization_type
+                     FROM users u
+                     LEFT JOIN user_org_mapping m ON u.id = m.user_id AND (m.org_id = $2::int OR ($2::int IS NULL AND m.org_id = u.org_id))
+                     LEFT JOIN organizations o ON o.id = COALESCE(m.org_id, u.org_id)
+                     LEFT JOIN organizations sel_o ON sel_o.id = $2::int
+                     WHERE u.user_id = $1`,
+                    [payload.userId, tokenOrgId]
                 );
 
                 if (userResult.rows.length === 0) {
@@ -110,6 +120,9 @@ async function authenticateJWT(req, res, next) {
                     department: user.department,
                     organizationId: user.org_id,
                     org_id: user.org_id,
+                    organization: user.org_id,
+                    organization_name: user.organization_name,
+                    organization_type: user.organization_type,
                     is_mfa_enabled: user.is_mfa_enabled,
                     avatarUrl: user.custom_avatar_url || user.oauth_avatar_url
                 };

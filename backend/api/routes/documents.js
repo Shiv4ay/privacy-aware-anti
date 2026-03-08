@@ -502,32 +502,38 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
+const { authenticateJWT } = require('../middleware/authMiddleware');
+
 /**
  * POST /api/documents/process-all
  * Manually trigger processing for all pending documents
  */
-router.post('/process-all', async (req, res) => {
+router.post('/process-all', authenticateJWT, async (req, res) => {
     try {
-        const userOrgId = req.user.organization || req.user.org_id;
-        const organizationId = req.body.organization_id || userOrgId;
+        const userOrgId = req.user?.organization || req.user?.org_id;
+        const organizationId = req.body?.organization_id || userOrgId;
+        const forceReprocess = req.body?.force === true;
 
         if (!organizationId) {
             return res.status(400).json({ error: 'organization_id is required' });
         }
 
         // Check permissions
-        if (req.user.role !== 'super_admin' && userOrgId !== parseInt(organizationId)) {
+        if (req.user?.role !== 'super_admin' && parseInt(userOrgId) !== parseInt(organizationId)) {
             return res.status(403).json({ error: 'Access denied to this organization' });
         }
 
-        const workerUrl = process.env.WORKER_URL || 'http://worker:8001';
-        console.log(`[Documents] Manually triggering processing for org ${organizationId}`);
 
-        const response = await axios.post(`${workerUrl}/process-batch?org_id=${organizationId}&batch_size=100`);
+        const workerUrl = process.env.WORKER_URL || 'http://worker:8001';
+        console.log(`[Documents] Manually triggering processing for org ${organizationId} (force=${forceReprocess})`);
+
+        const response = await axios.post(`${workerUrl}/process-batch?org_id=${organizationId}&batch_size=100&force=${forceReprocess}`);
 
         res.json({
             success: true,
-            message: 'Processing triggered successfully',
+            message: forceReprocess
+                ? 'Force reprocessing triggered — all documents will be re-extracted and re-indexed'
+                : 'Processing triggered successfully',
             worker_response: response.data
         });
     } catch (error) {

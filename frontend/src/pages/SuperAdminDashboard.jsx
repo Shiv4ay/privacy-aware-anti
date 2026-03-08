@@ -1,527 +1,747 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import client from '../api/index';
 import { useAuth } from '../contexts/AuthContext';
 import {
-    Building, Plus, Trash2, Globe, Shield,
-    Activity, Users, FileText, Database,
-    Zap, Server, Cpu, Clock, CheckCircle2,
-    XCircle, AlertCircle, TrendingUp, HardDrive
+    Building, Plus, Trash2, Globe, Shield, Activity, Users, FileText, Database,
+    Zap, Server, Cpu, Clock, CheckCircle2, XCircle, AlertCircle, TrendingUp,
+    HardDrive, Search, RefreshCw, ChevronDown, BarChart3, Lock, Unlock,
+    UserX, UserCheck, AlertTriangle, Download, Filter, Eye, EyeOff,
+    Crown, Settings, LogOut, Ban, ShieldAlert, Network, Layers
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import toast from 'react-hot-toast';
 import AmbientBackground from '../components/ui/AmbientBackground';
-import AnimatedCard from '../components/ui/AnimatedCard';
-import { motion } from 'framer-motion';
-import { staggeredContainerVariants, staggeredItemVariants } from '../components/ui/StaggeredList';
+import { motion, AnimatePresence } from 'framer-motion';
 
+// ─── Reusable mini components ──────────────────────────────────
+const Badge = ({ color = 'gray', children }) => {
+    const colors = {
+        green: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+        red: 'bg-red-500/10 text-red-400 border-red-500/20',
+        amber: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+        blue: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+        purple: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+        gold: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+        gray: 'bg-white/5 text-gray-400 border-white/10',
+    };
+    return (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider border ${colors[color] || colors.gray}`}>
+            {children}
+        </span>
+    );
+};
+
+const roleColor = (role) => {
+    if (role === 'super_admin') return 'gold';
+    if (role === 'admin') return 'purple';
+    if (role === 'faculty') return 'blue';
+    if (role === 'student') return 'green';
+    return 'gray';
+};
+
+const GlassCard = ({ children, className = '', glow }) => (
+    <div className={`rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-sm ${glow ? 'shadow-lg shadow-yellow-500/5' : ''} ${className}`}>
+        {children}
+    </div>
+);
+
+const StatCard = ({ icon: Icon, label, value, sub, color }) => (
+    <GlassCard className="p-6 relative overflow-hidden group hover:border-white/20 transition-all">
+        <div className={`absolute -right-4 -top-4 w-24 h-24 rounded-full opacity-10 group-hover:opacity-20 transition-opacity bg-gradient-to-br ${color}`} />
+        <div className="flex items-start justify-between mb-4">
+            <div className={`p-2.5 rounded-xl bg-gradient-to-br ${color} shadow-lg`}>
+                <Icon className="w-5 h-5 text-white" />
+            </div>
+        </div>
+        <div className="text-3xl font-black text-white tracking-tight">{value}</div>
+        <div className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-1">{label}</div>
+        {sub && <div className="text-[10px] text-gray-600 mt-1">{sub}</div>}
+    </GlassCard>
+);
+
+const TABS = [
+    { id: 'command', label: 'Command Center', icon: Layers },
+    { id: 'orgs', label: 'Organizations', icon: Building },
+    { id: 'users', label: 'User Management', icon: Users },
+    { id: 'threats', label: 'Threat Intel', icon: ShieldAlert },
+    { id: 'analytics', label: 'System Analytics', icon: BarChart3 },
+];
+
+// ═══════════════════════════════════════════════════════════════
 export default function SuperAdminDashboard() {
     const { user } = useAuth();
+    const [tab, setTab] = useState('command');
+    const socketRef = useRef(null);
+
+    // Data states
     const [orgs, setOrgs] = useState([]);
+    const [allUsers, setAllUsers] = useState([]);
+    const [threats, setThreats] = useState([]);
+    const [auditLogs, setAuditLogs] = useState([]);
+    const [orgAnalytics, setOrgAnalytics] = useState([]);
     const [systemStatus, setSystemStatus] = useState(null);
+    const [liveActivity, setLiveActivity] = useState([]);
+
+    // UI states
     const [loading, setLoading] = useState(true);
-    const [statsLoading, setStatsLoading] = useState(true);
+    const [userSearch, setUserSearch] = useState('');
+    const [userOrgFilter, setUserOrgFilter] = useState('');
+    const [auditAction, setAuditAction] = useState('');
+    const [auditPage, setAuditPage] = useState(1);
+    const [auditTotal, setAuditTotal] = useState(0);
     const [newOrg, setNewOrg] = useState({ name: '', type: '', domain: '' });
+    const [showCreateOrg, setShowCreateOrg] = useState(false);
+    const [pendingRoleChange, setPendingRoleChange] = useState(null); // {userId, role}
 
-    const fetchOrgs = useCallback(async () => {
+    // ── Fetch helpers ──────────────────────────────────────────
+    const fetchAll = useCallback(async () => {
+        setLoading(true);
         try {
-            const res = await client.get('/orgs');
-            if (res.data.success) {
-                setOrgs(res.data.organizations);
-            }
-        } catch (err) {
-            console.error('Failed to fetch organizations', err);
-        } finally {
-            setLoading(false);
-        }
+            const [orgsRes, usersRes, threatsRes, statusRes, analyticsRes] = await Promise.allSettled([
+                client.get('/orgs'),
+                client.get('/admin/users'),
+                client.get('/admin/threats'),
+                client.get('/orgs/system-status'),
+                client.get('/admin/org-analytics'),
+            ]);
+            if (orgsRes.status === 'fulfilled' && orgsRes.value.data?.success)
+                setOrgs(orgsRes.value.data.organizations || []);
+            if (usersRes.status === 'fulfilled' && usersRes.value.data?.success)
+                setAllUsers(usersRes.value.data.users || []);
+            if (threatsRes.status === 'fulfilled' && threatsRes.value.data?.success)
+                setThreats(threatsRes.value.data.threats || []);
+            if (statusRes.status === 'fulfilled' && statusRes.value.data?.success)
+                setSystemStatus(statusRes.value.data);
+            if (analyticsRes.status === 'fulfilled' && analyticsRes.value.data?.success)
+                setOrgAnalytics(analyticsRes.value.data.orgs || []);
+        } finally { setLoading(false); }
     }, []);
 
-    const fetchSystemStatus = useCallback(async (isInitial = false) => {
-        if (isInitial) setStatsLoading(true);
+    const fetchAuditLogs = useCallback(async () => {
         try {
-            const res = await client.get('/orgs/system-status');
-            if (res.data.success) {
-                setSystemStatus(res.data);
+            const params = new URLSearchParams({ page: auditPage, limit: 50 });
+            if (auditAction) params.append('action', auditAction);
+            const res = await client.get(`/admin/audit-logs?${params}`);
+            if (res.data?.success) {
+                setAuditLogs(res.data.logs || []);
+                setAuditTotal(res.data.total || 0);
             }
-        } catch (err) {
-            console.error('Failed to fetch system status', err);
-        } finally {
-            if (isInitial) setStatsLoading(false);
-        }
-    }, []);
+        } catch { /* silent */ }
+    }, [auditPage, auditAction]);
 
+    // ── Socket ──────────────────────────────────────────────────
     useEffect(() => {
-        fetchOrgs();
-        fetchSystemStatus(true);
-
+        fetchAll();
         const socketUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-        const socket = io(socketUrl, {
-            withCredentials: true,
-            transports: ['websocket', 'polling']
+        const socket = io(socketUrl, { withCredentials: true, transports: ['websocket', 'polling'] });
+        socketRef.current = socket;
+
+        socket.on('connect', () => socket.emit('subscribe:system'));
+        socket.on('activity', (evt) => {
+            setLiveActivity(prev => [evt, ...prev].slice(0, 20));
+            if (evt.action === 'jailbreak_attempt')
+                setThreats(prev => [{
+                    id: evt.id, time: evt.created_at, username: evt.username,
+                    email: evt.email, details: evt.metadata
+                }, ...prev].slice(0, 100));
         });
 
-        socket.on('connect', () => {
-            console.log('🔌 Connected to Real-time Gateway');
-            socket.emit('subscribe:system');
-        });
+        const poll = setInterval(fetchAll, 60000);
+        return () => { socket.disconnect(); clearInterval(poll); };
+    }, [fetchAll]);
 
-        socket.on('activity', (newActivity) => {
-            console.log('⚡ New Activity Received:', newActivity);
-            setSystemStatus(prev => {
-                const updatedActivity = [newActivity, ...(prev?.recentActivity || [])].slice(0, 10);
+    useEffect(() => { if (tab === 'analytics') fetchAuditLogs(); }, [tab, auditPage, auditAction, fetchAuditLogs]);
 
-                // Real-time stat counter increment (optional optimization)
-                const newStats = { ...(prev?.stats || {}) };
-                if (newActivity.action === 'search') newStats.totalSearches = (newStats.totalSearches || 0) + 1;
-
-                return {
-                    ...prev,
-                    recentActivity: updatedActivity,
-                    stats: newStats
-                };
-            });
-        });
-
-        socket.on('stats_update', (newStats) => {
-            setSystemStatus(prev => ({ ...prev, stats: newStats }));
-        });
-
-        socket.on('org_update', (data) => {
-            console.log('⚡ Organization Update Received:', data);
-            if (data.action === 'create') {
-                setOrgs(prev => [data.organization, ...prev]);
-                setSystemStatus(prev => ({
-                    ...prev,
-                    stats: {
-                        ...(prev?.stats || {}),
-                        totalOrganizations: (prev?.stats?.totalOrganizations || 0) + 1
-                    }
-                }));
-            } else if (data.action === 'delete') {
-                setOrgs(prev => prev.filter(o => o.id !== data.orgId));
-                setSystemStatus(prev => ({
-                    ...prev,
-                    stats: {
-                        ...(prev?.stats || {}),
-                        totalOrganizations: Math.max(0, (prev?.stats?.totalOrganizations || 1) - 1)
-                    }
-                }));
-            }
-        });
-
-        // Still poll health every 30s as a fallback
-        const healthPoll = setInterval(() => fetchSystemStatus(), 30000);
-
-        return () => {
-            socket.disconnect();
-            clearInterval(healthPoll);
-        };
-    }, [fetchOrgs, fetchSystemStatus]);
-
+    // ── Actions ─────────────────────────────────────────────────
     const handleCreateOrg = async (e) => {
         e.preventDefault();
-        const toastId = toast.loading('Creating organization...');
+        const t = toast.loading('Creating organization…');
         try {
             const res = await client.post('/orgs/create', newOrg);
             if (res.data.success) {
-                toast.success('Organization created successfully', { id: toastId });
+                toast.success('Organization created', { id: t });
                 setNewOrg({ name: '', type: '', domain: '' });
-                fetchOrgs();
-                fetchSystemStatus();
+                setShowCreateOrg(false);
+                fetchAll();
             }
-        } catch (err) {
-            toast.error(err.response?.data?.error || 'Failed to create organization', { id: toastId });
-        }
+        } catch (err) { toast.error(err.response?.data?.error || 'Failed', { id: t }); }
     };
 
-    const handleDeleteOrg = async (id) => {
-        if (!window.confirm('Are you sure? This action will permanently delete all data associated with this organization.')) return;
-        const toastId = toast.loading('Deleting organization...');
+    const handleDeleteOrg = async (org) => {
+        if (!window.confirm(`☠️ Permanently delete "${org.name}" and ALL its data? This cannot be undone.`)) return;
+        const t = toast.loading('Deleting…');
         try {
-            await client.post(`/orgs/delete/${id}`);
-            toast.success('Organization deleted', { id: toastId });
-            fetchOrgs();
-            fetchSystemStatus();
-        } catch (err) {
-            toast.error('Failed to delete organization', { id: toastId });
-        }
+            await client.post(`/orgs/delete/${org.id}`);
+            toast.success('Organization deleted', { id: t });
+            fetchAll();
+        } catch { toast.error('Failed', { id: t }); }
     };
 
-    const formatBytes = (bytes) => {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    const handlePrivacyToggle = async (orgId, currentLevel) => {
+        const newLevel = currentLevel === 'standard' ? 'strict' : 'standard';
+        const t = toast.loading(`Setting privacy to ${newLevel}…`);
+        try {
+            await client.patch(`/admin/orgs/${orgId}/privacy`, { privacy_level: newLevel });
+            toast.success(`Privacy updated to ${newLevel}`, { id: t });
+            setOrgAnalytics(prev => prev.map(o => o.id === orgId ? { ...o, privacy_level: newLevel } : o));
+            setOrgs(prev => prev.map(o => o.id === orgId ? { ...o, privacy_level: newLevel } : o));
+        } catch (err) { toast.error(err.response?.data?.error || 'Failed to update privacy', { id: t }); }
     };
 
-    if (loading && statsLoading) return (
-        <div className="flex items-center justify-center min-h-screen bg-premium-black">
-            <div className="relative">
-                <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-premium-gold shadow-[0_0_15px_rgba(234,179,8,0.3)]"></div>
-                <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-premium-gold">SYSTEM</div>
-            </div>
-        </div>
-    );
+    const handleRoleChange = async (userId, role) => {
+        const t = toast.loading('Updating role…');
+        try {
+            await client.patch(`/admin/users/${userId}/role`, { role });
+            toast.success(`Role updated to ${role}`, { id: t });
+            setAllUsers(prev => prev.map(u => u.id === userId ? { ...u, role } : u));
+            setPendingRoleChange(null);
+        } catch (err) { toast.error(err.response?.data?.error || 'Failed', { id: t }); }
+    };
 
-    const statsCards = [
-        {
-            label: 'Organizations',
-            value: systemStatus?.stats?.totalOrganizations || 0,
-            icon: Building,
-            color: 'from-blue-500 to-indigo-600',
-            trend: '+12%'
-        },
-        {
-            label: 'Total Users',
-            value: systemStatus?.stats?.totalUsers || 0,
-            icon: Users,
-            color: 'from-purple-500 to-pink-600',
-            trend: '+5%'
-        },
-        {
-            label: 'Documents',
-            value: systemStatus?.stats?.totalDocuments || 0,
-            icon: FileText,
-            color: 'from-amber-500 to-orange-600',
-            trend: '+24%'
-        },
-        {
-            label: 'System Storage',
-            value: formatBytes(systemStatus?.stats?.totalStorage || 0),
-            icon: HardDrive,
-            color: 'from-emerald-500 to-teal-600',
-            trend: 'Stable'
-        }
-    ];
+    const handleStatusToggle = async (u) => {
+        const newStatus = !u.is_active;
+        const t = toast.loading(newStatus ? 'Activating user…' : 'Suspending user…');
+        try {
+            await client.patch(`/admin/users/${u.id}/status`, { is_active: newStatus });
+            toast.success(newStatus ? 'User activated' : 'User suspended & sessions killed', { id: t });
+            setAllUsers(prev => prev.map(x => x.id === u.id ? { ...x, is_active: newStatus } : x));
+        } catch (err) { toast.error(err.response?.data?.error || 'Failed', { id: t }); }
+    };
 
+    const handleDeleteUser = async (u) => {
+        if (!window.confirm(`Permanently delete user "${u.name || u.email}"?`)) return;
+        const t = toast.loading('Deleting user…');
+        try {
+            await client.delete(`/admin/users/${u.id}`);
+            toast.success('User permanently deleted', { id: t });
+            setAllUsers(prev => prev.filter(x => x.id !== u.id));
+        } catch (err) { toast.error(err.response?.data?.error || 'Failed', { id: t }); }
+    };
+
+    const exportAuditCSV = () => {
+        const header = 'ID,Time,Action,Resource,User,Org,IP';
+        const rows = auditLogs.map(l =>
+            `${l.id},"${new Date(l.created_at).toISOString()}","${l.action}","${l.resource_type}","${l.username || ''}","${l.org_name || ''}","${l.ip_address || ''}"`
+        );
+        const csv = [header, ...rows].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'audit_export.csv'; a.click();
+    };
+
+    const formatBytes = (b) => { if (!b || b === 0) return '0 B'; const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB']; const i = Math.floor(Math.log(b) / Math.log(k)); return `${(b / Math.pow(k, i)).toFixed(1)} ${s[i]}`; };
+
+    const filteredUsers = allUsers.filter(u => {
+        const q = userSearch.toLowerCase();
+        const matchSearch = !q || (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
+        const matchOrg = !userOrgFilter || String(u.org_id) === userOrgFilter;
+        return matchSearch && matchOrg;
+    });
+
+    // ── Render ──────────────────────────────────────────────────
     return (
         <>
             <AmbientBackground />
-            <div className="space-y-8 animate-fade-in pb-12 relative z-10 w-full overflow-hidden">
-                <div className="max-w-7xl mx-auto space-y-8 px-4 sm:px-6">
-                    {/* Header Section */}
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="relative z-10 min-h-screen pb-16">
+                <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-6 space-y-6">
+
+                    {/* ── Top Header ── */}
+                    <div className="flex items-center justify-between">
                         <div>
-                            <h1 className="text-4xl font-extrabold text-white mb-2 flex items-center gap-3">
-                                <span className="bg-clip-text text-transparent bg-gradient-to-r from-premium-gold via-yellow-200 to-premium-gold">
-                                    Global Command Center
-                                </span>
-                                <div className="text-xs px-2 py-0.5 rounded-full bg-premium-gold/10 text-premium-gold border border-premium-gold/20 font-bold uppercase tracking-widest">
-                                    Global Control
+                            <div className="flex items-center gap-3 mb-1">
+                                <div className="p-2 rounded-xl bg-gradient-to-br from-yellow-500/20 to-amber-600/20 border border-yellow-500/30">
+                                    <Crown className="w-5 h-5 text-yellow-400" />
                                 </div>
-                            </h1>
-                            <p className="text-gray-400 flex items-center gap-2">
-                                <Globe className="w-4 h-4 text-blue-400" />
-                                Managing {orgs.length} organizations across the platform
+                                <h1 className="text-2xl font-black text-white tracking-tight">
+                                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500">
+                                        Super Admin Console
+                                    </span>
+                                </h1>
+                                <Badge color="gold">GODMODE</Badge>
+                            </div>
+                            <p className="text-xs text-gray-500 ml-12">
+                                {user?.username} · Full system authority · {new Date().toLocaleString()}
                             </p>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <div className="text-right hidden sm:block">
-                                <div className="text-xs text-gray-500 uppercase font-bold tracking-tighter">API Status</div>
-                                <div className="flex items-center gap-2 text-green-400 font-medium">
-                                    <Zap className="w-4 h-4 fill-current animate-pulse" />
-                                    Operational
-                                </div>
-                            </div>
-                            <button
-                                onClick={() => { fetchOrgs(); fetchSystemStatus(true); }}
-                                className="p-3 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-all text-gray-400 hover:text-white"
-                                title="Refresh Data"
-                            >
-                                <Activity className="w-5 h-5" />
-                            </button>
-                        </div>
+                        <button onClick={fetchAll} className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-400 hover:text-white transition-all" title="Refresh all data">
+                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                        </button>
                     </div>
 
-                    {/* Stats Grid */}
-                    <motion.div
-                        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6"
-                        variants={staggeredContainerVariants}
-                        initial="hidden"
-                        animate="visible"
-                    >
-                        {statsCards.map((card, i) => (
-                            <motion.div variants={staggeredItemVariants} key={i}>
-                                <AnimatedCard className="glass-panel p-6 rounded-2xl relative overflow-hidden group border border-white/5 hover:border-premium-gold/30 h-full">
-                                    <div className={`absolute -right-4 -top-4 w-24 h-24 rounded-full bg-gradient-to-br ${card.color} opacity-10 group-hover:scale-150 transition-transform duration-500`} />
-                                    <div className="flex justify-between items-start relative z-10 mb-4">
-                                        <div className={`p-3 rounded-xl bg-gradient-to-br ${card.color} shadow-lg shadow-black/50`}>
-                                            <card.icon className="w-6 h-6 text-white" />
-                                        </div>
-                                        <div className="text-xs font-bold text-gray-500 bg-white/5 px-2 py-1 rounded-md flex items-center gap-1">
-                                            <TrendingUp className="w-3 h-3" />
-                                            {card.trend}
-                                        </div>
-                                    </div>
-                                    <div className="relative z-10">
-                                        <div className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">{card.label}</div>
-                                        <div className="text-3xl font-black text-white tracking-tight">{card.value}</div>
-                                    </div>
-                                </AnimatedCard>
-                            </motion.div>
+                    {/* ── Tab Bar ── */}
+                    <div className="flex gap-1 p-1 rounded-2xl bg-white/[0.03] border border-white/10 overflow-x-auto">
+                        {TABS.map(t => (
+                            <button key={t.id} onClick={() => setTab(t.id)}
+                                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all whitespace-nowrap flex-shrink-0 ${tab === t.id ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>
+                                <t.icon className="w-3.5 h-3.5" />
+                                {t.label}
+                            </button>
                         ))}
-                    </motion.div>
+                    </div>
 
-                    <motion.div
-                        className="grid grid-cols-1 lg:grid-cols-3 gap-8"
-                        variants={staggeredContainerVariants}
-                        initial="hidden"
-                        animate="visible"
-                    >
-                        {/* Recent Activity List */}
-                        <motion.div variants={staggeredItemVariants} className="lg:col-span-2">
-                            <AnimatedCard className="glass-panel p-6 rounded-3xl border border-white/10 bg-gradient-to-b from-white/5 to-transparent flex flex-col h-full">
-                                <div className="flex items-center justify-between mb-8">
-                                    <div className="flex items-center gap-3">
-                                        <div className="p-2 bg-premium-gold/10 rounded-xl">
-                                            <Clock className="w-6 h-6 text-premium-gold" />
-                                        </div>
-                                        <div>
-                                            <h2 className="text-xl font-bold text-white">Global Activity</h2>
-                                            <p className="text-xs text-gray-500 uppercase tracking-widest font-bold">System-wide logs</p>
-                                        </div>
+                    <AnimatePresence mode="wait">
+                        <motion.div key={tab} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2 }}>
+
+                            {/* ════════════════════════════════
+                                TAB: COMMAND CENTER
+                            ════════════════════════════════ */}
+                            {tab === 'command' && (
+                                <div className="space-y-6">
+                                    {/* KPI Cards */}
+                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                        <StatCard icon={Building} label="Organizations" value={orgs.length} color="from-blue-500 to-indigo-600" sub="Across all tenants" />
+                                        <StatCard icon={Users} label="Total Users" value={allUsers.length} color="from-purple-500 to-pink-600" sub={`${allUsers.filter(u => u.is_active).length} active`} />
+                                        <StatCard icon={ShieldAlert} label="Threats Blocked" value={threats.length} color="from-red-500 to-rose-700" sub="Jailbreak attempts" />
+                                        <StatCard icon={TrendingUp} label="System Queries" value={systemStatus?.stats?.totalSearches || '—'} color="from-emerald-500 to-teal-600" sub="Chat + Search" />
                                     </div>
-                                    <div className="text-xs px-3 py-1 bg-white/5 rounded-full text-gray-400 border border-white/10">
-                                        Real-time Feed
+
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                        {/* Live Activity Feed */}
+                                        <GlassCard className="lg:col-span-2 p-6 flex flex-col">
+                                            <div className="flex items-center justify-between mb-5">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="p-2 bg-yellow-500/10 rounded-xl">
+                                                        <Activity className="w-5 h-5 text-yellow-400" />
+                                                    </div>
+                                                    <div>
+                                                        <h2 className="text-sm font-black text-white uppercase tracking-widest">Live System Feed</h2>
+                                                        <p className="text-[10px] text-gray-600">Real-time WebSocket events</p>
+                                                    </div>
+                                                </div>
+                                                <span className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-bold">
+                                                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                                    LIVE
+                                                </span>
+                                            </div>
+                                            <div className="space-y-2 flex-1 max-h-72 overflow-y-auto custom-scrollbar pr-1">
+                                                {[...liveActivity, ...(systemStatus?.recentActivity || [])].slice(0, 15).map((log, idx) => (
+                                                    <div key={`${log.id}-${idx}`} className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:border-white/10 transition-all">
+                                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${log.action?.includes('jailbreak') ? 'bg-red-500/10 text-red-400' :
+                                                            log.action?.includes('fail') ? 'bg-orange-500/10 text-orange-400' :
+                                                                log.action?.includes('upload') || log.action?.includes('create') ? 'bg-green-500/10 text-green-400' :
+                                                                    'bg-blue-500/10 text-blue-400'
+                                                            }`}>
+                                                            <Shield className="w-4 h-4" />
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <span className="text-xs font-bold text-white capitalize">{log.action?.replace(/_/g, ' ')}</span>
+                                                            <span className="text-[10px] text-gray-600 ml-2">by {log.username || log.email || 'System'}</span>
+                                                        </div>
+                                                        <span className="text-[10px] font-mono text-gray-600 shrink-0">
+                                                            {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                                {liveActivity.length === 0 && !systemStatus?.recentActivity?.length && (
+                                                    <div className="text-center py-10 text-gray-600 text-xs">Waiting for events…</div>
+                                                )}
+                                            </div>
+                                        </GlassCard>
+
+                                        {/* Service Health */}
+                                        <GlassCard className="p-6">
+                                            <div className="flex items-center gap-3 mb-5">
+                                                <div className="p-2 bg-blue-500/10 rounded-xl">
+                                                    <Network className="w-5 h-5 text-blue-400" />
+                                                </div>
+                                                <div>
+                                                    <h2 className="text-sm font-black text-white uppercase tracking-widest">Infrastructure</h2>
+                                                    <p className="text-[10px] text-gray-600">Service health monitor</p>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-3">
+                                                {[
+                                                    { name: 'PostgreSQL', key: 'postgres', icon: Database, label: 'Primary DB' },
+                                                    { name: 'Redis Cache', key: 'redis', icon: Zap, label: 'Session Store' },
+                                                    { name: 'AI Worker', key: 'worker', icon: Cpu, label: 'Processing Engine' },
+                                                    { name: 'MinIO Storage', key: 'minio', icon: HardDrive, label: 'File Store' },
+                                                    { name: 'ChromaDB', key: 'chroma', icon: Layers, label: 'Vector Store' },
+                                                ].map(svc => {
+                                                    const ok = systemStatus?.health?.[svc.key] !== false;
+                                                    return (
+                                                        <div key={svc.key} className="flex items-center justify-between p-3 rounded-xl bg-white/[0.03] border border-white/5">
+                                                            <div className="flex items-center gap-2.5">
+                                                                <div className={`p-1.5 rounded-lg ${ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                                                    <svc.icon className="w-3.5 h-3.5" />
+                                                                </div>
+                                                                <div>
+                                                                    <div className="text-xs font-bold text-white">{svc.name}</div>
+                                                                    <div className="text-[9px] text-gray-600">{svc.label}</div>
+                                                                </div>
+                                                            </div>
+                                                            <Badge color={ok ? 'green' : 'red'}>{ok ? 'Online' : 'Offline'}</Badge>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </GlassCard>
                                     </div>
                                 </div>
+                            )}
 
-                                <div className="space-y-4 flex-1">
-                                    {systemStatus?.recentActivity?.map((log, idx) => (
-                                        <div key={log.id} className="flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-premium-gold/20 hover:bg-white/10 transition-all group animate-slide-up" style={{ animationDelay: `${idx * 100}ms` }}>
-                                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${log.action.includes('fail') ? 'bg-red-500/10 text-red-400' :
-                                                log.action.includes('create') || log.action.includes('upload') ? 'bg-green-500/10 text-green-400' :
-                                                    'bg-blue-500/10 text-blue-400'
-                                                }`}>
-                                                <Shield className="w-5 h-5" />
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 mb-0.5">
-                                                    <span className="text-sm font-bold text-white truncate capitalize">{log.action.replace(/_/g, ' ')}</span>
-                                                    <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-white/5 text-gray-500 uppercase font-black">{log.resource_type || 'system'}</span>
-                                                </div>
-                                                <p className="text-xs text-gray-500 truncate">
-                                                    By <span className="text-premium-gold uppercase font-bold text-[10px]">{log.username || log.email || 'System'}</span>
-                                                </p>
-                                            </div>
-                                            <div className="text-[10px] font-black text-gray-600 uppercase">
-                                                {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                            </div>
+                            {/* ════════════════════════════════
+                                TAB: ORGANIZATIONS
+                            ════════════════════════════════ */}
+                            {tab === 'orgs' && (
+                                <div className="space-y-6">
+                                    <div className="flex items-center justify-between">
+                                        <h2 className="text-lg font-black text-white">Organization Registry</h2>
+                                        <button onClick={() => setShowCreateOrg(v => !v)}
+                                            className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/20 rounded-xl text-yellow-400 font-bold text-xs uppercase tracking-widest transition-all">
+                                            <Plus className="w-3.5 h-3.5" /> New Tenant
+                                        </button>
+                                    </div>
+
+                                    {/* Create Org Form */}
+                                    <AnimatePresence>
+                                        {showCreateOrg && (
+                                            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                                                <GlassCard className="p-6 border-yellow-500/20">
+                                                    <h3 className="text-sm font-black text-white mb-4 uppercase tracking-widest">Onboard New Organization</h3>
+                                                    <form onSubmit={handleCreateOrg} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                        {[
+                                                            { key: 'name', placeholder: 'Organization name', icon: Building },
+                                                            { key: 'type', placeholder: 'Sector (e.g. Education)', icon: Layers },
+                                                            { key: 'domain', placeholder: 'Domain (e.g. org.com)', icon: Globe },
+                                                        ].map(f => (
+                                                            <div key={f.key} className="relative">
+                                                                <f.icon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                                                                <input type="text" placeholder={f.placeholder} value={newOrg[f.key]}
+                                                                    onChange={e => setNewOrg(p => ({ ...p, [f.key]: e.target.value }))}
+                                                                    required={f.key === 'name'}
+                                                                    className="glass-input w-full pl-10 pr-4 py-3 rounded-xl text-sm" />
+                                                            </div>
+                                                        ))}
+                                                        <div className="md:col-span-3 flex gap-3">
+                                                            <button type="submit" className="btn-primary px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest">Create Organization</button>
+                                                            <button type="button" onClick={() => setShowCreateOrg(false)} className="px-6 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-400 text-xs font-bold uppercase tracking-widest transition-all">Cancel</button>
+                                                        </div>
+                                                    </form>
+                                                </GlassCard>
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+
+                                    {/* Org Analytics Table */}
+                                    <GlassCard className="overflow-hidden">
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left">
+                                                <thead>
+                                                    <tr className="border-b border-white/5 bg-white/[0.02]">
+                                                        {['Organization', 'Type', 'Privacy', 'Users', 'Doc/Toxic', 'Storage', 'Queries', 'Threats', 'Actions'].map(h => (
+                                                            <th key={h} className="px-5 py-3.5 text-[10px] font-black text-gray-500 uppercase tracking-widest">{h}</th>
+                                                        ))}
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-white/5">
+                                                    {orgAnalytics.length > 0 ? orgAnalytics.map(org => (
+                                                        <tr key={org.id} className="group hover:bg-white/[0.03] transition-colors">
+                                                            <td className="px-5 py-4">
+                                                                <div className="font-bold text-white text-sm">{org.name}</div>
+                                                                <div className="text-[10px] text-gray-600">ID #{org.id}</div>
+                                                            </td>
+                                                            <td className="px-5 py-4"><Badge color="blue">{org.type || 'N/A'}</Badge></td>
+                                                            <td className="px-5 py-4">
+                                                                <button
+                                                                    onClick={() => handlePrivacyToggle(org.id, org.privacy_level || 'standard')}
+                                                                    className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-bold uppercase transition-all border ${(org.privacy_level || 'standard') === 'strict'
+                                                                        ? 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20'
+                                                                        : 'bg-green-500/10 text-green-400 border-green-500/20 hover:bg-green-500/20'
+                                                                        }`}
+                                                                >
+                                                                    {org.privacy_level === 'strict' ? <Shield className="w-2.5 h-2.5" /> : <Shield className="w-2.5 h-2.5 opacity-40" />}
+                                                                    {org.privacy_level || 'standard'}
+                                                                </button>
+                                                            </td>
+                                                            <td className="px-5 py-4">
+                                                                <div className="flex items-center gap-1.5 text-xs text-white font-bold"><Users className="w-3 h-3 text-gray-500" /> {org.user_count}</div>
+                                                            </td>
+                                                            <td className="px-5 py-4">
+                                                                <div className="flex items-center gap-1 text-sm text-white font-bold">{org.doc_count}</div>
+                                                                {parseInt(org.toxic_doc_count) > 0 && (
+                                                                    <div className="text-[10px] text-red-400 font-bold flex items-center gap-1 mt-0.5 animate-pulse">
+                                                                        <AlertTriangle className="w-2.5 h-2.5" /> {org.toxic_doc_count} toxic
+                                                                    </div>
+                                                                )}
+                                                            </td>
+                                                            <td className="px-5 py-4 text-xs text-gray-400">{formatBytes(org.storage_bytes)}</td>
+                                                            <td className="px-5 py-4 text-sm font-bold text-blue-400">{org.query_count}</td>
+                                                            <td className="px-5 py-4 text-sm font-bold text-red-400">{org.threat_count}</td>
+                                                            <td className="px-5 py-4">
+                                                                <button onClick={() => handleDeleteOrg(org)} className="p-2 rounded-lg bg-red-500/5 hover:bg-red-500/20 text-red-500/50 hover:text-red-400 border border-red-500/10 transition-all">
+                                                                    <Trash2 className="w-4 h-4" />
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    )) : orgs.map(org => (
+                                                        <tr key={org.id} className="group hover:bg-white/[0.03] transition-colors">
+                                                            <td className="px-5 py-4">
+                                                                <div className="font-bold text-white text-sm">{org.name}</div>
+                                                                <div className="text-[10px] text-gray-600">{org.domain || 'no domain'}</div>
+                                                            </td>
+                                                            <td className="px-5 py-4"><Badge color="blue">{org.type || 'N/A'}</Badge></td>
+                                                            <td colSpan="4" className="px-5 py-4 text-xs text-gray-600">—</td>
+                                                            <td className="px-5 py-4"><Badge color="green">✓ Clean</Badge></td>
+                                                            <td className="px-5 py-4">
+                                                                <button onClick={() => handleDeleteOrg(org)}
+                                                                    className="p-1.5 rounded-lg bg-red-500/5 hover:bg-red-500/20 border border-red-500/10 hover:border-red-500/40 text-red-500/50 hover:text-red-400 transition-all">
+                                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {orgs.length === 0 && (
+                                                        <tr><td colSpan="8" className="px-5 py-16 text-center text-gray-600 text-sm">No organizations found</td></tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
                                         </div>
-                                    ))}
-                                    {(!systemStatus?.recentActivity || systemStatus.recentActivity.length === 0) && (
-                                        <div className="flex flex-col items-center justify-center py-12 text-gray-600">
-                                            <Activity className="w-12 h-12 mb-4 opacity-20" />
-                                            <p className="text-sm font-medium">No recent activity detected</p>
+                                    </GlassCard>
+                                </div>
+                            )}
+
+                            {/* ════════════════════════════════
+                                TAB: USER MANAGEMENT
+                            ════════════════════════════════ */}
+                            {tab === 'users' && (
+                                <div className="space-y-5">
+                                    <div className="flex flex-col sm:flex-row gap-3">
+                                        <div className="relative flex-1">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                                            <input type="text" placeholder="Search by name or email…" value={userSearch} onChange={e => setUserSearch(e.target.value)}
+                                                className="glass-input w-full pl-10 pr-4 py-2.5 rounded-xl text-sm" />
+                                        </div>
+                                        <div className="relative">
+                                            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                                            <select value={userOrgFilter} onChange={e => setUserOrgFilter(e.target.value)}
+                                                className="glass-input pl-10 pr-8 py-2.5 rounded-xl text-sm appearance-none min-w-[180px]">
+                                                <option value="">All Organizations</option>
+                                                {orgs.map(o => <option key={o.id} value={String(o.id)}>{o.name}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="text-xs text-gray-500 flex items-center px-3 py-2 bg-white/5 rounded-xl border border-white/10">
+                                            {filteredUsers.length} / {allUsers.length} users
+                                        </div>
+                                    </div>
+
+                                    <GlassCard className="overflow-hidden">
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left">
+                                                <thead>
+                                                    <tr className="border-b border-white/5 bg-white/[0.02]">
+                                                        {['User', 'Organization', 'Role', 'Status', 'Department', 'Actions'].map(h => (
+                                                            <th key={h} className="px-5 py-3.5 text-[10px] font-black text-gray-500 uppercase tracking-widest">{h}</th>
+                                                        ))}
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-white/5">
+                                                    {filteredUsers.map(u => {
+                                                        const org = orgs.find(o => o.id === u.org_id);
+                                                        return (
+                                                            <tr key={u.id} className="group hover:bg-white/[0.03] transition-colors">
+                                                                <td className="px-5 py-4">
+                                                                    <div className="font-bold text-sm text-white">{u.name || u.email?.split('@')[0]}</div>
+                                                                    <div className="text-[10px] text-gray-500">{u.email}</div>
+                                                                </td>
+                                                                <td className="px-5 py-4 text-xs text-gray-400">{org?.name || `Org #${u.org_id}` || '—'}</td>
+                                                                <td className="px-5 py-4">
+                                                                    {pendingRoleChange?.userId === u.id ? (
+                                                                        <select autoFocus defaultValue={u.role}
+                                                                            onChange={e => handleRoleChange(u.id, e.target.value)}
+                                                                            onBlur={() => setPendingRoleChange(null)}
+                                                                            className="glass-input text-xs py-1 px-2 rounded-lg">
+                                                                            {['user', 'student', 'faculty', 'researcher', 'admin', 'super_admin'].map(r => (
+                                                                                <option key={r} value={r}>{r}</option>
+                                                                            ))}
+                                                                        </select>
+                                                                    ) : (
+                                                                        <button onClick={() => setPendingRoleChange({ userId: u.id })}
+                                                                            className="hover:opacity-80 transition-opacity" title="Click to change role">
+                                                                            <Badge color={roleColor(u.role)}>{u.role}</Badge>
+                                                                        </button>
+                                                                    )}
+                                                                </td>
+                                                                <td className="px-5 py-4"><Badge color={u.is_active ? 'green' : 'red'}>{u.is_active ? 'Active' : 'Suspended'}</Badge></td>
+                                                                <td className="px-5 py-4 text-xs text-gray-500">{u.department || '—'}</td>
+                                                                <td className="px-5 py-4">
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <button onClick={() => handleStatusToggle(u)}
+                                                                            title={u.is_active ? 'Suspend user' : 'Activate user'}
+                                                                            className={`p-1.5 rounded-lg border transition-all ${u.is_active ? 'bg-amber-500/5 hover:bg-amber-500/20 border-amber-500/10 hover:border-amber-500/40 text-amber-500/50 hover:text-amber-400' : 'bg-green-500/5 hover:bg-green-500/20 border-green-500/10 hover:border-green-500/40 text-green-500/50 hover:text-green-400'}`}>
+                                                                            {u.is_active ? <Ban className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
+                                                                        </button>
+                                                                        {u.role !== 'super_admin' && (
+                                                                            <button onClick={() => handleDeleteUser(u)}
+                                                                                title="Permanently delete user"
+                                                                                className="p-1.5 rounded-lg bg-red-500/5 hover:bg-red-500/20 border border-red-500/10 hover:border-red-500/40 text-red-500/50 hover:text-red-400 transition-all">
+                                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                    {filteredUsers.length === 0 && (
+                                                        <tr><td colSpan="6" className="px-5 py-16 text-center text-gray-600 text-sm">No users match your filter</td></tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </GlassCard>
+                                </div>
+                            )}
+
+                            {/* ════════════════════════════════
+                                TAB: THREAT INTELLIGENCE
+                            ════════════════════════════════ */}
+                            {tab === 'threats' && (
+                                <div className="space-y-5">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <h2 className="text-lg font-black text-white">Threat Intelligence Center</h2>
+                                            <p className="text-xs text-gray-500">All jailbreak & prompt injection attempts across all organizations</p>
+                                        </div>
+                                        <Badge color="red">⚠ {threats.length} events</Badge>
+                                    </div>
+
+                                    {threats.length === 0 ? (
+                                        <GlassCard className="p-16 text-center">
+                                            <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
+                                            <p className="text-emerald-400 font-bold">Zero Threats Detected</p>
+                                            <p className="text-gray-600 text-xs mt-1">All guardrails are active and no attacks have been logged.</p>
+                                        </GlassCard>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {threats.map((t, i) => {
+                                                let pd = t.details;
+                                                if (typeof pd === 'string') { try { pd = JSON.parse(pd); } catch { } }
+                                                return (
+                                                    <GlassCard key={t.id || i} className="p-4 border-red-500/10 hover:border-red-500/20 transition-all">
+                                                        <div className="flex items-start justify-between gap-4">
+                                                            <div className="flex items-start gap-3">
+                                                                <div className="p-2 bg-red-500/10 rounded-lg shrink-0 mt-0.5">
+                                                                    <ShieldAlert className="w-4 h-4 text-red-400" />
+                                                                </div>
+                                                                <div>
+                                                                    <div className="flex items-center gap-2 mb-1">
+                                                                        <Badge color="red">Jailbreak Attempt</Badge>
+                                                                        <span className="text-[10px] text-gray-600 font-mono">
+                                                                            {new Date(t.time || t.created_at).toLocaleString()}
+                                                                        </span>
+                                                                    </div>
+                                                                    <p className="text-sm font-bold text-white mb-1">
+                                                                        {t.username || t.email || 'Unknown User'}
+                                                                        {t.email && t.username && <span className="text-gray-500 font-normal ml-2 text-xs">({t.email})</span>}
+                                                                    </p>
+                                                                    <p className="text-xs text-gray-400 font-mono bg-black/20 px-3 py-2 rounded-lg">
+                                                                        {pd?.query_redacted
+                                                                            ? `"${pd.query_redacted}"`
+                                                                            : pd?.error_message || 'Security violation detected'}
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="shrink-0 flex flex-col items-end gap-2">
+                                                                <Badge color="red">BLOCKED</Badge>
+                                                                {t.username && (
+                                                                    <button
+                                                                        onClick={() => { const u = allUsers.find(x => x.email === t.email); if (u) handleStatusToggle(u); }}
+                                                                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-bold uppercase transition-all">
+                                                                        <Ban className="w-3 h-3" /> Suspend User
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </GlassCard>
+                                                );
+                                            })}
                                         </div>
                                     )}
                                 </div>
-                            </AnimatedCard>
-                        </motion.div>
+                            )}
 
-                        {/* System Health Section */}
-                        <motion.div variants={staggeredItemVariants}>
-                            <AnimatedCard className="glass-panel p-6 rounded-3xl border border-white/10 flex flex-col bg-gradient-to-br from-white/5 via-transparent to-transparent h-full">
-                                <div className="flex items-center gap-3 mb-8">
-                                    <div className="p-2 bg-blue-500/10 rounded-xl">
-                                        <Server className="w-6 h-6 text-blue-400" />
+                            {/* ════════════════════════════════
+                                TAB: SYSTEM ANALYTICS
+                            ════════════════════════════════ */}
+                            {tab === 'analytics' && (
+                                <div className="space-y-5">
+                                    <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+                                        <h2 className="text-lg font-black text-white">Audit Log Explorer</h2>
+                                        <div className="flex gap-3 flex-wrap">
+                                            <select value={auditAction} onChange={e => { setAuditAction(e.target.value); setAuditPage(1); }}
+                                                className="glass-input text-xs py-2 px-3 rounded-xl">
+                                                <option value="">All Actions</option>
+                                                {['chat', 'search', 'upload', 'login', 'logout', 'jailbreak_attempt', 'admin_role_change', 'admin_suspend_user', 'register'].map(a => (
+                                                    <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
+                                                ))}
+                                            </select>
+                                            <button onClick={fetchAuditLogs} className="flex items-center gap-1.5 px-3 py-2 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 text-gray-400 text-xs transition-all">
+                                                <RefreshCw className="w-3.5 h-3.5" /> Refresh
+                                            </button>
+                                            <button onClick={exportAuditCSV} className="flex items-center gap-1.5 px-3 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 rounded-xl border border-yellow-500/20 text-yellow-400 text-xs font-bold transition-all">
+                                                <Download className="w-3.5 h-3.5" /> Export CSV
+                                            </button>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <h2 className="text-xl font-bold text-white">Service Health</h2>
-                                        <p className="text-xs text-gray-500 uppercase tracking-widest font-bold">Infrastructure monitor</p>
-                                    </div>
-                                </div>
 
-                                <div className="space-y-6">
-                                    {[
-                                        { name: 'Database (Postgres)', status: systemStatus?.health?.postgres, icon: Database, label: 'Main Registry' },
-                                        { name: 'Cache Layer (Redis)', status: systemStatus?.health?.redis, icon: Zap, label: 'Session Management' },
-                                        { name: 'AI Processing Worker', status: systemStatus?.health?.worker, icon: Cpu, label: 'Privacy Redaction' },
-                                        { name: 'Storage (MinIO)', status: systemStatus?.health?.minio, icon: HardDrive, label: 'Files & Assets' }
-                                    ].map((service, i) => (
-                                        <div key={i} className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/5">
-                                            <div className="flex items-center gap-3">
-                                                <div className={`p-2 rounded-lg ${service.status ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                                                    <service.icon className="w-5 h-5" />
+                                    <GlassCard className="overflow-hidden">
+                                        <div className="px-5 py-3 border-b border-white/5 text-[10px] text-gray-500 font-bold">
+                                            {auditTotal.toLocaleString()} total records
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left">
+                                                <thead>
+                                                    <tr className="border-b border-white/5 bg-white/[0.02]">
+                                                        {['Time', 'Action', 'Resource', 'User', 'Organization', 'IP'].map(h => (
+                                                            <th key={h} className="px-5 py-3 text-[10px] font-black text-gray-500 uppercase tracking-widest">{h}</th>
+                                                        ))}
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-white/5">
+                                                    {auditLogs.map((log, i) => (
+                                                        <tr key={log.id || i} className="hover:bg-white/[0.02] transition-colors">
+                                                            <td className="px-5 py-3 text-[10px] font-mono text-gray-500 whitespace-nowrap">
+                                                                {new Date(log.created_at).toLocaleString()}
+                                                            </td>
+                                                            <td className="px-5 py-3">
+                                                                <Badge color={
+                                                                    log.action?.includes('jailbreak') ? 'red' :
+                                                                        log.action?.includes('fail') || log.action?.includes('suspend') ? 'amber' :
+                                                                            log.action?.includes('chat') || log.action?.includes('search') ? 'blue' :
+                                                                                log.action?.includes('login') || log.action?.includes('register') ? 'green' : 'gray'
+                                                                }>{log.action?.replace(/_/g, ' ')}</Badge>
+                                                            </td>
+                                                            <td className="px-5 py-3 text-xs text-gray-500">{log.resource_type || '—'}</td>
+                                                            <td className="px-5 py-3">
+                                                                <div className="text-xs font-bold text-white">{log.username || '—'}</div>
+                                                                <div className="text-[10px] text-gray-600">{log.email || ''}</div>
+                                                            </td>
+                                                            <td className="px-5 py-3 text-xs text-gray-500">{log.org_name || '—'}</td>
+                                                            <td className="px-5 py-3 text-[10px] font-mono text-gray-600">{log.ip_address || '—'}</td>
+                                                        </tr>
+                                                    ))}
+                                                    {auditLogs.length === 0 && (
+                                                        <tr><td colSpan="6" className="px-5 py-16 text-center text-gray-600 text-sm">No logs found</td></tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        {auditTotal > 50 && (
+                                            <div className="flex items-center justify-between px-5 py-3 border-t border-white/5">
+                                                <span className="text-[10px] text-gray-500">Page {auditPage} of {Math.ceil(auditTotal / 50)}</span>
+                                                <div className="flex gap-2">
+                                                    <button disabled={auditPage === 1} onClick={() => setAuditPage(p => p - 1)}
+                                                        className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 text-xs disabled:opacity-30 transition-all">← Prev</button>
+                                                    <button disabled={auditPage >= Math.ceil(auditTotal / 50)} onClick={() => setAuditPage(p => p + 1)}
+                                                        className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 text-xs disabled:opacity-30 transition-all">Next →</button>
                                                 </div>
-                                                <div>
-                                                    <div className="text-sm font-bold text-white">{service.name}</div>
-                                                    <div className="text-[10px] text-gray-500 font-bold uppercase tracking-tight">{service.label}</div>
-                                                </div>
                                             </div>
-                                            <div className="flex items-center gap-2">
-                                                <span className={`text-[10px] font-black uppercase tracking-widest ${service.status ? 'text-green-400' : 'text-red-400'}`}>
-                                                    {service.status ? 'Online' : 'Offline'}
-                                                </span>
-                                                {service.status ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-red-500" />}
-                                            </div>
-                                        </div>
-                                    ))}
+                                        )}
+                                    </GlassCard>
                                 </div>
+                            )}
 
-                                <div className="mt-8 pt-6 border-t border-white/5">
-                                    <div className="bg-premium-gold/5 rounded-2xl p-4 flex items-start gap-3">
-                                        <AlertCircle className="w-5 h-5 text-premium-gold shrink-0 mt-0.5" />
-                                        <div>
-                                            <div className="text-sm font-bold text-white">System Advisory</div>
-                                            <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                                                Security filters are operating at maximum efficiency. All PII redaction engines are active.
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </AnimatedCard>
                         </motion.div>
-                    </motion.div>
-
-                    {/* Organization Management Section */}
-                    <motion.div
-                        className="grid grid-cols-1 lg:grid-cols-3 gap-8"
-                        variants={staggeredContainerVariants}
-                        initial="hidden"
-                        animate="visible"
-                    >
-                        {/* Create Org Form */}
-                        <motion.div variants={staggeredItemVariants}>
-                            <AnimatedCard className="glass-panel p-8 rounded-3xl border border-white/5 hover:border-premium-gold/20 transition-all h-fit h-full">
-                                <div className="flex items-center gap-3 mb-8">
-                                    <div className="p-2 bg-premium-gold/10 rounded-xl">
-                                        <Plus className="w-6 h-6 text-premium-gold" />
-                                    </div>
-                                    <h2 className="text-xl font-bold text-white tracking-tight">Onboard Tenant</h2>
-                                </div>
-
-                                <form onSubmit={handleCreateOrg} className="space-y-6">
-                                    <div>
-                                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 mb-2 block">Organization Name</label>
-                                        <div className="relative group">
-                                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none group-focus-within:text-premium-gold transition-colors text-gray-500">
-                                                <Building className="w-5 h-5" />
-                                            </div>
-                                            <input
-                                                type="text"
-                                                placeholder="Enter full legal name"
-                                                value={newOrg.name}
-                                                onChange={(e) => setNewOrg({ ...newOrg, name: e.target.value })}
-                                                className="glass-input w-full pl-12 pr-4 py-3.5 rounded-2xl focus:ring-2 focus:ring-premium-gold/50"
-                                                required
-                                            />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 mb-2 block">Enterprise Sector</label>
-                                        <div className="relative group">
-                                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none group-focus-within:text-premium-gold transition-colors text-gray-500">
-                                                <Cpu className="w-5 h-5" />
-                                            </div>
-                                            <input
-                                                type="text"
-                                                placeholder="e.g. Healthcare, Finance"
-                                                value={newOrg.type}
-                                                onChange={(e) => setNewOrg({ ...newOrg, type: e.target.value })}
-                                                className="glass-input w-full pl-12 pr-4 py-3.5 rounded-2xl focus:ring-2 focus:ring-premium-gold/50"
-                                            />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 mb-2 block">Digital Domain</label>
-                                        <div className="relative group">
-                                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none group-focus-within:text-premium-gold transition-colors text-gray-500">
-                                                <Globe className="w-5 h-5" />
-                                            </div>
-                                            <input
-                                                type="text"
-                                                placeholder="organization.com"
-                                                value={newOrg.domain}
-                                                onChange={(e) => setNewOrg({ ...newOrg, domain: e.target.value })}
-                                                className="glass-input w-full pl-12 pr-4 py-3.5 rounded-2xl focus:ring-2 focus:ring-premium-gold/50"
-                                            />
-                                        </div>
-                                    </div>
-                                    <button type="submit" className="w-full btn-primary py-4 rounded-2xl font-bold uppercase tracking-widest text-sm shadow-xl shadow-premium-gold/10 hover:shadow-premium-gold/20 transition-all flex items-center justify-center gap-2 group">
-                                        <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform" />
-                                        Finalize Onboarding
-                                    </button>
-                                </form>
-                            </AnimatedCard>
-                        </motion.div>
-
-                        {/* Org List */}
-                        <motion.div variants={staggeredItemVariants} className="lg:col-span-2">
-                            <AnimatedCard className="glass-panel p-0 rounded-3xl border border-white/5 overflow-hidden h-full">
-                                <div className="p-8 border-b border-white/5 flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <div className="p-2 bg-blue-500/10 rounded-xl">
-                                            <Building className="w-6 h-6 text-blue-400" />
-                                        </div>
-                                        <h2 className="text-xl font-bold text-white tracking-tight">Enterprise Tenants</h2>
-                                    </div>
-                                    <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest px-3 py-1 bg-white/5 rounded-full border border-white/10">
-                                        Global Registry
-                                    </div>
-                                </div>
-
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left">
-                                        <thead>
-                                            <tr className="bg-white/[0.02] border-b border-white/5 text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">
-                                                <th className="px-8 py-4">Status</th>
-                                                <th className="px-8 py-4">Organization</th>
-                                                <th className="px-8 py-4">Infrastructure</th>
-                                                <th className="px-8 py-4 text-right">Operations</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-white/5">
-                                            {orgs.map((org) => (
-                                                <tr key={org.id} className="group hover:bg-white/[0.03] transition-colors cursor-default">
-                                                    <td className="px-8 py-5">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="w-2 h-2 rounded-full bg-green-500 glow-green" />
-                                                            <span className="text-[10px] font-black text-green-400 uppercase tracking-tighter">Active</span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-8 py-5">
-                                                        <div className="font-bold text-white mb-0.5 group-hover:text-premium-gold transition-colors">{org.name}</div>
-                                                        <div className="text-[10px] text-gray-500 font-bold uppercase tracking-tight flex items-center gap-1">
-                                                            <Globe className="w-3 h-3" />
-                                                            {org.domain || 'no domain'}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-8 py-5">
-                                                        <div className="flex flex-col gap-1">
-                                                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20 w-fit hover:bg-blue-500/20 transition-colors">
-                                                                {org.type || 'General'}
-                                                            </span>
-                                                            <span className="text-[9px] text-gray-600 font-bold ml-1">ID: #{org.id}</span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-8 py-5 text-right">
-                                                        <button
-                                                            onClick={() => handleDeleteOrg(org.id)}
-                                                            className="p-2.5 bg-red-500/5 hover:bg-red-500/20 rounded-xl group/btn transition-all border border-red-500/10 hover:border-red-500/50"
-                                                            title="Self-Destruct Tenant Data"
-                                                        >
-                                                            <Trash2 className="w-4 h-4 text-red-500/70 group-hover/btn:text-red-500 transition-colors" />
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                            {orgs.length === 0 && (
-                                                <tr>
-                                                    <td colSpan="4" className="p-20 text-center">
-                                                        <div className="flex flex-col items-center gap-4 opacity-30">
-                                                            <Building className="w-16 h-16 text-gray-500" />
-                                                            <p className="text-sm font-bold text-gray-500 uppercase tracking-[0.2em]">Zero Tenants Deployed</p>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </AnimatedCard>
-                        </motion.div>
-                    </motion.div>
+                    </AnimatePresence>
                 </div>
             </div>
         </>

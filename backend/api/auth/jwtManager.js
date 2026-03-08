@@ -35,7 +35,7 @@ function generateAccessToken(user) {
         username: user.username,
         role: user.role,
         department: user.department_id || user.department,
-        organizationId: user.organization_id || user.organization || user.org_id, // Robust org check
+        organizationId: user.org_id || user.organization_id || user.organization, // Robust org check prioritizing org_id
         type: 'access'
     };
 
@@ -67,6 +67,7 @@ function generateRefreshToken(user) {
 function generateMFAToken(user) {
     const payload = {
         userId: user.user_id || user.userId,
+        orgId: user.org_id || user.organizationId,
         type: 'mfa_pending'
     };
 
