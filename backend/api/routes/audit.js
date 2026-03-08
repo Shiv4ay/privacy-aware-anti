@@ -3,19 +3,29 @@ const router = express.Router();
 
 /**
  * GET /api/audit/stats
- *
- * audit_logs columns: id, user_id, action, resource_type, resource_id,
- *                     details (JSONB), ip_address, user_agent, created_at
- * NOTE: There is NO top-level `success` column.
  */
 router.get('/stats', async (req, res) => {
     try {
         const db = req.db;
+        const orgId = req.user.org_id;
+        const isSuperAdmin = req.user.role === 'super_admin';
+
+        let joinClause = '';
+        let whereClause = "WHERE a.action IN ('search','chat')";
+        let piiWhereClause = "WHERE a.details->>'pii_detected' = 'true'";
+        const params = [];
+
+        if (!isSuperAdmin) {
+            joinClause = 'JOIN users u ON a.user_id = u.id JOIN user_org_mapping m ON u.id = m.user_id';
+            whereClause += ' AND m.org_id = $1';
+            piiWhereClause += ' AND m.org_id = $1';
+            params.push(orgId);
+        }
 
         const [totalRes, blockedRes, piiRes] = await Promise.all([
-            db.query("SELECT COUNT(*) FROM audit_logs WHERE action IN ('search','chat')"),
-            db.query("SELECT COUNT(*) FROM audit_logs WHERE action IN ('search','chat') AND details->>'success' = 'false'"),
-            db.query("SELECT COUNT(*) FROM audit_logs WHERE details->>'pii_detected' = 'true'"),
+            db.query(`SELECT COUNT(*) FROM audit_logs a ${joinClause} ${whereClause}`, params),
+            db.query(`SELECT COUNT(*) FROM audit_logs a ${joinClause} ${whereClause} AND a.details->>'success' = 'false'`, params),
+            db.query(`SELECT COUNT(*) FROM audit_logs a ${joinClause} ${piiWhereClause}`, params),
         ]);
 
         const total = parseInt(totalRes.rows[0].count) || 1;
@@ -38,9 +48,6 @@ router.get('/stats', async (req, res) => {
 
 /**
  * GET /api/audit/logs
- *
- * Fully null-safe — derives success from details->>'success' string comparison
- * (no ::boolean cast which throws when value is absent or malformed).
  */
 router.get('/logs', async (req, res) => {
     try {
@@ -48,14 +55,22 @@ router.get('/logs', async (req, res) => {
         const page = Math.max(1, parseInt(req.query.page) || 1);
         const limit = Math.min(100, parseInt(req.query.limit) || 20);
         const offset = (page - 1) * limit;
+        const orgId = req.user.org_id;
+        const isSuperAdmin = req.user.role === 'super_admin';
 
         const { status, pii } = req.query;
         const conditions = [];
+        const params = [limit, offset];
+        let pIdx = 3;
 
-        // Use string comparison — no ::boolean that blows up on NULL
-        if (status === 'allowed') conditions.push(`(details->>'success' IS NULL OR details->>'success' != 'false')`);
-        if (status === 'blocked') conditions.push(`details->>'success' = 'false'`);
-        if (pii === 'true') conditions.push(`details->>'pii_detected' = 'true'`);
+        if (!isSuperAdmin) {
+            conditions.push(`m.org_id = $${pIdx++}`);
+            params.push(orgId);
+        }
+
+        if (status === 'allowed') conditions.push(`(a.details->>'success' IS NULL OR a.details->>'success' != 'false')`);
+        if (status === 'blocked') conditions.push(`a.details->>'success' = 'false'`);
+        if (pii === 'true') conditions.push(`a.details->>'pii_detected' = 'true'`);
 
         const whereClause = conditions.length > 0
             ? 'WHERE ' + conditions.join(' AND ')
@@ -78,13 +93,32 @@ router.get('/logs', async (req, res) => {
             FROM  audit_logs  a
             LEFT  JOIN users      u  ON a.user_id  = u.id
             LEFT  JOIN user_roles ur ON u.role_id   = ur.id
+            LEFT  JOIN user_org_mapping m ON u.id = m.user_id
             ${whereClause}
             ORDER BY a.created_at DESC
             LIMIT  $1 OFFSET $2
-        `, [limit, offset]);
+        `, params);
+
+        // Adjust params for count query (remove limit and offset)
+        const countParams = params.slice(2);
+        // Adjust the placeholders in whereClause incrementally since the first two (limit, offset) are dropped
+        // Actually, easiest way is to rebuild conditions for Count with starting index 1
+        const countConditions = [];
+        let cpIdx = 1;
+        const cleanCountParams = [];
+
+        if (!isSuperAdmin) {
+            countConditions.push(`m.org_id = $${cpIdx++}`);
+            cleanCountParams.push(orgId);
+        }
+        if (status === 'allowed') countConditions.push(`(a.details->>'success' IS NULL OR a.details->>'success' != 'false')`);
+        if (status === 'blocked') countConditions.push(`a.details->>'success' = 'false'`);
+        if (pii === 'true') countConditions.push(`a.details->>'pii_detected' = 'true'`);
+
+        const countWhereClause = countConditions.length > 0 ? 'WHERE ' + countConditions.join(' AND ') : '';
 
         const countRes = await db.query(
-            `SELECT COUNT(*) FROM audit_logs a ${whereClause}`
+            `SELECT COUNT(*) FROM audit_logs a LEFT JOIN users u ON a.user_id = u.id LEFT JOIN user_org_mapping m ON u.id = m.user_id ${countWhereClause}`, cleanCountParams
         );
         const total = parseInt(countRes.rows[0].count) || 0;
 

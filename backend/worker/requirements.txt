@@ -12,3 +12,6 @@ tiktoken
 langchain-text-splitters
 beautifulsoup4
 pycryptodome
+presidio-analyzer
+presidio-anonymizer
+spacy

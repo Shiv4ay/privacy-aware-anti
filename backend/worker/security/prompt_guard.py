@@ -5,14 +5,15 @@ logger = logging.getLogger(__name__)
 
 # Very lightweight heuristic jailbreak signature detector
 JAILBREAK_SIGNATURES = [
-    r"\bignore\s+(all\s+)?previous\s+(instructions|prompts|directions)\b",
-    r"\bdisregard\s+(all\s+)?previous\s+(instructions|prompts|directions)\b",
-    r"\b(you\s+are\s+now|act\s+as)\s+(an\s+unfiltered|a\s+developer|a\s+system\s+admin|DAN)\b",
-    r"\bforget\s+(all\s+)?(previous\s+)?instructions\b",
-    r"\bprint\s+(your\s+)?(system\s+)?prompt\b",
-    r"\boutput\s+(your\s+)?(system\s+)?prompt\b",
-    r"\b(bypass|disable)\s+(security|filters|rules|guardrails)\b",
-    r"\bwhat\s+are\s+your\s+instructions\b"
+    r"(?i)\bignore\s+(all\s+)?previous\s+(instructions|prompts|directions)\b",
+    r"(?i)\bdisregard\s+(all\s+)?previous\s+(instructions|prompts|directions)\b",
+    r"(?i)\b(you\s+are\s+now|act\s+as)\s+(an\s+unfiltered|a\s+developer|a\s+system\s+admin|DAN)\b",
+    r"(?i)\bforget\s+(all\s+)?(previous\s+)?instructions\b",
+    r"(?i)\bprint\s+(your\s+)?(system\s+)?prompt\b",
+    r"(?i)\boutput\s+(your\s+)?(system\s+)?prompt\b",
+    r"(?i)\b(bypass|disable)\s+(security|filters|rules|guardrails)\b",
+    r"(?i)\bwhat\s+are\s+your\s+(core\s+)?instructions\b",
+    r"(?i)\bsimulat(e|ion)\b"
 ]
 
 def scan_prompt(query: str) -> bool:

@@ -145,6 +145,48 @@
   .blur-overlay-light {
     @apply backdrop-blur-lg bg-black/10;
   }
+
+  /* Chat HTML Parsing Styles */
+  .chat-html {
+    @apply space-y-4 text-sm leading-relaxed text-gray-200 w-full;
+  }
+
+  .chat-html p {
+    @apply mb-3 last:mb-0;
+  }
+
+  .chat-html table {
+    @apply w-full border-collapse my-4 rounded-xl overflow-hidden text-left bg-[#1a1a1a]/80 backdrop-blur-md border border-white/10 shadow-2xl;
+  }
+
+  .chat-html th {
+    @apply px-4 py-3 bg-white/10 font-semibold text-white border-b border-white/10 uppercase tracking-wider text-xs;
+  }
+
+  .chat-html td {
+    @apply px-4 py-3 border-b border-white/5 align-middle;
+  }
+
+  .chat-html tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .chat-html tr:hover td {
+    @apply bg-white/[0.04] transition-colors;
+  }
+
+  .chat-html ul {
+    @apply list-disc list-inside space-y-1 my-3 pl-2;
+  }
+
+  .chat-html ol {
+    @apply list-decimal list-inside space-y-1 my-3 pl-2;
+  }
+
+  .chat-html strong,
+  .chat-html b {
+    @apply font-bold text-premium-gold;
+  }
 }
 
 @layer utilities {

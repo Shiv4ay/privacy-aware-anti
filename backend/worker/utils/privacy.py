@@ -36,20 +36,52 @@ _company_pattern = '|'.join(
 )
 COMPANY_RE = re.compile(r'\b(?:' + _company_pattern + r')\b')
 
+# ── Strict Mode Patterns ───────────────────────────────────────────────────────
+# Aggressively matches capitalized names (e.g., "John Doe", "Jane Smith")
+STRICT_NAME_RE = re.compile(r'\b[A-Z][a-z]{2,15}\s+[A-Z][a-z]{2,15}\b')
 
-def redact_text(text: str) -> str:
-    """Replace PII with structured tokens: [TYPE:original_value]"""
+
+def redact_text(text: str, strictness: str = "standard", return_map: bool = False) -> str:
+    """Replace PII with structured tokens: [TYPE:idx_N]"""
     if not text:
-        return text
+        return (text, {}) if return_map else text
 
+    # Regex patterns mapped to display types
+    # (Matches app.py Presidio mapping for consistency)
+    PATTERNS = [
+        (EMAIL_RE, "EMAIL"),
+        (SSN_RE, "SSN"),
+        (PHONE_RE, "PHONE"),
+        (ADDRESS_RE, "ADDRESS"),
+        (COMPANY_RE, "COMPANY"),
+    ]
+
+    pii_map = {}
+    counters = {}
     out = text
-    # Order matters: more specific patterns first
-    out = EMAIL_RE.sub(lambda m: f'[EMAIL:{m.group()}]', out)
-    out = SSN_RE.sub(lambda m: f'[SSN:{m.group()}]', out)
-    out = PHONE_RE.sub(lambda m: f'[PHONE:{m.group()}]', out)
-    out = ADDRESS_RE.sub(lambda m: f'[ADDRESS:{m.group()}]', out)
-    out = COMPANY_RE.sub(lambda m: f'[COMPANY:{m.group()}]', out)
 
+    # Specific patterns first
+    for pattern, display_type in PATTERNS:
+        def replace(m):
+            idx = counters.get(display_type, 0)
+            counters[display_type] = idx + 1
+            token = f"[{display_type}:idx_{idx}]"
+            pii_map[token] = m.group()
+            return token
+        
+        out = pattern.sub(replace, out)
+
+    if strictness == "strict":
+        def replace_name(m):
+            idx = counters.get("PERSON", 0)
+            counters["PERSON"] = idx + 1
+            token = f"[PERSON:idx_{idx}]"
+            pii_map[token] = m.group()
+            return token
+        out = STRICT_NAME_RE.sub(replace_name, out)
+
+    if return_map:
+        return out, pii_map
     return out
 
 
@@ -61,9 +93,9 @@ def hash_query(text: str) -> str:
 
 
 # ── Backward-compat helpers (used by audit log PII detection) ─────────────────
-def has_pii(text: str) -> bool:
+def has_pii(text: str, strictness: str = "standard") -> bool:
     """Return True if redact_text would change anything."""
-    return redact_text(text) != text
+    return redact_text(text, strictness) != text
 
 
 def pii_types_in(text: str) -> list:

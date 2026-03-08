@@ -138,6 +138,33 @@ router.get('/stats', requireAdmin, async (req, res) => {
     }
 });
 
+// GET /api/admin/threats - Recent security threats and jailbreak attempts
+router.get('/threats', requireAdmin, async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                al.id,
+                al.created_at as time,
+                al.user_id,
+                u.username,
+                u.email,
+                al.action,
+                al.details,
+                al.details->>'error_message' as error_message
+            FROM audit_logs al
+            LEFT JOIN users u ON al.user_id = u.id
+            WHERE al.action = 'jailbreak_attempt'
+            ORDER BY al.created_at DESC
+            LIMIT 50
+        `;
+        const result = await pool.query(query);
+        res.json({ success: true, threats: result.rows });
+    } catch (error) {
+        console.error('Threats Fetch Error:', error);
+        res.status(500).json({ error: 'Failed to fetch threats' });
+    }
+});
+
 // GET /api/admin/uploads - Recent upload history
 router.get('/uploads', requireAdmin, async (req, res) => {
     try {
@@ -146,8 +173,9 @@ router.get('/uploads', requireAdmin, async (req, res) => {
                 filename,
                 COUNT(*) as document_count,
                 MAX(created_at) as uploaded_at,
-                MIN(id) as first_id
-             FROM documents 
+                MIN(id) as first_id,
+                BOOL_OR(is_toxic) as has_toxic_content
+             FROM documents  
         `;
         const params = [];
 
@@ -413,4 +441,183 @@ router.put('/users/:id/suspend', requireAdmin, async (req, res) => {
     }
 });
 
+
+// ─────────────────────────────────────────────
+// SUPER ADMIN EXCLUSIVE ENDPOINTS
+// ─────────────────────────────────────────────
+const requireSuperAdmin = (req, res, next) => {
+    if (!req.user || req.user.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Super Admin access required' });
+    }
+    next();
+};
+
+// PATCH /api/admin/users/:id/role — Change user role (super_admin only)
+router.patch('/users/:id/role', requireSuperAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        const { role } = req.body;
+        const allowedRoles = ['user', 'student', 'faculty', 'researcher', 'admin', 'super_admin'];
+        if (!allowedRoles.includes(role)) return res.status(400).json({ error: 'Invalid role' });
+        if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+
+        const result = await pool.query(
+            'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, username, email, role, org_id',
+            [role, userId]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+        // Invalidate sessions so new role takes effect on next login
+        await pool.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [userId]);
+
+        await pool.query(
+            `INSERT INTO audit_logs (user_id, action, resource_type, details, ip_address, user_agent, created_at)
+             VALUES ($1, 'admin_role_change', 'users', $2, $3, $4, NOW())`,
+            [req.user.id, JSON.stringify({ target_user_id: userId, new_role: role }), req.ip, req.get('User-Agent')]
+        );
+
+        res.json({ success: true, user: result.rows[0] });
+    } catch (error) {
+        console.error('Role Change Error:', error);
+        res.status(500).json({ error: 'Failed to update role' });
+    }
+});
+
+// PATCH /api/admin/users/:id/status — toggle active/suspended
+router.patch('/users/:id/status', requireAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        const { is_active } = req.body;
+        if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+
+        const targetUser = await pool.query('SELECT role, org_id FROM users WHERE id = $1', [userId]);
+        if (targetUser.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        if (targetUser.rows[0].role === 'super_admin' && req.user.role !== 'super_admin')
+            return res.status(403).json({ error: 'Cannot modify a super admin' });
+        if (req.user.role !== 'super_admin' && targetUser.rows[0].org_id !== req.user.org_id)
+            return res.status(403).json({ error: 'Access denied' });
+
+        await pool.query('UPDATE users SET is_active = $1 WHERE id = $2', [is_active, userId]);
+        if (!is_active) await pool.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [userId]);
+
+        res.json({ success: true, is_active });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to update status' });
+    }
+});
+
+// DELETE /api/admin/users/:id — Permanently delete user (super_admin only)
+router.delete('/users/:id', requireSuperAdmin, async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        if (userId === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
+        await pool.query('DELETE FROM auth_sessions WHERE user_id = $1', [userId]);
+        const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
+        if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to delete user' });
+    }
+});
+
+// GET /api/admin/audit-logs — Paginated audit log explorer (super_admin)
+router.get('/audit-logs', requireSuperAdmin, async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+        const offset = (page - 1) * limit;
+        const action = req.query.action || null;
+        const userId = req.query.user_id || null;
+        const from = req.query.from || null;
+        const to = req.query.to || null;
+
+        const conditions = [];
+        const params = [];
+        let pIdx = 1;
+
+        if (action) { conditions.push(`al.action = $${pIdx++}`); params.push(action); }
+        if (userId) { conditions.push(`al.user_id = $${pIdx++}`); params.push(parseInt(userId)); }
+        if (from) { conditions.push(`al.created_at >= $${pIdx++}`); params.push(new Date(from)); }
+        if (to) { conditions.push(`al.created_at <= $${pIdx++}`); params.push(new Date(to)); }
+
+        const whereStr = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+        const countRes = await pool.query(`SELECT COUNT(*) as total FROM audit_logs al ${whereStr}`, params);
+        const total = parseInt(countRes.rows[0].total);
+
+        params.push(limit, offset);
+        const logsRes = await pool.query(`
+            SELECT al.id, al.created_at, al.action, al.resource_type, al.details,
+                   al.ip_address, u.username, u.email, u.role,
+                   o.name as org_name
+            FROM audit_logs al
+            LEFT JOIN users u ON al.user_id = u.id
+            LEFT JOIN organizations o ON u.org_id = o.id
+            ${whereStr}
+            ORDER BY al.created_at DESC
+            LIMIT $${pIdx} OFFSET $${pIdx + 1}
+        `, params);
+
+        res.json({ success: true, logs: logsRes.rows, total, page, totalPages: Math.ceil(total / limit) });
+    } catch (error) {
+        console.error('Audit Log Error:', error);
+        res.status(500).json({ error: 'Failed to fetch audit logs' });
+    }
+});
+
+// GET /api/admin/org-analytics — Per-org stats for analytics tab
+router.get('/org-analytics', requireSuperAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                o.id, o.name, o.type, o.privacy_level,
+                COUNT(DISTINCT u.id) as user_count,
+                COUNT(DISTINCT d.id) as doc_count,
+                COUNT(DISTINCT CASE WHEN d.is_toxic = TRUE THEN d.id END) as toxic_doc_count,
+                COALESCE(SUM(d.file_size), 0) as storage_bytes,
+                COUNT(DISTINCT CASE WHEN al.action = 'jailbreak_attempt' THEN al.id END) as threat_count,
+                COUNT(DISTINCT CASE WHEN al.action IN ('chat','search') THEN al.id END) as query_count
+            FROM organizations o
+            LEFT JOIN users u ON u.org_id = o.id
+            LEFT JOIN documents d ON d.org_id = o.id
+            LEFT JOIN audit_logs al ON u.id = al.user_id
+            GROUP BY o.id, o.name, o.type
+            ORDER BY user_count DESC
+        `);
+        res.json({ success: true, orgs: result.rows });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch org analytics' });
+    }
+});
+
+// PATCH /api/admin/orgs/:id/privacy — Update org privacy level (admin or super_admin)
+router.patch('/orgs/:id/privacy', async (req, res) => {
+    try {
+        const orgId = parseInt(req.params.id);
+        const { privacy_level } = req.body;
+
+        if (!['standard', 'strict'].includes(privacy_level)) {
+            return res.status(400).json({ error: 'Invalid privacy level' });
+        }
+
+        // Authorization check: User must be super_admin, OR an admin of this specific org
+        if (req.user.role !== 'super_admin' && (req.user.role !== 'admin' || req.user.org_id !== orgId)) {
+            return res.status(403).json({ error: 'Forbidden. You can only manage privacy settings for your own organization.' });
+        }
+
+        const result = await pool.query(
+            'UPDATE organizations SET privacy_level = $1 WHERE id = $2 RETURNING id, privacy_level',
+            [privacy_level, orgId]
+        );
+
+        if (result.rows.length === 0) return res.status(404).json({ error: 'Organization not found' });
+
+        res.json({ success: true, privacy_level: result.rows[0].privacy_level });
+    } catch (error) {
+        console.error('Privacy update error:', error);
+        res.status(500).json({ error: 'Failed to update privacy level' });
+    }
+});
+
 module.exports = router;
+

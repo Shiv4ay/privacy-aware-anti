@@ -2,6 +2,8 @@
 
 import os
 import sys
+import csv
+import io
 from dotenv import load_dotenv
 
 # Load .env file explicitly from project root (2 levels up)
@@ -34,13 +36,17 @@ from threading import Thread
 import chromadb
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 import openai
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 import tiktoken
 from ingestion.web_scraper import WebScraper
+
+# Presidio NER setup
+from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
+from presidio_anonymizer import AnonymizerEngine
 
 # Initialize Scraper
 scraper = WebScraper()
@@ -104,7 +110,7 @@ CHROMADB_HOST = os.getenv("CHROMADB_HOST", "chromadb")
 CHROMADB_PORT = int(os.getenv("CHROMADB_PORT", 8000))
 CHROMADB_COLLECTION = os.getenv("CHROMADB_COLLECTION", "privacy_documents")
 
-TOP_K = int(os.getenv("TOP_K", 5))
+TOP_K = int(os.getenv("TOP_K", 15))
 QUERY_HASH_SALT = os.getenv("QUERY_HASH_SALT", "change_me_query_salt")
 
 # DB pool settings
@@ -313,10 +319,12 @@ class ChatRequest(BaseModel):
     model_preference: Optional[Dict[str, Any]] = None
 
 def get_org_collection(org_id: Optional[int] = None, org_name: str = "default", user_role: str = "student"):
-    """Get or create a ChromaDB collection for a specific organization or general use"""
+    """Get or create a ChromaDB collection for a specific organization or general use.
+    Phase 6.3: HNSW tuning for fast search on large datasets (11,000+ docs).
+    """
     # Super admin should access org-specific data if org_id is provided
     # Otherwise fallback to org_id=1 as the default main collection
-    if user_role == "super_admin":
+    if user_role in ["super_admin", "admin"]:
         if org_id:
             collection_name = f"privacy_documents_{org_id}"
         else:
@@ -332,9 +340,15 @@ def get_org_collection(org_id: Optional[int] = None, org_name: str = "default", 
         collection_name = f"privacy_documents_{safe_name}"
     
     # CRITICAL: We provide pre-computed 384-dim embeddings from nomic-embed-text.
-    # ChromaDB must NOT auto-create an embedding function.
-    # Explicitly set metadata to prevent dimension mis match.
-    metadata = {"hnsw:space": "l2"}  # L2 distance, no embedding function
+    # Phase 6.3: HNSW tuning for O(log N) search instead of brute-force O(N)
+    metadata = {
+        "hnsw:space": "cosine",            # Cosine similarity for text embeddings
+        "hnsw:construction_ef": 200,       # Higher = more accurate index (default: 100)
+        "hnsw:search_ef": 100,             # Higher = more accurate search (default: 10)
+        "hnsw:M": 32,                      # More connections = faster search (default: 16)
+        "hnsw:batch_size": 1000,           # Process in batches
+        "hnsw:sync_threshold": 2000,       # Sync to disk every 2000 inserts
+    }
     # Consistently use the same standardized client
     return chroma_client.get_or_create_collection(
         name=collection_name,
@@ -346,25 +360,93 @@ class DocumentChunk(BaseModel):
     text: str
     score: float
 
-# Privacy helpers (redaction + hashing)
+# Privacy helpers (Presidio NER + Regex)
 # -----------------------------
-EMAIL_RE = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')
-# Phone regex: requires digits-only or formatted blocks; must end at word boundary
-PHONE_RE = re.compile(r'\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\ ]?\d{3}[-.\s]?\d{4}(?:\s*(?:x|ext)\.?\s*\d+)?\b')
-SSN_RE = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
-# Address pattern - matches common address formats with box numbers, APO/FPO, street addresses
-ADDRESS_RE = re.compile(r'(?:(?:P\.?O\.?|PSC)\s+(?:Box\s+)?\d+(?:,?\s+Box\s+\d+)?(?:,\s+APO|FPO|DPO)\s+[A-Z]{2}\s+\d{5})|(?:\d+\s+[A-Za-z0-9\s,]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Way|Place|Pl)(?:\s+(?:Apt|Unit|Suite|Ste|#)\s*[\w-]+)?(?:,\s*[A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5})?)')
+try:
+    logger.info("Initializing Presidio Analyzer (loading NLP model en_core_web_md)...")
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+    nlp_provider = NlpEngineProvider(nlp_configuration={
+        "nlp_engine_name": "spacy",
+        "models": [{"lang_code": "en", "model_name": "en_core_web_md"}]
+    })
+    analyzer = AnalyzerEngine(nlp_engine=nlp_provider.create_engine())
+    anonymizer = AnonymizerEngine()
+    logger.info("Presidio Analyzer initialized successfully.")
+except Exception as e:
+    logger.error(f"Failed to initialize Presidio: {e}")
+    analyzer = None
+    anonymizer = None
 
-PII_PATTERNS = [EMAIL_RE, PHONE_RE, SSN_RE, ADDRESS_RE]
-
-def redact_text(text: str) -> str:
-    if not text:
-        return text
+def redact_text(text: str, return_map: bool = False, strictness: str = None, **kwargs):
+    """
+    Redact PII from text using Presidio NER.
+    
+    If return_map=True, returns (redacted_text, pii_map) where pii_map maps
+    indexed tokens like '[PERSON:idx_0]' to their original values.
+    If return_map=False (default, backward compatible), returns just the redacted string.
+    
+    Args:
+        strictness: Accepted for backward compatibility but not used by Presidio.
+        **kwargs: Absorbs any other unexpected keyword arguments.
+    """
+    if not text or not analyzer:
+        return (text, {}) if return_map else text
+    
+    # Run NER analyzer comprehensively for ALL available PII types globally
+    results = analyzer.analyze(text=text, language='en')
+    
+    if not results:
+        return (text, {}) if return_map else text
+    
+    # Sort results by start position (descending) so we can replace from end to start
+    # without shifting indices
+    sorted_results = sorted(results, key=lambda r: r.start, reverse=True)
+    
+    # Entity type mapping for display labels
+    TYPE_MAP = {
+        "PERSON": "PERSON",
+        "ORGANIZATION": "COMPANY",
+        "PHONE_NUMBER": "PHONE",
+        "EMAIL_ADDRESS": "EMAIL",
+        "US_SSN": "SSN",
+        "CREDIT_CARD": "CREDIT_CARD",
+        "CRYPTO": "CRYPTO",
+        "IBAN_CODE": "IBAN",
+        "IP_ADDRESS": "IP_ADDRESS",
+        "LOCATION": "LOCATION",
+        "MEDICAL_LICENSE": "MEDICAL_LICENSE",
+        "US_BANK_NUMBER": "BANK_ACCOUNT",
+        "US_DRIVER_LICENSE": "DRIVER_LICENSE",
+        "US_ITIN": "ITIN",
+        "US_PASSPORT": "PASSPORT",
+        "DATE_TIME": "DATE",
+    }
+    
+    pii_map = {}
+    counters = {}  # per-type counter for unique indexing
     out = text
-    out = EMAIL_RE.sub(lambda m: f'[EMAIL:{m.group()}]', out)
-    out = SSN_RE.sub(lambda m: f'[SSN:{m.group()}]', out)
-    out = PHONE_RE.sub(lambda m: f'[PHONE:{m.group()}]', out)
-    out = ADDRESS_RE.sub(lambda m: f'[ADDRESS:{m.group()}]', out)
+    
+    # Regex for Student/Record IDs that should NOT be redacted for search matching
+    ID_PATTERN = re.compile(r'\b(PES|STU|RES|INT)[A-Z0-9]+\b', re.IGNORECASE)
+    
+    for result in sorted_results:
+        original_value = text[result.start:result.end]
+        
+        # If it looks like a student ID, skip redaction for this entity
+        if ID_PATTERN.search(original_value.upper()):
+            continue
+            
+        display_type = TYPE_MAP.get(result.entity_type, "REDACTED")
+        
+        idx = counters.get(display_type, 0)
+        counters[display_type] = idx + 1
+        token = f"[{display_type}:idx_{idx}]"
+        
+        pii_map[token] = original_value
+        out = out[:result.start] + token + out[result.end:]
+    
+    if return_map:
+        return out, pii_map
     return out
 
 def hash_query(text: str) -> str:
@@ -436,17 +518,23 @@ def close_db_pool():
 
 def insert_audit_log(user_id, action, resource_type, resource_id, details, success=True, error_message=None, ip_address=None, user_agent=None):
     """
-    Insert an audit log into audit_log table and publish to Redis for real-time dashboard.
+    Insert an audit log into audit_logs table and publish to Redis for real-time dashboard.
     """
+    if not isinstance(details, dict):
+        details = {"data": details}
+    details["success"] = success
+    if error_message:
+        details["error_message"] = error_message
+
     conn = None
     try:
         conn = get_conn()
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO audit_log (user_id, action, resource_type, ip_address, user_agent, success, error_message, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO audit_logs (user_id, action, resource_type, resource_id, ip_address, user_agent, details)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, created_at;
-            """, (str(user_id) if user_id else None, action, resource_type, ip_address, user_agent, success, error_message, PGJson(details)))
+            """, (str(user_id) if user_id else None, action, resource_type, resource_id, ip_address, user_agent, PGJson(details)))
             row = cur.fetchone()
             conn.commit()
             
@@ -586,47 +674,80 @@ def _call_ollama_embeddings(model_name: str, text: str, timeout: int = 30) -> Op
     logger.warning("Ollama embeddings: no embedding available from candidates: %s", candidate_models)
     return None
 
+# --- Embedding Cache (Phase 6.3) ---
+_embedding_cache = {}
+_EMBEDDING_CACHE_MAX = 500  # Keep last 500 embeddings in memory
+
 def get_embedding(text: str, model_name: Optional[str] = None, timeout_per_call: int = 20) -> Optional[List[float]]:
     """
     Get embedding using nomic-embed-text to ensure consistency.
     All embeddings must use the same dimensionality (384) to match indexed documents.
+    Uses an in-memory LRU cache to avoid redundant computation.
     """
+    global _embedding_cache
+    cache_key = hashlib.md5(text.encode()).hexdigest()
+    if cache_key in _embedding_cache:
+        logger.debug("Embedding cache HIT for key=%s", cache_key[:8])
+        return _embedding_cache[cache_key]
+
     # ALWAYS use local nomic-embed-text to maintain 384-dim consistency
     local_model = "nomic-embed-text"
     logger.info(f"Generating embedding using {local_model} (384-dim)")
-    return _call_ollama_embeddings(local_model, text, timeout=timeout_per_call)
+    result = _call_ollama_embeddings(local_model, text, timeout=timeout_per_call)
+
+    if result:
+        # Evict oldest entries if cache is full
+        if len(_embedding_cache) >= _EMBEDDING_CACHE_MAX:
+            oldest_key = next(iter(_embedding_cache))
+            del _embedding_cache[oldest_key]
+        _embedding_cache[cache_key] = result
+
+    return result
 
 def get_system_prompt(user_role: str = "student", context_present: bool = False) -> str:
-    """Factory for Role-Specific and Strict-RAG System Prompts."""
-    base_rules = """PROFESSIONAL RESPONSE GUIDELINES:
-1. ANALYZE all provided context thoroughly - information may be spread across multiple document chunks.
-2. SYNTHESIZE information from multiple records when answering aggregate questions (averages, counts, lists).
-3. For queries about groups (e.g., "CSE students", "Microsoft placements"):
-   - Search for relevant attributes in the metadata (department codes, company names)
-   - Compile results from all matching records
-   - Provide aggregated statistics and summaries
-4. If context clearly doesn't contain ANY relevant data, state: "The available records do not contain information about [specific query]."
-5. DO NOT use external world knowledge - rely exclusively on provided documents.
-6. When context has [REDACTED_...] placeholders, acknowledge them as privacy-protected fields.
-7. Structure responses with clear formatting:
-   - Direct answer to the question
-   - Supporting details and context
-   - For multiple records: use bullet points or tables
-   - For aggregates: provide counts, averages, ranges
-8. For numerical queries (GPA, counts, averages):
-   - Calculate from all relevant records in context
-   - Provide exact values and sample sizes
-9. Cross-reference related information to provide comprehensive insights.
-10. Maintain a professional, analytical tone suitable for academic/enterprise environments.
-11. When asked about "all" or "list" queries, compile information from ALL relevant chunks provided."""
+    """Factory for Role-Specific and Strict-RAG System Prompts (Phase 6.2 Anti-Hallucination Upgrade)."""
+    base_rules = """## YOUR RULES (never break these):
+1. Answer ONLY using information explicitly present in the <context> provided below.
+2. If the answer is NOT in the context, respond with exactly:
+   'I cannot find this information in the available documents.'
+3. NEVER use your training knowledge to fill gaps. NEVER guess or make up information.
+4. If a question is a follow-up, use the conversation history to understand it,
+   then still answer ONLY from the context.
+5. Cite which document record your answer comes from. The context contains labeled "RECORD N" blocks. Use these labels for your citations.
+6. Keep answers concise — 2-4 sentences maximum unless asked for more detail.
 
-    if user_role in ['super_admin']:
+## DATA INTEGRITY AND PRIVACY:
+7. ASSOCIATION ACCURACY: You MUST correctly associate fields with their corresponding RECORD. 
+   - For example, if Student Record 1 has Email: [EMAIL:idx_0] and Student Record 2 has Email: [EMAIL:idx_1], never swap them.
+   - Pay close attention to the Record headers (e.g., "STUDENT RECORD 1", "ALUMNI RECORD 2") and ensure all data in your response for a specific entity comes from the SAME record.
+8. FIELD PRECISION: Never put data from one field into another. 
+   - Never put an Email token in an Address field.
+   - Never put a Date of Birth token in a Name or Address field.
+   - If the context lists "Address: [LOCATION:idx_0]", use that EXACT token for address. Do NOT use an email token as a fallback.
+9. PI TOKEN HANDLING: The text has been anonymized. When the context contains privacy placeholders like [PERSON:idx_0], [COMPANY:idx_0], [EMAIL:idx_0], [PHONE:idx_0], etc., YOU MUST TREAT THESE AS THE ACTUAL VALUES. DO NOT say the information is missing. You MUST output these literal placeholders EXACTLY as they appear in the context.
+   IMPORTANT: If you see multiple adjacent [PERSON:idx_N] tokens (e.g., [PERSON:idx_0] [PERSON:idx_1]), they represent parts of a FULL NAME. Output ALL of them together: "[PERSON:idx_0] [PERSON:idx_1]" — never drop any part.
+
+## PROFESSIONAL RESPONSE GUIDELINES (PRESENTATION):
+10. PROFESSIONAL FORMATTING (MANDATORY): Always use professional **HTML Tables** to present data records. 
+    - AVOID using unnecessary symbols like asterisks (`*`) or dashes (`-`) for lists of attributes.
+    - Use clear table headers (e.g., | Field | Value |).
+    - Ensure tables are clean and easy to read.
+11. ANALYZE all provided context thoroughly — information may be spread across multiple document chunks.
+12. SYNTHESIZE information from multiple records when answering aggregate questions (averages, counts, lists).
+13. Numerical accuracy: Provide exact GPA, Semesters, and Batch years from the records.
+14. ANSWER ONLY WHAT WAS ASKED. If the user asks for 'name and email', output only Name and Email in the table. Do NOT add unrequested fields.
+15. STRICT CITATION FORMAT: When referencing source records, use labels like "According to Student Record 1" or "Based on Alumni Record 3". NEVER use bracket notation like [RECORD: 1] as citation."""
+
+    # Normalize role for consistent matching
+    normalized_role = user_role.lower().strip() if isinstance(user_role, str) else 'student'
+
+    if normalized_role == 'super_admin':
         role_desc = "You are the GLOBAL SYSTEM AUDITOR. You have overview access to all organizations."
         access_level = "FULL GLOBAL ACCESS"
-    elif user_role in ['admin']:
+    elif normalized_role == 'admin':
         role_desc = "You are the UNIVERSITY ADMINISTRATOR. You are responsible for campus data oversight."
         access_level = "CAMPUS-WIDE ACCESS"
-    elif user_role == 'general':
+    elif normalized_role == 'general':
         role_desc = "You are a PERSONAL GUIDANCE ASSISTANT. You help the user with their private documents."
         access_level = "PERSONAL ISOLATED ACCESS"
     else:
@@ -657,12 +778,81 @@ def call_openai_chat(messages: List[Dict[str, str]], model: str = PRIMARY_MODEL)
         logger.error(f"OpenAI API error: {e}")
         return f"ERROR: Cloud reasoning failed. ({e})"
 
-def generate_chat_response(query: str, context: str, user_role: str = "student", conversation_history: list = None) -> str:
-    """Generate answer using either OpenAI or Ollama with Strict RAG Guardrails."""
+def _merge_split_name_fields(context: str) -> str:
+    """
+    Pre-process pipe-separated CSV context text to merge split first_name/last_name
+    fields into a single full_name field BEFORE Presidio runs.
+    
+    Problem: CSV rows stored as "first_name: John | last_name: Fritz | ..."
+    → Presidio detects "John" and "Fritz" as 2 separate PERSON entities.
+    → LLM only echoes one token → badge only shows "Fritz" not "John Fritz".
+    
+    Fix: Convert to "full_name: John Fritz | ..." so Presidio sees one full name.
+    """
+    if not context:
+        return context
+    
+    def _merge_names_in_record(record: str) -> str:
+        """Merge first_name + middle_name (optional) + last_name into full_name."""
+        fn_match = re.search(r'(?:first_name|firstname)\s*:\s*([^\|]+)', record, re.IGNORECASE)
+        ln_match = re.search(r'(?:last_name|lastname|surname)\s*:\s*([^\|]+)', record, re.IGNORECASE)
+
+        if fn_match and ln_match:
+            first = fn_match.group(1).strip()
+            last  = ln_match.group(1).strip()
+
+            # Middle name is optional — include only if the field exists and is not blank
+            mn_match = re.search(r'(?:middle_name|middlename)\s*:\s*([^\|]+)', record, re.IGNORECASE)
+            middle   = mn_match.group(1).strip() if mn_match else ''
+
+            # Build full name: "John Fritz" or "John Michael Fritz"
+            parts     = [p for p in [first, middle, last] if p]
+            full_name = ' '.join(parts)
+
+            if full_name:
+                # Remove each individual name component field, then prepend full_name
+                result = re.sub(r'(?:first_name|firstname)\s*:\s*[^\|]+\|?\s*', '', record, flags=re.IGNORECASE)
+                result = re.sub(r'(?:middle_name|middlename)\s*:\s*[^\|]+\|?\s*', '', result, flags=re.IGNORECASE)
+                result = re.sub(r'(?:last_name|lastname|surname)\s*:\s*[^\|]+\|?\s*', '', result, flags=re.IGNORECASE)
+                result = result.strip().strip('|').strip()
+                return f"full_name: {full_name} | {result}" if result else f"full_name: {full_name}"
+        return record
+    
+    # Process each DOCUMENT RECORD block separately
+    parts = re.split(r'(DOCUMENT RECORD \d+:\n)', context)
+    merged = []
+    for part in parts:
+        if part.startswith('DOCUMENT RECORD'):
+            merged.append(part)
+        else:
+            merged.append(_merge_names_in_record(part))
+    
+    return ''.join(merged)
+
+def generate_chat_response(query: str, context: str, user_role: str = "student", conversation_history: list = None, privacy_level: str = "standard"):
+    """
+    Generate answer using either OpenAI or Ollama with Strict RAG Guardrails.
+    
+    Returns:
+        tuple (response_text: str, context_pii_map: dict)
+        The context_pii_map maps placeholder tokens like '[PERSON:idx_0]' to their original
+        values (e.g., 'John Fritz'). This is built when redacting the context so the frontend
+        can reveal real PII values when an admin clicks a badge.
+    """
 
     # 1. Pre-flight Privacy Redaction (The Bread of the Sandwich)
-    redacted_query = redact_text(query)
-    redacted_context = redact_text(context)
+    #    IMPORTANT: capture the pii_map from context redaction — this is the authoritative
+    #    source for placeholder→real-value mappings that the LLM will echo in its response.
+    redacted_query = redact_text(query, strictness=privacy_level)
+    
+    # ── Pre-process context: merge split name fields so Presidio sees full name ────
+    # CSV rows are stored as "first_name: John | last_name: Fritz | ..."
+    # Presidio detects "John" and "Fritz" as 2 separate PERSON entities → 2 tokens.
+    # By combining them first, Presidio sees "John Fritz" as 1 entity → 1 token.
+    normalized_context = _merge_split_name_fields(context)
+    
+    redacted_context, context_pii_map = redact_text(normalized_context, return_map=True, strictness=privacy_level)
+    logger.info(f"Context redaction produced {len(context_pii_map)} pii_map entries: {list(context_pii_map.keys())[:10]}")
 
     system_msg = get_system_prompt(user_role, bool(context))
 
@@ -686,7 +876,7 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
                 if isinstance(msg, dict) and "role" in msg and "content" in msg:
                     messages.append({
                         "role": msg["role"],
-                        "content": redact_text(msg["content"])  # Redact PII from history too
+                        "content": redact_text(msg["content"], strictness=privacy_level)  # Redact PII from history too
                     })
         
         # Add current query with document context
@@ -700,15 +890,29 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
         logger.info(f"Raw OpenAI Response: {raw_response[:200]}...")
     else:
         # Fallback to Ollama (Local)
-        # ... (rest of logic)
         logger.info(f"Using Local Ollama (Phi3) for role={user_role}")
-        prompt = f"<|im_start|>system\n{system_msg}\nContext:\n{redacted_context}\n<|im_end|>\n<|im_start|>user\n{redacted_query}\n<|im_end|>\n<|im_start|>assistant\n"
+        
+        # Start prompt with system message and context
+        prompt = f"<|im_start|>system\n{system_msg}\nContext:\n{redacted_context}\n<|im_end|>\n"
+        
+        # Add conversation history
+        if conversation_history and isinstance(conversation_history, list):
+            for msg in conversation_history:
+                if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                    # Map roles (frontend might send 'user'/'ai' or 'user'/'assistant')
+                    role = "assistant" if msg["role"] in ["assistant", "ai"] else "user"
+                    safe_content = redact_text(msg["content"], strictness=privacy_level)
+                    prompt += f"<|im_start|>{role}\n{safe_content}\n<|im_end|>\n"
+        
+        # Add the current query
+        prompt += f"<|im_start|>user\n{redacted_query}\n<|im_end|>\n<|im_start|>assistant\n"
 
         try:
             payload = {
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "raw": True,
                 "options": {"temperature": 0.1}
             }
             res = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=180)
@@ -723,16 +927,23 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
         guarded_response = GuardrailManager.post_process_response(raw_response)
         if guarded_response != raw_response:
              logger.info("GuardrailManager: Response was modified by post-flight guardrails.")
-        return guarded_response
+        return guarded_response, context_pii_map
     
-    final_output = redact_text(raw_response) # Final safety pass
+    # Final safety pass — but do NOT discard the context_pii_map
+    final_output = redact_text(raw_response, strictness=privacy_level)
     if final_output != raw_response:
-        logger.info("redact_text: Final output was additionaly anonymized.")
-    return final_output
+        logger.info("redact_text: Final output was additionally anonymized.")
+    return final_output, context_pii_map
 
 def chromadb_add(ids: List[str], documents: List[str], embeddings: List[List[float]], metadatas: List[Dict] = None, collection=None):
     """Add documents to ChromaDB using Python client"""
     target_collection = collection or chroma_collection
+    try:
+        # Delete existing IDs to simulate upsert (compatible across Chroma versions)
+        target_collection.delete(ids=ids)
+    except Exception:
+        pass
+        
     target_collection.add(
         ids=ids,
         documents=documents,
@@ -933,16 +1144,66 @@ def get_minio_client(retries=10, delay=3):
 # Document processing
 # -----------------------------
 def extract_text_from_file(file_path: str) -> str:
-    """Extract text from various file formats"""
+    """Extract text from various file formats (PDF, CSV, TXT, HTML).
+    
+    CSV files are parsed row-by-row, concatenating all field key-value pairs
+    into a searchable text representation. This ensures every row and every
+    field is fully indexed for search and chat retrieval.
+    """
     try:
-        if file_path.lower().endswith('.pdf'):
+        lower_path = file_path.lower()
+        
+        if lower_path.endswith('.pdf'):
             reader = PdfReader(file_path)
             text = ""
             for page in reader.pages:
                 text += page.extract_text() or ""
             return text
+        
+        elif lower_path.endswith('.csv'):
+            # Deep CSV extraction: read every row, every field
+            rows_text = []
+            filename_label = os.path.basename(file_path).replace('.csv', '').upper()
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                reader = csv.DictReader(f)
+                for row_idx, row in enumerate(reader):
+                    row_parts = []
+                    address_val = None
+                    pincode_found = False
+                    
+                    for k, v in row.items():
+                        if v and str(v).strip():
+                            clean_key = k.replace('_', ' ').title()
+                            val = str(v).strip()
+                            row_parts.append(f"  {clean_key}: {val}")
+                            
+                            # Keep track of address for pincode extraction
+                            if clean_key.lower() == 'address':
+                                address_val = val
+                            if clean_key.lower() == 'pincode':
+                                pincode_found = True
+                    
+                    # Logic to pull Pincode out of Address if not explicitly present
+                    # This fulfills user request "if in data there is no pincode section please add"
+                    if address_val and not pincode_found:
+                        pins = re.findall(r'\b\d{6}\b', address_val)
+                        if pins:
+                            row_parts.append(f"  Pincode: {pins[0]}")
+
+                    if row_parts:
+                        # Use more descriptive RECORD labels based on filename (e.g., STUDENT RECORD 1)
+                        record_type = filename_label.rstrip('S') # Plural to singular
+                        rows_text.append(f"{record_type} RECORD {row_idx + 1}:\n" + "\n".join(row_parts) + "\n---")
+            
+            if rows_text:
+                return "\n\n".join(rows_text)
+            else:
+                # Fallback: read raw text if DictReader found nothing
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    return f.read()
+        
         else:
-            # Handle text files
+            # Handle text files (TXT, HTML, etc.)
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 return f.read()
     except Exception as e:
@@ -1131,14 +1392,21 @@ def process_document_job(job_data: Dict[str, Any]):
                     
                     # Prepare metadata
                     metadatas = []
-                    for _ in batch_chunks:
+                    for i, chunk in enumerate(batch_chunks):
+                        # Extract potential Student ID for metadata filtering
+                        # Pattern matches PES, STU, RES, INT followed by alphanumeric
+                        id_match = re.search(r'\b(PES|STU|RES|INT)[A-Z0-9]+\b', chunk, re.IGNORECASE)
+                        student_id = id_match.group(0).upper() if id_match else ""
+                        
                         metadatas.append({
                             "org_id": str(org_id) if org_id else "",
                             "organization": org_name,
                             "department": job_data.get("department", ""),
                             "user_category": job_data.get("user_category", ""),
                             "document_id": str(job_data.get("document_id", "")),
-                            "filename": job_data.get("filename", "")
+                            "filename": job_data.get("filename", ""),
+                            "student_id": student_id,
+                            "access_level": "general"
                         })
 
                     chromadb_add(batch_ids[:len(batch_embeddings)],
@@ -1352,21 +1620,9 @@ def search_documents(request: SearchRequest):
         raw_query = request.query or ""
         
         # 0. SECURITY FIREWALL (Prompt Injection Guardrails)
+        # Logging is handled by the Node.js API gateway (which has user context) to avoid duplication
         if scan_prompt(raw_query):
             logger.warning(f"[SECURITY] Blocked malicious jailbreak attempt in /search from User {request.user_id}")
-            query_redacted = redact_text(raw_query)
-            try:
-                insert_audit_log(
-                    request.user_id,
-                    "jailbreak_attempt",
-                    "search_engine",
-                    None,
-                    {"query_hash": hash_query(raw_query), "query_redacted": query_redacted},
-                    success=False,
-                    error_message="Security Violation: Malicious Prompt Injection Detected"
-                )
-            except Exception:
-                pass
             raise HTTPException(status_code=403, detail="Security Warning: Malicious Prompt Detected. Action logged.")
             
         query_redacted = redact_text(raw_query)
@@ -1397,15 +1653,23 @@ def search_documents(request: SearchRequest):
         logger.info(f"Target Collection: {org_collection.name} | Items: {org_collection.count()}")
         
         where_filter = {}
-        # Apply Metadata Filtering for RBAC
-        # Super Admin: Sees all in Global Collection
-        # Org Admin: Sees all in Org Collection
-        # Student: Sees all in Org Collection (Privacy Sandwich handles individual PII)
-        # General User: Sees only their personal docs in General Collection
+        # Apply Metadata Filtering for RBAC (Document-Level Access Control)
+        role = request.user_role
         
-        if request.user_role == 'general' and request.user_id:
-            where_filter["uploaded_by"] = int(request.user_id)
-        # Note: 'student' role now relies on org_collection separation + Gateway Redaction
+        if role == 'student':
+            # Students can only see student and general chunks
+            where_filter["access_level"] = {"$in": ["student", "general"]}
+        elif role == 'faculty':
+            # Faculty can see faculty, student, and general chunks
+            where_filter["access_level"] = {"$in": ["faculty", "student", "general"]}
+        elif role in ['admin', 'super_admin']:
+            # Admins bypass document-level RBAC and see all chunks in the namespace
+            pass
+        elif role == 'general':
+            # General users only see general chunks, and only if uploaded by them (if applicable)
+            where_filter["access_level"] = "general"
+            if request.user_id:
+                where_filter["uploaded_by"] = int(request.user_id)
 
         fetch_k = request.top_k + 2 if (request.dp_enabled and DifferentialPrivacy) else request.top_k
         
@@ -1424,26 +1688,78 @@ def search_documents(request: SearchRequest):
         # HYBRID SEARCH: Keyword matching for Student IDs (STU, RES, INT)
         try:
             potential_ids = []
-            # Find words like STUXXXX or RESXXXX or INTXXXX or literal uppercase words with digits
+            # Find words like STUXXXX or RESXXXX or INTXXXX or PESXXXX or literal uppercase words with digits
             words = re.findall(r'[A-Z0-9]+', request.query.upper())
             for word in words:
-                if any(p in word for p in ["STU", "RES", "INT"]) and any(c.isdigit() for c in word):
+                if any(p in word for p in ["STU", "RES", "INT", "PES"]) and any(c.isdigit() for c in word):
                     potential_ids.append(word)
             
             if potential_ids:
                 keyword = potential_ids[0]
                 logger.info(f"Hybrid Search: Found potential ID '{keyword}' - Querying Chroma...")
                 
-                # Use Chroma's internal where_document for literal string matching (more precise than embeddings for IDs)
+                # Hybrid 1: Metadata check (highly reliable if indexed with student_id)
                 kw_results = org_collection.get(
-                    where_document={"$contains": keyword},
-                    limit=10,
+                    where={"student_id": keyword},
+                    limit=50,
                     include=["metadatas", "documents"]
                 )
                 
+                # Hybrid 2: Fallback to content search if metadata check found nothing
+                if not kw_results or not kw_results.get("ids"):
+                    logger.info(f"Hybrid Search: Metadata miss for '{keyword}', trying document content search...")
+                    kw_results = org_collection.get(
+                        where_document={"$contains": keyword},
+                        limit=150,
+                        include=["metadatas", "documents"]
+                    )
+                
                 if kw_results and kw_results.get("ids") and len(kw_results["ids"]) > 0:
                     logger.info(f"Hybrid Search: Found {len(kw_results['ids'])} EXACT matches for '{keyword}'")
-                    
+
+                    # --- ROUND-ROBIN DIVERSIFICATION ---
+                    # Group by filename so profile records (alumni, students) are not crowded out by many grade records.
+                    from collections import defaultdict
+                    groups = defaultdict(list)  # filename -> [(id, doc, meta, distance)]
+                    for i in range(len(kw_results["ids"])):
+                        fname = (kw_results["metadatas"][i] or {}).get("filename", "unknown") if kw_results.get("metadatas") else "unknown"
+                        groups[fname].append((
+                            kw_results["ids"][i],
+                            kw_results["documents"][i],
+                            kw_results["metadatas"][i] if kw_results.get("metadatas") else {},
+                            0.0
+                        ))
+                    # Priority order: student/alumni profiles FIRST, then grades, then others.
+                    priority = ["students.csv", "alumni.csv", "internships.csv", "placements.csv", "companies.csv"]
+                    ordered_fnames = [f for f in priority if f in groups] + [f for f in groups if f not in priority]
+                    diversified_ids, diversified_docs, diversified_metas, diversified_dists = [], [], [], []
+                    group_iters = {f: iter(groups[f]) for f in ordered_fnames}
+                    # Round-robin: take one from each group, cycling, up to request.top_k items
+                    added = 0
+                    max_per_round = max(request.top_k * 2, 30)  # get enough for a good diverse context
+                    while added < max_per_round:
+                        any_added = False
+                        for fname in ordered_fnames:
+                            try:
+                                rid, rdoc, rmeta, rdist = next(group_iters[fname])
+                                diversified_ids.append(rid)
+                                diversified_docs.append(rdoc)
+                                diversified_metas.append(rmeta)
+                                diversified_dists.append(rdist)
+                                added += 1
+                                any_added = True
+                                if added >= max_per_round:
+                                    break
+                            except StopIteration:
+                                continue
+                        if not any_added:
+                            break
+                    logger.info(f"Hybrid Search: After round-robin diversification: {len(diversified_ids)} records from {len(ordered_fnames)} file types")
+                    kw_results["ids"] = diversified_ids
+                    kw_results["documents"] = diversified_docs
+                    kw_results["metadatas"] = diversified_metas
+                    # --- END DIVERSIFICATION ---
+
                     # Merge into main results
                     if not results or not results.get("ids") or not results["ids"][0]:
                         results = {
@@ -1455,9 +1771,11 @@ def search_documents(request: SearchRequest):
                     else:
                         exist = set(results["ids"][0])
                         # INSERT direct ID matches at the BEGINNING (index 0) to ensure LLM priority
-                        for i in range(len(kw_results["ids"])):
+                        # Iterate in REVERSE so that the first item in kw_results ends up at index 0
+                        for i in reversed(range(len(kw_results["ids"]))):
                             rid = kw_results["ids"][i]
                             if rid not in exist:
+                                exist.add(rid) # Just in case of duplicates inside kw_results
                                 results["ids"][0].insert(0, rid)
                                 results["documents"][0].insert(0, kw_results["documents"][i])
                                 results["distances"][0].insert(0, 0.0)
@@ -1504,11 +1822,8 @@ def search_documents(request: SearchRequest):
             "document_ids": doc_ids
         }
 
-        # Insert audit log (best-effort)
-        try:
-            insert_audit_log(request.user_id, "search", "document", None, details, success=True)
-        except Exception as e:
-            logger.exception("Audit insert failed: %s", e)
+        # No insert_audit_log here because Node.js API Gateway (chat.js / search.js) 
+        # handles the authoritative auditing and prevents double-logging.
 
         return {
             "query": raw_query,
@@ -1522,18 +1837,47 @@ def search_documents(request: SearchRequest):
         raise
     except Exception as e:
         logger.exception("Search error: %s", e)
-        # attempt best-effort audit
-        try:
-            insert_audit_log(request.user_id if hasattr(request, 'user_id') else None, "search", "document", None, {
-                "query_hash": hash_query(request.query if hasattr(request, 'query') else ""),
-                "query_redacted": redact_text(request.query if hasattr(request, 'query') else ""),
-                "error": str(e),
-                "result_count": 0,
-                "document_ids": []
-            }, success=False, error_message=str(e))
-        except Exception:
-            pass
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- Smart Query Builder (Phase 6.1) ---
+def build_search_query(message: str, history: list) -> str:
+    """
+    For follow-up questions like 'How many days?' we combine
+    with previous conversation context for better retrieval.
+    Includes the VERY FIRST question (which usually sets the main entity/subject)
+    along with the latest question.
+    """
+    if not history or len(history) == 0:
+        return message  # First message — use as-is
+
+    # Extract first and last user message for context
+    first_user = ""
+    last_user = ""
+    
+    for h in history:
+        if isinstance(h, dict) and h.get("role") == "user":
+            first_user = h.get("content", "")
+            break
+            
+    for h in reversed(history):
+        if isinstance(h, dict) and h.get("role") == "user":
+            last_user = h.get("content", "")
+            break
+
+    # If message is short/vague (follow-up), prepend context from first question
+    if len(message.split()) < 10:
+        parts = []
+        if first_user: 
+            parts.append(first_user)
+        if last_user and last_user != first_user: 
+            parts.append(last_user)
+        parts.append(message)
+        
+        combined = " ".join(parts)
+        logger.info(f"SMART QUERY: Short follow-up detected. Combined query: '{combined[:100]}...'")
+        return combined
+
+    return message
 
 @app.post("/chat")
 async def chat_with_documents(req: Request):
@@ -1566,9 +1910,11 @@ async def chat_with_documents(req: Request):
             user_id = body.get("user_id")
             organization = body.get("organization") or "default"
             user_role = body.get("user_role") or body.get("role", "student")
+            privacy_level = body.get("privacy_level", "standard")
         else:
             query = None
             context = None
+            privacy_level = "standard"
 
         if not query or not isinstance(query, str) or not query.strip():
             # Differentiate missing vs malformed
@@ -1577,21 +1923,9 @@ async def chat_with_documents(req: Request):
         query = query.strip()
 
         # 0. SECURITY FIREWALL (Prompt Injection Guardrails)
+        # Logging is handled by the Node.js API gateway (which has user context) to avoid duplication
         if scan_prompt(query):
             logger.warning(f"[SECURITY] Blocked malicious jailbreak attempt in /chat from User {user_id}")
-            query_redacted = redact_text(query)
-            try:
-                insert_audit_log(
-                    user_id,
-                    "jailbreak_attempt",
-                    "chat_engine",
-                    None,
-                    {"query_hash": hash_query(query), "query_redacted": query_redacted},
-                    success=False,
-                    error_message="Security Violation: Malicious Prompt Injection Detected"
-                )
-            except Exception:
-                pass
             raise HTTPException(status_code=403, detail="Security Warning: Malicious Prompt Detected. Action logged.")
 
         # Phase 3 Guardrails: Query Safety Check
@@ -1614,10 +1948,12 @@ async def chat_with_documents(req: Request):
                 is_admin = user_role in admin_roles
                 k_val = 20 if is_admin else 10  # Increased from 12/5 for better context
                 
-                logger.info(f"CHAT: building context for role={user_role}, using top_k={k_val}")
+                # Phase 6.1: Smart Query Builder — use conversation history for better retrieval
+                search_query = build_search_query(query, conversation_history)
+                logger.info(f"CHAT: building context for role={user_role}, using top_k={k_val}, search_query='{search_query[:80]}...'")
                 
                 sr = SearchRequest(
-                    query=query, 
+                    query=search_query, 
                     top_k=k_val, 
                     org_id=org_id, 
                     organization=organization,
@@ -1647,65 +1983,62 @@ async def chat_with_documents(req: Request):
                 logger.exception("Chat: unexpected error while building context: %s", e)
                 context = ""
 
-        response_text = generate_chat_response(
+        # generate_chat_response now returns (text, context_pii_map)
+        # context_pii_map is the authoritative source: it maps [PERSON:idx_0] -> 'John Fritz'
+        # because it was built when redacting the context BEFORE sending to the LLM.
+        response_text, context_pii_map = generate_chat_response(
             query, 
             context or "", 
             user_role=user_role,
-            conversation_history=conversation_history
+            conversation_history=conversation_history,
+            privacy_level=privacy_level
         )
 
-        # ── PII Redaction: sanitize the LLM response before returning ──────────
-        # The LLM may output raw PII (phone, email, etc.) from its training memory.
-        # We use safe_redact_text which first FREEZES existing [TYPE:value] tokens
-        # so they are never double-wrapped by a second pass.
-        _TOKEN_RE = re.compile(r'\[[A-Z]+:[^\]]+\]|\[[A-Z]+_REDACTED\]')
-        _placeholders = {}
+        # ── PII handling ──────────────────────────────────────────────────
+        # The context was ALREADY redacted before being sent to the LLM.
+        # The LLM's response only contains [TYPE:idx_N] tokens, not raw PII.
+        # Re-running redact_text() on the response causes double-redaction corruption.
+        # Instead, we trust the context_pii_map as the authoritative source.
+        pii_map = dict(context_pii_map)
+        logger.info(f"PII_MAP from context: {list(pii_map.keys())[:15]}")
 
-        def _freeze(m):
-            key = f'\x00TOKEN{len(_placeholders)}\x00'
-            _placeholders[key] = m.group()
-            return key
+        # ── Clean up LLM artifacts: stray token fragments or remnants ───────
+        # Pattern: [TYPE:idx_N]x_M]K] → LLM garbles multiple token refs into one
+        response_text = re.sub(r'(\[[A-Z_]+:idx_\d+\])(?:[x_\d\]]+)', r'\1', response_text)
+        # Catch suffixes like ]:idx_N] or ]idx_N] that the LLM often appends  
+        response_text = re.sub(r'\]\s*:?idx_\d+\]', ']', response_text)  
+        # Catch lone idx_N] fragments (not preceded by a colon or letter) 
+        response_text = re.sub(r'(?<![:\w])idx_\d+\]', '', response_text)
+        # Catch partial fragments like [EMAILidx_N] (missing colon)
+        response_text = re.sub(r'\[([A-Z_]+)idx_(\d+)\]', r'[\1:idx_\2]', response_text)
+        # Catch double brackets [[TOKEN]]
+        response_text = re.sub(r'\[\[(.*?)\]\]', r'[\1]', response_text)
 
-        _frozen = _TOKEN_RE.sub(_freeze, response_text)
-        _redacted = redact_text(_frozen)
-        for k, v in _placeholders.items():
-            _redacted = _redacted.replace(k, v)
+        logger.info(f"PII MAP KEYS for this response: {list(pii_map.keys())}")
+        logger.info(f"USER ROLE sending pii_map: '{user_role}' (lower: '{user_role.lower() if user_role else ''}')")
 
-        # Strip stray brackets that wrap a PII token: [[EMAIL:x]] → [EMAIL:x]
-        # This happens when the LLM formats values in markdown link style: [value]
-        _redacted = re.sub(r'\[+(\[(?:EMAIL|PHONE|SSN|ADDRESS|COMPANY|REDACTED)[^\]]*\])\]+', r'\1', _redacted)
-        response_text = _redacted
+        # Check for PII markers in the response
+        pii_types = []
+        if re.search(r'\[EMAIL:idx_', response_text):     pii_types.append("email")
+        if re.search(r'\[PHONE:idx_', response_text):     pii_types.append("phone")
+        if re.search(r'\[SSN:idx_', response_text):       pii_types.append("ssn")
+        if re.search(r'\[COMPANY:idx_', response_text):   pii_types.append("company")
+        if re.search(r'\[PERSON:idx_', response_text):    pii_types.append("person")
+        if re.search(r'\[LOCATION:idx_', response_text):  pii_types.append("location")
+        if re.search(r'\[CREDIT_CARD:idx_|IBAN:idx_|BANK_ACCOUNT:idx_', response_text): pii_types.append("financial")
+        if re.search(r'\[IP_ADDRESS:idx_', response_text): pii_types.append("ip_address")
+        if re.search(r'\[PASSPORT:idx_|DRIVER_LICENSE:idx_|ITIN:idx_', response_text): pii_types.append("government_id")
+        if re.search(r'\[MEDICAL_LICENSE:idx_', response_text): pii_types.append("medical")
+        if re.search(r'\[CRYPTO:idx_', response_text):    pii_types.append("crypto")
+        if re.search(r'\[REDACTED:idx_', response_text):  pii_types.append("generic_pii")
+        
+        pii_detected = len(pii_types) > 0
+        # No Python insert_audit_log here because Node.js API Gateway (chat.js) handles it to prevent duplicates
 
-
-        # Audit Log for Chat (Capture PII Redaction)
-        try:
-            # Check for PII markers in the response
-            pii_types = []
-            if re.search(r'\[EMAIL:', response_text):   pii_types.append("email")
-            if re.search(r'\[PHONE:', response_text):   pii_types.append("phone")
-            if re.search(r'\[SSN:', response_text):     pii_types.append("ssn")
-            if re.search(r'\[ADDRESS:', response_text): pii_types.append("address")
-            if re.search(r'\[COMPANY:', response_text): pii_types.append("company")
-            
-            pii_detected = len(pii_types) > 0
-            
-            # Determine user_id to log (either from body or safe default)
-            log_user_id = user_id
-
-            details = {
-                "query_hash": hash_query(query),
-                "query_redacted": redact_text(query), # Also redact input
-                "pii_detected": pii_detected,
-                "pii_types": pii_types,
-                "context_used": bool(context),
-                "response_preview": response_text[:100] + "..." if len(response_text) > 100 else response_text
-            }
-            
-            insert_audit_log(log_user_id, "chat", "chat_session", None, details, success=True)
-            logger.info(f"AUDIT: Logged chat action. PII Detected: {pii_detected}")
-            
-        except Exception as audit_err:
-            logger.error(f"Failed to log chat audit: {audit_err}")
+        # RBAC: Only send the pii_map to admin / super_admin roles
+        # Regular users get null — the frontend can never reveal PII for them
+        auth_role = user_role.lower() if isinstance(user_role, str) else str(user_role)
+        include_map = auth_role in ('admin', 'super_admin')
 
         return {
             "query": query,
@@ -1713,7 +2046,8 @@ async def chat_with_documents(req: Request):
             "context_used": bool(context),
             "status": "success",
             "pii_detected": pii_detected,
-            "pii_types": pii_types
+            "pii_types": pii_types,
+            "pii_map": pii_map if include_map else None
         }
 
 
@@ -1723,6 +2057,101 @@ async def chat_with_documents(req: Request):
     except Exception as e:
         logger.exception("Chat endpoint unexpected error: %s", e)
         raise HTTPException(status_code=500, detail="Internal server error in /chat")
+
+# --- Phase 6.5: Streaming Chat Endpoint (SSE) ---
+@app.post("/chat/stream")
+async def chat_stream(req: Request):
+    """Streaming chat endpoint using Server-Sent Events for real-time token delivery."""
+    try:
+        body = await req.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Invalid JSON body for /chat/stream")
+
+    query = body.get("query") or body.get("message") or body.get("prompt")
+    if not query or not isinstance(query, str) or not query.strip():
+        raise HTTPException(status_code=400, detail="Missing required 'query'")
+
+    query = query.strip()
+    conversation_history = body.get("conversation_history", [])
+    org_id = body.get("org_id")
+    user_id = body.get("user_id")
+    organization = body.get("organization") or "default"
+    user_role = body.get("user_role") or body.get("role", "student")
+    privacy_level = body.get("privacy_level", "standard")
+
+    # Security check
+    if scan_prompt(query):
+        raise HTTPException(status_code=403, detail="Security Warning: Malicious Prompt Detected.")
+
+    if GuardrailManager:
+        is_safe, error_msg = GuardrailManager.check_query(query)
+        if not is_safe:
+            raise HTTPException(status_code=403, detail=error_msg)
+
+    # Build context
+    context = ""
+    try:
+        admin_roles = ['admin', 'super_admin']
+        is_admin = user_role in admin_roles
+        k_val = 20 if is_admin else 10
+        search_query = build_search_query(query, conversation_history)
+
+        sr = SearchRequest(
+            query=search_query, top_k=k_val, org_id=org_id,
+            organization=organization, user_role=user_role, user_id=user_id
+        )
+        search_results = search_documents(sr)
+        context_parts = []
+        if isinstance(search_results, dict) and "results" in search_results:
+            for idx, r in enumerate(search_results["results"]):
+                chunk_text = r.get("text", "") if isinstance(r, dict) else getattr(r, "text", "")
+                if chunk_text:
+                    context_parts.append(f"DOCUMENT RECORD {idx+1}:\n{chunk_text}\n---")
+        context = "\n\n".join(context_parts)
+    except Exception as e:
+        logger.exception("Stream: error building context: %s", e)
+
+    # Redact
+    redacted_query = redact_text(query)
+    redacted_context = redact_text(context)
+    system_msg = get_system_prompt(user_role, bool(context))
+
+    messages = [{"role": "system", "content": system_msg}]
+    if conversation_history and isinstance(conversation_history, list):
+        for msg in conversation_history:
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                messages.append({"role": msg["role"], "content": redact_text(msg["content"])})
+    messages.append({"role": "user", "content": f"Context:\n{redacted_context}\n\nQuestion: {redacted_query}"})
+
+    use_openai = os.getenv("USE_OPENAI_CHAT", "FALSE").upper() == "TRUE" and OPENAI_API_KEY
+
+    if not use_openai:
+        # Non-streaming fallback for Ollama
+        response_text = generate_chat_response(query, context or "", user_role=user_role,
+                                                conversation_history=conversation_history, privacy_level=privacy_level)
+        async def fallback_gen():
+            yield f'data: {json.dumps({"token": response_text})}\n\n'
+            yield 'data: [DONE]\n\n'
+        return StreamingResponse(fallback_gen(), media_type='text/event-stream')
+
+    # OpenAI streaming
+    async def generate():
+        try:
+            stream = openai.chat.completions.create(
+                model=PRIMARY_MODEL, messages=messages,
+                max_tokens=2000, temperature=0.1, stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    yield f'data: {json.dumps({"token": delta.content})}\n\n'
+            yield 'data: [DONE]\n\n'
+        except Exception as e:
+            logger.exception("Streaming error: %s", e)
+            yield f'data: {json.dumps({"token": f"Error: {str(e)}"})}\n\n'
+            yield 'data: [DONE]\n\n'
+
+    return StreamingResponse(generate(), media_type='text/event-stream')
 
 # -----------------------------
 # Startup
@@ -1915,27 +2344,64 @@ async def trigger_ingestion(request: IngestionRequest, background_tasks: Backgro
 # ============================================================================
 
 @app.post("/process-batch")
-async def process_documents_batch(org_id: int, background_tasks: BackgroundTasks, batch_size: int = 100, max_documents: Optional[int] = None):
-    """Trigger background batch processing for pending documents."""
-    logger.info(f"Background batch processing triggered: org_id={org_id}")
+async def process_documents_batch(org_id: int, background_tasks: BackgroundTasks, batch_size: int = 100, max_documents: Optional[int] = None, force: bool = False):
+    """Trigger background batch processing for pending documents.
+    
+    Args:
+        force: If True, reset 'processed' documents back to 'pending' first,
+               then re-process them with deep extraction. Used to fix documents
+               that were indexed with shallow metadata only.
+    """
+    logger.info(f"Background batch processing triggered: org_id={org_id}, force={force}")
+    
+    if force:
+        # Reset processed documents to pending so they get re-extracted
+        try:
+            conn = get_conn()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE documents SET status = 'pending'
+                WHERE org_id = %s AND status = 'processed'
+            """, (org_id,))
+            reset_count = cursor.rowcount
+            conn.commit()
+            cursor.close()
+            put_conn(conn)
+            logger.info(f"Force reprocess: Reset {reset_count} documents to 'pending' for org_id={org_id}")
+        except Exception as e:
+            logger.error(f"Failed to reset documents for force reprocess: {e}")
     
     background_tasks.add_task(run_batch_processing, org_id, batch_size, max_documents)
     
     return {
         "status": "accepted",
-        "message": f"Background processing started for org_id={org_id}"
+        "message": f"Background processing started for org_id={org_id} (force={force})"
     }
 
 async def run_batch_processing(org_id: int, batch_size: int = 100, max_documents: Optional[int] = None):
-    """Internal loop for background batch processing."""
+    """Deep batch processing: downloads files from MinIO, extracts full text,
+    chunks content, generates embeddings, and stores in ChromaDB.
+    
+    This ensures every document is fully indexed with its actual content
+    (not just metadata), making search and chat work with real document data.
+    Organization isolation is enforced by using org-specific ChromaDB collections.
+    """
     total_processed = 0
     total_failed = 0
+    total_chunks = 0
     failed_docs = []
     
     try:
         collection = get_org_collection(org_id=org_id)
         conn = get_conn()
         cursor = conn.cursor()
+        
+        # Initialize MinIO client for file downloads
+        try:
+            mc = get_minio_client()
+        except Exception as e:
+            logger.error(f"Failed to initialize MinIO client: {e}")
+            mc = None
         
         while True:
             cursor.execute("""
@@ -1953,67 +2419,206 @@ async def run_batch_processing(org_id: int, batch_size: int = 100, max_documents
             
             for doc_id, filename, metadata, file_key, is_encrypted, encrypted_dek, encryption_iv, encryption_tag in docs:
                 try:
-                    if isinstance(metadata, str):
-                        metadata_dict = json.loads(metadata)
-                    else:
-                        metadata_dict = metadata or {}
+                    text = ""
                     
-                    # Phase 2: Handle ALE Decryption if document is encrypted
-                    if is_encrypted and CryptoManager:
+                    # ========== PHASE 1: DEEP TEXT EXTRACTION ==========
+                    # Strategy: Try MinIO file download first (best quality),
+                    # then fall back to DB metadata if MinIO fails.
+                    
+                    minio_success = False
+                    if mc and file_key:
+                        temp_path = f"/tmp/batch_{org_id}_{doc_id}_{os.path.basename(file_key)}"
                         try:
-                            encrypted_b64 = metadata_dict.get("encrypted_content")
-                            if encrypted_b64:
-                                encrypted_bytes = base64.b64decode(encrypted_b64)
-                                decrypted_bytes = CryptoManager.decrypt_envelope(
-                                    encrypted_bytes, 
-                                    encrypted_dek, 
-                                    encryption_iv, 
-                                    encryption_tag
-                                )
-                                metadata_dict = json.loads(decrypted_bytes.decode('utf-8'))
-                                logger.info(f"Successfully decrypted doc {doc_id} for indexing")
-                        except Exception as e:
-                            logger.error(f"Failed to decrypt doc {doc_id}: {e}")
-                            # Fallback: continue with encrypted metadata (will show as garbage)
+                            mc.fget_object(MINIO_BUCKET, file_key, temp_path)
+                            logger.info(f"[Deep Extract] Downloaded {file_key} from MinIO for doc {doc_id}")
+                            
+                            # Decrypt the file if it was encrypted at rest
+                            if is_encrypted and CryptoManager:
+                                try:
+                                    with open(temp_path, "rb") as f:
+                                        encrypted_data = f.read()
+                                    decrypted_data = CryptoManager.decrypt_envelope(
+                                        encrypted_data, encrypted_dek, encryption_iv, encryption_tag
+                                    )
+                                    with open(temp_path, "wb") as f:
+                                        f.write(decrypted_data)
+                                    logger.info(f"[Deep Extract] Decrypted file for doc {doc_id}")
+                                except Exception as de:
+                                    logger.error(f"[Deep Extract] File decryption failed for doc {doc_id}: {de}")
+                                    # Try metadata fallback below
+                            
+                            # Extract full text from the downloaded file
+                            text = extract_text_from_file(temp_path)
+                            if text and len(text.strip()) > 3:
+                                minio_success = True
+                                logger.info(f"[Deep Extract] Extracted {len(text)} chars from file for doc {doc_id}")
+                            
+                            # Clean up temp file
+                            try:
+                                os.remove(temp_path)
+                            except:
+                                pass
+                                
+                        except Exception as minio_err:
+                            logger.warning(f"[Deep Extract] MinIO download failed for doc {doc_id} ({file_key}): {minio_err}")
+                            try:
+                                os.remove(temp_path)
+                            except:
+                                pass
+                    
+                    # ========== FALLBACK: DB METADATA EXTRACTION ==========
+                    if not minio_success:
+                        if isinstance(metadata, str):
+                            metadata_dict = json.loads(metadata)
+                        else:
+                            metadata_dict = metadata or {}
+                        
+                        # Phase 2: Handle ALE Decryption if document is encrypted
+                        if is_encrypted and CryptoManager:
+                            try:
+                                encrypted_b64 = metadata_dict.get("encrypted_content")
+                                if encrypted_b64:
+                                    encrypted_bytes = base64.b64decode(encrypted_b64)
+                                    decrypted_bytes = CryptoManager.decrypt_envelope(
+                                        encrypted_bytes, 
+                                        encrypted_dek, 
+                                        encryption_iv, 
+                                        encryption_tag
+                                    )
+                                    metadata_dict = json.loads(decrypted_bytes.decode('utf-8'))
+                                    logger.info(f"Successfully decrypted metadata for doc {doc_id}")
+                            except Exception as e:
+                                logger.error(f"Failed to decrypt doc {doc_id}: {e}")
 
-                    text_parts = [f"{k}: {v}" for k, v in metadata_dict.items() if v]
-                    text = " | ".join(text_parts) if text_parts else f"Document from {filename}"
+                        # Build text from metadata fields (excluding internal keys)
+                        text_parts = [f"{k}: {v}" for k, v in metadata_dict.items() 
+                                      if v and k not in ('record_type', 'source', 'row_index', 'encrypted_content')]
+                        text = " | ".join(text_parts) if text_parts else ""
                     
-                    if len(text.strip()) < 3:
-                        failed_docs.append({"id": doc_id, "error": "No text"})
+                    # ========== VALIDATE EXTRACTED TEXT ==========
+                    if not text or len(text.strip()) < 3:
+                        failed_docs.append({"id": doc_id, "error": "No text extracted"})
+                        cursor.execute("UPDATE documents SET status = 'failed' WHERE id = %s", (doc_id,))
                         total_failed += 1
                         continue
                     
-                    embedding = None
-                    for attempt in range(3):
-                        try:
-                            embedding = get_embedding(text)
-                            if embedding and len(embedding) > 0:
-                                break
-                        except Exception as e:
-                            if attempt < 2:
-                                import time
-                                time.sleep(2 ** attempt)
+                    # ========== PHASE 5: TOXICITY ANALYSIS CHECK ==========
+                    is_toxic = False
+                    toxicity_score = 0.0
+                    try:
+                        if openai and OPENAI_API_KEY:
+                            # Only check first 1000 chars to save API calls
+                            check_text = text[:1000]
+                            oa_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+                            mod_response = oa_client.moderations.create(input=check_text)
+                            if mod_response.results:
+                                result = mod_response.results[0]
+                                is_toxic = result.flagged
+                                if hasattr(result, 'category_scores'):
+                                    scores = result.category_scores.model_dump().values()
+                                    toxicity_score = float(max(scores)) if scores else 0.0
+                                
+                                if is_toxic:
+                                    logger.warning(f"Document {doc_id} flagged as TOXIC. Skipping ingestion.")
+                                    cursor.execute(
+                                        "UPDATE documents SET status = 'rejected_toxic', is_toxic = TRUE, toxicity_score = %s WHERE id = %s",
+                                        (toxicity_score, doc_id)
+                                    )
+                                    total_failed += 1
+                                    continue
+                    except Exception as e:
+                        logger.error(f"Moderation API failed for doc {doc_id}: {e}")
+                        # Proceeding without moderation if API fails
                     
-                    if not embedding:
-                        failed_docs.append({"id": doc_id, "error": "Embedding failed"})
+                    # ========== PHASE 3: CHUNK TEXT ==========
+                    # Split long documents into overlapping chunks for better search quality
+                    chunks = chunk_text(text, chunk_size=512, overlap=50)
+                    if not chunks:
+                        chunks = [text]  # Fallback: use entire text as one chunk
+                    
+                    logger.info(f"[Deep Extract] Doc {doc_id} ({filename}): {len(text)} chars -> {len(chunks)} chunks")
+                    
+                    # ========== PHASE 4: EMBED & STORE EACH CHUNK ==========
+                    # Determine access level for RBAC
+                    access_level = None
+                    if not minio_success and isinstance(metadata_dict, dict):
+                        access_level = metadata_dict.get("access_level")
+                    if not access_level:
+                        fname_lower = filename.lower() if filename else ""
+                        txt_lower = text[:500].lower()
+                        if "faculty" in fname_lower or "faculty" in txt_lower:
+                            access_level = "faculty"
+                        elif "student" in fname_lower or "intern" in txt_lower or "alumni" in txt_lower:
+                            access_level = "student"
+                        else:
+                            access_level = "general"
+                    
+                    # First, remove any old vectors for this document (important for force-reprocess)
+                    try:
+                        old_ids = [f"doc_{org_id}_{doc_id}"] + [f"doc_{org_id}_{doc_id}_chunk_{i}" for i in range(200)]
+                        collection.delete(ids=old_ids)
+                    except Exception:
+                        pass  # OK if they don't exist
+                    
+                    doc_chunk_count = 0
+                    for chunk_idx, chunk_text_content in enumerate(chunks):
+                        # Generate embedding with retry
+                        embedding = None
+                        for attempt in range(3):
+                            try:
+                                embedding = get_embedding(chunk_text_content)
+                                if embedding and len(embedding) > 0:
+                                    break
+                            except Exception:
+                                if attempt < 2:
+                                    time.sleep(2 ** attempt)
+                        
+                        if not embedding:
+                            logger.warning(f"Embedding failed for doc {doc_id} chunk {chunk_idx}, skipping chunk")
+                            continue
+                        
+                        # Use chunk-specific ID for multi-chunk documents
+                        if len(chunks) == 1:
+                            chunk_id = f"doc_{org_id}_{doc_id}"
+                        else:
+                            chunk_id = f"doc_{org_id}_{doc_id}_chunk_{chunk_idx}"
+                        
+                        collection_metadata = {
+                            "org_id": org_id, 
+                            "doc_id": doc_id, 
+                            "filename": filename,
+                            "access_level": access_level,
+                            "chunk_index": chunk_idx
+                        }
+                        
+                        chromadb_add(
+                            ids=[chunk_id],
+                            documents=[chunk_text_content],
+                            embeddings=[embedding],
+                            metadatas=[collection_metadata],
+                            collection=collection
+                        )
+                        doc_chunk_count += 1
+                    
+                    if doc_chunk_count == 0:
+                        failed_docs.append({"id": doc_id, "error": "All chunk embeddings failed"})
+                        cursor.execute("UPDATE documents SET status = 'failed' WHERE id = %s", (doc_id,))
                         total_failed += 1
                         continue
                     
-                    chromadb_add(
-                        ids=[f"doc_{org_id}_{doc_id}"],
-                        documents=[text],
-                        embeddings=[embedding],
-                        metadatas=[{"org_id": org_id, "doc_id": doc_id, "filename": filename}],
-                        collection=collection
+                    # Update document status and store content preview
+                    logger.info(f"[Deep Extract] SUCCESS: doc {doc_id} ({filename}) - Chunks: {doc_chunk_count}, Text sample: '{text[:100]}...'")
+                    
+                    cursor.execute(
+                        "UPDATE documents SET status = 'processed', processed_at = NOW(), content_preview = %s WHERE id = %s",
+                        (text[:500], doc_id)
                     )
-                    
-                    cursor.execute("UPDATE documents SET status = 'processed' WHERE id = %s", (doc_id,))
                     total_processed += 1
+                    total_chunks += doc_chunk_count
                     
-                    if total_processed % 100 == 0:
+                    if total_processed % 50 == 0:
                         conn.commit()
-                        logger.info(f"Processed {total_processed} documents...")
+                        logger.info(f"[Deep Extract] Progress: {total_processed} docs, {total_chunks} chunks indexed...")
                     
                 except Exception as e:
                     logger.error(f"Error processing doc {doc_id}: {e}")
@@ -2021,8 +2626,10 @@ async def run_batch_processing(org_id: int, batch_size: int = 100, max_documents
                     total_failed += 1
                     try:
                         conn.rollback()
-                    except:
-                        pass
+                        cursor.execute("UPDATE documents SET status = 'failed' WHERE id = %s", (doc_id,))
+                        conn.commit()
+                    except Exception as inner_e:
+                        logger.error(f"Could not safely mark doc {doc_id} as failed: {inner_e}")
             
             conn.commit()
             if max_documents and total_processed >= max_documents:
@@ -2031,7 +2638,7 @@ async def run_batch_processing(org_id: int, batch_size: int = 100, max_documents
         cursor.close()
         put_conn(conn)
         
-        logger.info(f"Background processing finished for org_id={org_id}. Processed: {total_processed}, Failed: {total_failed}")
+        logger.info(f"[Deep Extract] FINISHED for org_id={org_id}. Processed: {total_processed}, Chunks: {total_chunks}, Failed: {total_failed}")
         
     except Exception as e:
         logger.exception(f"Background batch processing error for org_id {org_id}: {e}")
@@ -2065,6 +2672,73 @@ async def get_processing_status(org_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 # -----------------------------
+# Auto-Indexing Background Scanner
+# -----------------------------
+def periodic_processing_job():
+    """Periodically scans for pending documents across ALL organizations
+    and automatically triggers deep extraction + ChromaDB indexing.
+    
+    This ensures that newly uploaded documents are always processed
+    without requiring any manual button click.
+    """
+    import asyncio
+    SCAN_INTERVAL = 60  # seconds between scans
+
+    logger.info("[AutoIndex] Periodic processing scanner started (interval=%ds)", SCAN_INTERVAL)
+
+    while True:
+        try:
+            time.sleep(SCAN_INTERVAL)
+
+            conn = get_conn()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT org_id FROM documents
+                WHERE status = 'pending'
+                ORDER BY org_id
+            """)
+            pending_orgs = [row[0] for row in cursor.fetchall()]
+            cursor.close()
+            put_conn(conn)
+
+            if not pending_orgs:
+                continue
+
+            logger.info("[AutoIndex] Found pending documents in %d org(s): %s", len(pending_orgs), pending_orgs)
+
+            for oid in pending_orgs:
+                try:
+                    logger.info("[AutoIndex] Triggering batch processing for org_id=%d", oid)
+                    # run_batch_processing is an async function, run it in a new event loop
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(run_batch_processing(oid, batch_size=100))
+                    loop.close()
+                    logger.info("[AutoIndex] Completed batch processing for org_id=%d", oid)
+                except Exception as e:
+                    logger.error("[AutoIndex] Failed processing org_id=%d: %s", oid, e)
+
+        except Exception as e:
+            logger.error("[AutoIndex] Scanner error: %s", e)
+            time.sleep(10)
+
+def start_periodic_scanner():
+    """Launch the periodic processing scanner as a daemon thread."""
+    scanner_thread = Thread(target=periodic_processing_job, daemon=True)
+    scanner_thread.start()
+    logger.info("[AutoIndex] Scanner thread launched.")
+
+# -----------------------------
 # Startup
 # -----------------------------
-# REDUNDANT ENDING REMOVED
+@app.on_event("startup")
+def on_startup():
+    """Initialize all background services on worker startup."""
+    try:
+        ensure_database_tables()
+    except Exception as e:
+        logger.exception("ensure_database_tables failed at startup: %s", e)
+    
+    start_background_worker()
+    start_retention_job()
+    start_periodic_scanner()
+    logger.info("All background services started successfully.")

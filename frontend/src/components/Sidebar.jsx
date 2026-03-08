@@ -49,7 +49,7 @@ export default function Sidebar({ isOpen, setIsOpen }) {
       menuItems.push({ icon: Shield, label: 'Audit Log', path: '/security' });
       menuItems.push({ icon: Users, label: 'Admin', path: '/admin' });
     }
-    if (user?.role === 'data_steward' || user?.role === 'super_admin') {
+    if (user?.role === 'data_steward' || user?.role === 'super_admin' || user?.role === 'admin') {
       menuItems.push({ icon: Database, label: 'Data Steward', path: '/data' });
     }
   }

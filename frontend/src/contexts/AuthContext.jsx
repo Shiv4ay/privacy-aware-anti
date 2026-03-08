@@ -31,7 +31,7 @@ export function AuthProvider({ children }) {
         const response = await client.get('/auth/me');
         const userData = response.data.user;
 
-        console.log('[AuthContext] User loaded:', userData.email, 'Org:', userData.organization);
+        console.log('[AuthContext] User loaded from /auth/me:', userData.email, 'Org:', userData.organization_name ?? userData.organization);
 
         setUser({
           userId: userData.userId,
@@ -39,7 +39,7 @@ export function AuthProvider({ children }) {
           email: userData.email,
           role: userData.role,
           // Map org_id to organization for consistency
-          organization: userData.organization || userData.org_id,
+          organization: userData.organization_name || userData.organization || userData.org_id,
           organization_type: userData.organization_type,
           avatarUrl: userData.avatarUrl || userData.avatar
         });
@@ -58,14 +58,23 @@ export function AuthProvider({ children }) {
     loadUser();
   }, []);
 
-  const login = async (email, password) => {
-    console.log('[Auth] Attempting login with fresh credentials:', email);
-    const res = await client.post('/auth/login', { email, password });
+  const login = async (email, password, org_id = null) => {
+    console.log('[Auth] Attempting login with fresh credentials:', email, org_id ? `for org ${org_id}` : '');
+    const res = await client.post('/auth/login', { email, password, org_id });
 
     // Handle MFA Required state
     if (res.data.mfaRequired) {
       console.log('[Auth] MFA Required for:', email);
       return { mfaRequired: true, mfaToken: res.data.mfaToken };
+    }
+
+    // Handle Multi-Org Selection Required
+    if (res.data.requiresOrgSelection) {
+      console.log('[Auth] Multiple organizations found for:', email);
+      return {
+        requiresOrgSelection: true,
+        organizations: res.data.organizations
+      };
     }
 
     // Phase 4 backend returns: { accessToken, refreshToken, user }
@@ -87,11 +96,15 @@ export function AuthProvider({ children }) {
     // Set user state with organization mapping
     const userObj = {
       ...userData,
-      organization: userData.org_id || userData.organization,
+      organization: userData.organization_name || userData.org_id || userData.organization,
       organization_type: userData.organization_type,
       avatarUrl: userData.avatarUrl || userData.avatar
     };
     setUser(userObj);
+    // Sync active_org so X-Organization header matches selected org (fixes "Managing PES University" when MCA Dept selected)
+    if (userData.org_id != null) {
+      localStorage.setItem('active_org', String(userData.org_id));
+    }
     console.log('[AuthContext] Login successful:', userObj.email, 'Avatar:', userObj.avatarUrl || 'None');
 
     return { ...res.data, user: userObj };
@@ -119,11 +132,15 @@ export function AuthProvider({ children }) {
     // Set user state with organization mapping
     const userObj = {
       ...userData,
-      organization: userData.org_id || userData.organization,
+      organization: userData.organization_name || userData.org_id || userData.organization,
       organization_type: userData.organization_type,
       avatarUrl: userData.avatarUrl || userData.avatar
     };
     setUser(userObj);
+    // Sync active_org so X-Organization header matches selected org (fixes "Managing PES University" when MCA Dept selected)
+    if (userData.org_id != null) {
+      localStorage.setItem('active_org', String(userData.org_id));
+    }
     console.log('[AuthContext] MFA Login successful:', userObj.email);
 
     return res.data;
@@ -139,6 +156,7 @@ export function AuthProvider({ children }) {
       localStorage.removeItem('refreshToken');
       localStorage.removeItem('token');
       localStorage.removeItem('organization');
+      localStorage.removeItem('active_org');
       delete client.defaults.headers.common['Authorization'];
       setUser(null);
     }

@@ -50,7 +50,10 @@ export default function Search() {
     }
 
     try {
-      const res = await client.post('/search', { query: queryText.trim() });
+      const res = await client.post('/search', {
+        query: queryText.trim(),
+        org_id: user?.org_id || user?.organization || null
+      });
 
       if (res.data?.query_redacted && res.data.query_redacted !== (res.data.query || queryText)) {
         setPrivacyInfo(prev => ({

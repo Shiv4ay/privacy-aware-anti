@@ -1,50 +1,500 @@
-privacy-aware-api  |   internalQuery: undefined,
-privacy-aware-api  |   where: "unnamed portal parameter $1 = '...'",
-privacy-aware-api  |   schema: undefined,
-privacy-aware-api  |   table: undefined,
-privacy-aware-api  |   column: undefined,
-privacy-aware-api  |   dataType: undefined,
-privacy-aware-api  |   constraint: undefined,
-privacy-aware-api  |   file: 'uuid.c',
-privacy-aware-api  |   line: '133',
-privacy-aware-api  |   routine: 'string_to_uuid'
-privacy-aware-api  | }
-privacy-aware-api  | [Auth] Authentication Critical Error: Error: Database auth lookup failed: invalid input syntax for type uuid: "1"
-privacy-aware-api  |     at authenticateJWT (/app/middleware/authMiddleware.js:116:23)
-privacy-aware-api  |     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
-privacy-aware-api  | [DEBUG] Request GET /api/health started
-privacy-aware-api  | [DEBUG] CORS passed
-privacy-aware-api  | [DEBUG] Body parser passed
-privacy-aware-api  | [DEBUG] Security Headers passed
-privacy-aware-api  | [DEBUG] Sanitizer passed
-privacy-aware-api  | [DEBUG] Entering Rate Limiter
-privacy-aware-api  | [DEBUG] RateLimit KeyGen: IP=127_0_0_1 User=undefined
-privacy-aware-api  | [DEBUG] Rate Limiter passed
-privacy-aware-api  | [DEBUG] DB Context attached
-privacy-aware-api  | [DEBUG] Request GET /api/health started
-privacy-aware-api  | [DEBUG] CORS passed
-privacy-aware-api  | [DEBUG] Body parser passed
-privacy-aware-api  | [DEBUG] Security Headers passed
-privacy-aware-api  | [DEBUG] Sanitizer passed
-privacy-aware-api  | [DEBUG] Entering Rate Limiter
-privacy-aware-api  | [DEBUG] RateLimit KeyGen: IP=127_0_0_1 User=undefined
-privacy-aware-api  | [DEBUG] Rate Limiter passed
-privacy-aware-api  | [DEBUG] DB Context attached
-privacy-aware-api  | [DEBUG] Request GET /api/health started
-privacy-aware-api  | [DEBUG] CORS passed
-privacy-aware-api  | [DEBUG] Body parser passed
-privacy-aware-api  | [DEBUG] Security Headers passed
-privacy-aware-api  | [DEBUG] Sanitizer passed
-privacy-aware-api  | [DEBUG] Entering Rate Limiter
-privacy-aware-api  | [DEBUG] RateLimit KeyGen: IP=127_0_0_1 User=undefined
-privacy-aware-api  | [DEBUG] Rate Limiter passed
-privacy-aware-api  | [DEBUG] DB Context attached
-privacy-aware-api  | [DEBUG] Request GET /api/health started
-privacy-aware-api  | [DEBUG] CORS passed
-privacy-aware-api  | [DEBUG] Body parser passed
-privacy-aware-api  | [DEBUG] Security Headers passed
-privacy-aware-api  | [DEBUG] Sanitizer passed
-privacy-aware-api  | [DEBUG] Entering Rate Limiter
-privacy-aware-api  | [DEBUG] RateLimit KeyGen: IP=127_0_0_1 User=undefined
-privacy-aware-api  | [DEBUG] Rate Limiter passed
-privacy-aware-api  | [DEBUG] DB Context attached
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request OPTIONS /api/admin/users started
+[DEBUG] Request OPTIONS /api/admin/stats started
+[DEBUG] Request OPTIONS /api/admin/uploads started
+[DEBUG] Request OPTIONS /api/admin/threats started
+[DEBUG] Request OPTIONS /api/profile started
+[DEBUG] Request OPTIONS /api/health started
+[DEBUG] Request GET /api/admin/users started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /users
+[DEBUG] Request GET /api/admin/stats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /stats
+[DEBUG] Request GET /api/admin/uploads started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/admin/threats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/profile started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /uploads
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /threats
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request OPTIONS /api/admin/users started
+[DEBUG] Request OPTIONS /api/admin/stats started
+[DEBUG] Request OPTIONS /api/admin/uploads started
+[DEBUG] Request OPTIONS /api/health started
+[DEBUG] Request OPTIONS /api/admin/threats started
+[DEBUG] Request OPTIONS /api/profile started
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /api/admin/users started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/admin/stats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/admin/uploads started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /users
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /stats
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /uploads
+[DEBUG] Request GET /api/admin/threats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/profile started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /threats
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request OPTIONS /api/notifications started
+[DEBUG] Request GET /api/notifications started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request OPTIONS /api/admin/users started
+[DEBUG] Request OPTIONS /api/admin/stats started
+[DEBUG] Request OPTIONS /api/admin/uploads started
+[DEBUG] Request OPTIONS /api/health started
+[DEBUG] Request OPTIONS /api/admin/threats started
+[DEBUG] Request OPTIONS /api/profile started
+[DEBUG] Request GET /api/admin/users started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /users
+[DEBUG] Request GET /api/admin/stats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/admin/uploads started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /stats
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /uploads
+[DEBUG] Request GET /api/admin/threats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/profile started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /threats
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request OPTIONS /api/admin/users started
+[DEBUG] Request OPTIONS /api/admin/stats started
+[DEBUG] Request OPTIONS /api/admin/uploads started
+[DEBUG] Request OPTIONS /api/health started
+[DEBUG] Request OPTIONS /api/profile started
+[DEBUG] Request OPTIONS /api/admin/threats started
+[DEBUG] Request GET /api/admin/users started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /users
+[DEBUG] Request GET /api/admin/stats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/admin/uploads started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /api/profile started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/admin/threats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /stats
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /uploads
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /threats
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request OPTIONS /api/notifications started
+[DEBUG] Request GET /api/notifications started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request OPTIONS /api/admin/users started
+[DEBUG] Request OPTIONS /api/admin/stats started
+[DEBUG] Request OPTIONS /api/admin/uploads started
+[DEBUG] Request OPTIONS /api/health started
+[DEBUG] Request OPTIONS /api/profile started
+[DEBUG] Request OPTIONS /api/admin/threats started
+[DEBUG] Request GET /api/admin/users started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /users
+[DEBUG] Request GET /api/admin/stats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /stats
+[DEBUG] Request GET /api/admin/uploads started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /uploads
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /api/profile started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/admin/threats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /threats
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request OPTIONS /api/admin/users started
+[DEBUG] Request OPTIONS /api/admin/stats started
+[DEBUG] Request OPTIONS /api/admin/uploads started
+[DEBUG] Request OPTIONS /api/health started
+[DEBUG] Request OPTIONS /api/admin/threats started
+[DEBUG] Request OPTIONS /api/profile started
+[DEBUG] Request OPTIONS /api/notifications started
+[DEBUG] Request GET /api/admin/users started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/admin/stats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /users
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /stats
+[DEBUG] Request GET /api/admin/uploads started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/health started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /api/admin/threats started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Request GET /api/profile started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /uploads
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /threats
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Request GET /api/notifications started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] authenticateJWT triggered for GET /
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[Realtime] Connection closed: tRWvS5Ch_M-FhshmAAAF
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed

@@ -1,0 +1,6 @@
+Users MFA Status: [
+  { id: 5, email: 'sibasundar2001@gmail.com', is_mfa_enabled: false },
+  { id: 1, email: 'admin@mit.edu', is_mfa_enabled: false },
+  { id: 4, email: 'sibasundar2102@gmail.com', is_mfa_enabled: false },
+  { id: 3, email: 'hostingweb2102@gmail.com', is_mfa_enabled: false }
+]

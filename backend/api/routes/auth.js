@@ -36,30 +36,17 @@ async function logAudit(db, userId, action, success, details = {}, req = null) {
         const ua = req ? req.get('User-Agent') : null;
 
         const result = await db.query(`
-            INSERT INTO audit_log 
-            (user_id, action, resource_type, ip_address, user_agent, success, error_message, metadata)
-            VALUES ($1, $2, 'auth', $3, $4, $5, $6, $7)
+            INSERT INTO audit_logs 
+            (user_id, action, resource_type, ip_address, user_agent, details, created_at)
+            VALUES ($1, $2, 'auth', $3, $4, $5, NOW())
             RETURNING id, created_at
         `, [
             userId,
             action,
             ip,
             ua,
-            success,
-            success ? null : (details.error || 'Unknown error'),
-            success ? details : null
+            JSON.stringify(auditLogsDetails)
         ]);
-
-        // Also write to audit_logs (the table SecurityDashboard reads from)
-        const auditLogsDetails = {
-            success: success ? 'true' : 'false',
-            ...(success ? details : { error: details.error || 'Unknown error' }),
-        };
-
-        await db.query(`
-            INSERT INTO audit_logs (user_id, action, resource_type, details, ip_address, user_agent, created_at)
-            VALUES ($1, $2, 'auth', $3, $4, $5, NOW())
-        `, [userId, action, JSON.stringify(auditLogsDetails), ip, ua]);
 
         // Real-time broadcast if setup
         if (req && req.app && req.app.get('realtime') && result.rows.length > 0) {
@@ -150,46 +137,56 @@ router.post('/register', async (req, res) => {
         // Simplifying: if org_id is provided, use it, else null (or default).
 
         // Check if user exists
-        const userCheck = await client.query('SELECT id FROM users WHERE email = $1 OR username = $2', [email, username]);
+        const userCheck = await client.query('SELECT id FROM users WHERE email = $1', [email]);
+        let user;
+
         if (userCheck.rows.length > 0) {
-            await logAudit(client, null, 'register_attempt', false, { error: 'User already exists', email }, req);
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'User already exists' });
+            user = userCheck.rows[0];
+            // Check if mapping already exists
+            const mappingCheck = await client.query('SELECT id FROM user_org_mapping WHERE user_id = $1 AND org_id = $2', [user.id, org_id]);
+            if (mappingCheck.rows.length > 0) {
+                await logAudit(client, null, 'register_attempt', false, { error: 'User already belongs to this organization', email, org_id }, req);
+                await client.query('ROLLBACK');
+                return res.status(409).json({ error: 'User already belongs to this organization' });
+            }
+            // User exists but not in this org - will add mapping below
+        } else {
+            // New user - create them
+            const saltRounds = 12;
+            const passwordHash = await bcrypt.hash(password, saltRounds);
+            const insertUserQuery = `
+                INSERT INTO users (username, email, password_hash, role, department, org_id, is_active)
+                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+                RETURNING id, username, email
+            `;
+            const newUser = await client.query(insertUserQuery, [username, email, passwordHash, role || 'user', department, org_id]);
+            user = newUser.rows[0];
+
+            await client.query(
+                'INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)',
+                [user.id, passwordHash]
+            );
         }
 
-        // Hash password
-        const saltRounds = 12; // High security
-        const passwordHash = await bcrypt.hash(password, saltRounds);
+        // Create Mapping
+        const assignedRole = ['student', 'faculty', 'researcher', 'admin'].includes(role) ? role : 'user';
+        await client.query(`
+            INSERT INTO user_org_mapping (user_id, org_id, role, department)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, org_id) DO NOTHING
+        `, [user.id, org_id, assignedRole, department]);
 
-        // Default role
-        const assignedRole = ['student', 'faculty', 'researcher'].includes(role) ? role : 'user';
-
-        // Insert user
-        const insertQuery = `
-            INSERT INTO users (username, email, password_hash, role, department, org_id, is_active)
-            VALUES ($1, $2, $3, $4, $5, $6, TRUE)
-            RETURNING id, username, email, role, org_id
-        `;
-        const newUser = await client.query(insertQuery, [username, email, passwordHash, assignedRole, department, org_id]);
-        const user = newUser.rows[0];
-
-        // Log to password history
-        await client.query(
-            'INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)',
-            [user.id, passwordHash]
-        );
-
-        // Generate tokens
-        const tokens = jwtManager.generateTokenPair({ ...user, user_id: user.id });
+        // Generate tokens (Use first org for now or let them re-login)
+        const tokens = jwtManager.generateTokenPair({ ...user, user_id: user.id, role: assignedRole, org_id });
 
         // Create Session
         await client.query(`
             INSERT INTO auth_sessions 
-            (user_id, refresh_token, expires_at, ip_address, user_agent)
-            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4)
-        `, [user.id, tokens.refreshToken, req.ip, req.get('User-Agent')]);
+            (user_id, refresh_token, expires_at, ip_address, user_agent, org_id)
+            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4, $5)
+        `, [user.id, tokens.refreshToken, req.ip, req.get('User-Agent'), org_id]);
 
-        await logAudit(client, user.id, 'register', true, { role: assignedRole }, req);
+        await logAudit(client, user.id, 'register', true, { role: assignedRole, org_id }, req);
 
         await client.query('COMMIT');
 
@@ -199,8 +196,8 @@ router.post('/register', async (req, res) => {
                 userId: user.id,
                 username: user.username,
                 email: user.email,
-                role: user.role,
-                org_id: user.org_id
+                role: assignedRole,
+                org_id: org_id
             },
             ...tokens
         });
@@ -221,29 +218,27 @@ router.post('/register', async (req, res) => {
 router.post('/login', loginLimiter, async (req, res) => {
     console.log('[DEBUG] Login attempt for:', req.body.email);
     try {
-        let { email, password } = req.body;
+        let { email, password, org_id } = req.body;
         email = (email || '').trim().toLowerCase();
 
         if (!email || !password) {
             return res.status(400).json({ error: 'Email and password required' });
         }
 
-        // Fetch user
-        const result = await req.db.query(
-            `SELECT u.id, u.user_id, u.username, u.email, u.password_hash, u.role, u.org_id, u.department, u.is_active, u.is_mfa_enabled, u.failed_login_attempts, u.oauth_avatar_url, u.custom_avatar_url, o.type as organization_type
-             FROM users u
-             LEFT JOIN organizations o ON u.org_id = o.id
-             WHERE u.email = $1`,
+        // Fetch fundamental user record
+        const userResult = await req.db.query(
+            `SELECT id, user_id, username, email, password_hash, is_active, is_mfa_enabled, failed_login_attempts 
+             FROM users 
+             WHERE email = $1`,
             [email]
         );
 
-        if (result.rows.length === 0) {
-            // Mitigate timing attacks slightly (not perfect but better than instant return)
+        if (userResult.rows.length === 0) {
             await bcrypt.compare('dummy', '$2b$12$BQ.................');
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        const user = result.rows[0];
+        const user = userResult.rows[0];
 
         if (!user.is_active) {
             return res.status(403).json({ error: 'Account is disabled' });
@@ -251,14 +246,48 @@ router.post('/login', loginLimiter, async (req, res) => {
 
         // Verify password
         const isValid = await bcrypt.compare(password, user.password_hash);
-        console.log('[DEBUG] Password valid:', isValid);
-
         if (!isValid) {
-            console.log('[DEBUG] Hash in DB:', user.password_hash);
-            // Increment failed attempts
             await req.db.query('UPDATE users SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1 WHERE id = $1', [user.id]);
-            await logAudit(req.db, user.user_id, 'login_failed', false, { error: 'Invalid password' }, req);
+            await logAudit(req.db, user.user_id || user.id, 'login_failed', false, { error: 'Invalid password' }, req);
             return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        // Get organizations for this user
+        const mappingResult = await req.db.query(`
+            SELECT m.org_id, m.role, m.department, o.name as organization_name, o.type as organization_type
+            FROM user_org_mapping m
+            JOIN organizations o ON m.org_id = o.id
+            WHERE m.user_id = $1
+        `, [user.id]);
+
+        const orgs = mappingResult.rows;
+
+        if (orgs.length === 0) {
+            return res.status(403).json({ error: 'User is not associated with any organization' });
+        }
+
+        console.log(`[DEBUG] User ${email} has orgs:`, orgs.map(o => o.org_id), `Requested org_id:`, org_id);
+
+        // If multiple orgs and no org_id selected yet
+        if (orgs.length > 1 && !org_id) {
+            return res.json({
+                message: 'Multiple organizations found',
+                requiresOrgSelection: true,
+                organizations: orgs.map(o => ({
+                    id: o.org_id,
+                    name: o.organization_name,
+                    type: o.organization_type
+                }))
+            });
+        }
+
+        // Determine specific organization data
+        const selectedOrg = org_id ? orgs.find(o => String(o.org_id) === String(org_id)) : orgs[0];
+        console.log(`[DEBUG] Selected org after mapping:`, selectedOrg);
+
+        if (!selectedOrg) {
+            console.log(`[DEBUG] Failed to find requested org_id ${org_id} in users orgs`);
+            return res.status(400).json({ error: 'Unauthorized access to the selected organization' });
         }
 
         // Reset failed attempts on success
@@ -266,8 +295,7 @@ router.post('/login', loginLimiter, async (req, res) => {
 
         // Check if MFA is required
         if (user.is_mfa_enabled) {
-            const mfaToken = jwtManager.generateMFAToken({ user_id: user.user_id });
-            await logAudit(req.db, user.user_id, 'mfa_required', true, {}, req);
+            const mfaToken = jwtManager.generateMFAToken({ user_id: user.user_id || user.id, org_id: selectedOrg.org_id });
             return res.status(200).json({
                 message: 'MFA required',
                 mfaRequired: true,
@@ -275,29 +303,40 @@ router.post('/login', loginLimiter, async (req, res) => {
             });
         }
 
+        // Merge user with selected org data
+        const fullUser = {
+            ...user,
+            user_id: user.user_id || user.id,
+            org_id: selectedOrg.org_id,
+            role: selectedOrg.role,
+            department: selectedOrg.department,
+            organization_type: selectedOrg.organization_type,
+            organization_name: selectedOrg.organization_name
+        };
+
         // Generate Tokens
-        const tokens = jwtManager.generateTokenPair({ ...user, user_id: user.user_id });
+        const tokens = jwtManager.generateTokenPair(fullUser);
 
         // Store Session
         await req.db.query(`
             INSERT INTO auth_sessions 
-            (user_id, refresh_token, expires_at, ip_address, user_agent)
-            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4)
-        `, [user.user_id, tokens.refreshToken, req.ip, req.get('User-Agent')]);
+            (user_id, refresh_token, expires_at, ip_address, user_agent, org_id)
+            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4, $5)
+        `, [fullUser.user_id, tokens.refreshToken, req.ip, req.get('User-Agent'), fullUser.org_id]);
 
-        await logAudit(req.db, user.user_id, 'login', true, {}, req);
+        await logAudit(req.db, fullUser.user_id, 'login', true, { org_id: fullUser.org_id }, req);
 
         res.json({
             message: 'Login successful',
             user: {
-                userId: user.id,
-                username: user.username,
-                email: user.email,
-                role: user.role,
-                org_id: user.org_id,
-                organization_type: user.organization_type,
-                department: user.department,
-                avatarUrl: user.custom_avatar_url || user.oauth_avatar_url
+                userId: fullUser.id,
+                username: fullUser.username,
+                email: fullUser.email,
+                role: fullUser.role,
+                org_id: fullUser.org_id,
+                organization_name: fullUser.organization_name,
+                organization_type: fullUser.organization_type,
+                department: fullUser.department
             },
             ...tokens
         });
@@ -307,6 +346,7 @@ router.post('/login', loginLimiter, async (req, res) => {
         res.status(500).json({ error: 'Login failed' });
     }
 });
+
 
 /**
  * POST /api/auth/refresh-token
@@ -330,7 +370,7 @@ router.post('/refresh-token', async (req, res) => {
 
         // Check DB session
         const sessionResult = await req.db.query(
-            'SELECT session_id, user_id, is_active FROM auth_sessions WHERE refresh_token = $1',
+            'SELECT session_id, user_id, org_id, is_active FROM auth_sessions WHERE refresh_token = $1',
             [refreshToken]
         );
 
@@ -348,7 +388,13 @@ router.post('/refresh-token', async (req, res) => {
         }
 
         // Get User
-        const userResult = await req.db.query('SELECT id, username, email, role, org_id, department FROM users WHERE id = $1', [session.user_id]);
+        // Note: We join with user_org_mapping to get the role/dept for this specific org in the session
+        const userResult = await req.db.query(`
+            SELECT u.id, u.username, u.email, m.role, m.org_id, m.department 
+            FROM users u
+            JOIN user_org_mapping m ON u.id = m.user_id
+            WHERE u.id = $1 AND m.org_id = $2
+        `, [session.user_id, session.org_id]);
         if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
         const user = userResult.rows[0];
 
@@ -425,6 +471,8 @@ router.get('/me', authenticateJWT, async (req, res) => {
                 role: req.user.role,
                 department: req.user.department,
                 org_id: req.user.organizationId || req.user.org_id,
+                organization_name: req.user.organization_name,
+                organization_type: req.user.organization_type,
                 is_mfa_enabled: req.user.is_mfa_enabled,
                 avatarUrl: req.user.avatarUrl
             }
@@ -701,22 +749,38 @@ router.post('/mfa/authenticate', async (req, res) => {
         }
 
         const userId = decoded.userId;
+        const orgId = decoded.orgId ?? null;
 
-        // Get secret
+        // Get secret, user info, and specific mapped organization data.
+        // When orgId is present (from MFA token), aggressively use it: join mapping and org by that id
+        // so we never fall back to user's default org (root).
         const result = await req.db.query(
-            `SELECT m.secret, u.id, u.user_id, u.username, u.email, u.role, u.org_id, u.department, o.type as organization_type
+            `SELECT m.secret, u.id, u.user_id, u.username, u.email, 
+                    COALESCE(m2.role, u.role) as role, 
+                    COALESCE($2::int, m2.org_id, u.org_id) as org_id, 
+                    COALESCE(m2.department, u.department) as department, 
+                    COALESCE(sel_org.type, o.type) as organization_type, 
+                    COALESCE(sel_org.name, o.name) as organization_name,
+                    m2.org_id as mapping_org_id
              FROM mfa_secrets m
              JOIN users u ON m.user_id = u.user_id
-             LEFT JOIN organizations o ON u.org_id = o.id
+             LEFT JOIN user_org_mapping m2 ON u.id = m2.user_id AND (m2.org_id = $2::int OR ($2::int IS NULL AND m2.org_id = u.org_id))
+             LEFT JOIN organizations o ON o.id = COALESCE(m2.org_id, u.org_id)
+             LEFT JOIN organizations sel_org ON sel_org.id = $2::int
              WHERE m.user_id = $1 AND m.enabled = TRUE`,
-            [userId]
+            [userId, orgId]
         );
 
         if (result.rows.length === 0) {
             return res.status(400).json({ error: 'MFA not enabled for this user' });
         }
 
-        const { secret, ...user } = result.rows[0];
+        const row = result.rows[0];
+        // When MFA token had a selected org, ensure user is actually in that org (m2 row exists for that org)
+        if (orgId != null && row.mapping_org_id == null) {
+            return res.status(403).json({ error: 'Unauthorized access to the selected organization' });
+        }
+        const { secret, mapping_org_id, ...user } = row;
 
         // Verify OTP
         const verified = speakeasy.totp.verify({
@@ -737,9 +801,9 @@ router.post('/mfa/authenticate', async (req, res) => {
         // Store Session
         await req.db.query(`
             INSERT INTO auth_sessions 
-            (user_id, refresh_token, expires_at, ip_address, user_agent)
-            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4)
-        `, [user.user_id, tokens.refreshToken, req.ip, req.get('User-Agent')]);
+            (user_id, refresh_token, expires_at, ip_address, user_agent, org_id)
+            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4, $5)
+        `, [user.user_id, tokens.refreshToken, req.ip, req.get('User-Agent'), user.org_id]);
 
         await logAudit(req.db, userId, 'login_mfa_success', true, {}, req);
 
@@ -751,6 +815,7 @@ router.post('/mfa/authenticate', async (req, res) => {
                 email: user.email,
                 role: user.role,
                 org_id: user.org_id,
+                organization_name: user.organization_name,
                 organization_type: user.organization_type,
                 department: user.department
             },
@@ -843,16 +908,21 @@ router.get('/google', (req, res) => {
 router.post('/google/callback', async (req, res) => {
     const client = await req.db.connect();
     try {
-        const { code, state } = req.body;
+        const { code, state, org_id, google_access_token } = req.body;
 
-        if (!code) {
-            return res.status(400).json({ error: 'Authorization code required' });
+        if (!code && !google_access_token) {
+            return res.status(400).json({ error: 'Authorization code or access token required' });
         }
 
         await client.query('BEGIN');
 
-        // Exchange code for tokens
-        const tokens = await googleOAuth.exchangeCodeForTokens(code);
+        let tokens;
+        if (google_access_token) {
+            tokens = { access_token: google_access_token };
+        } else {
+            // Exchange code for tokens
+            tokens = await googleOAuth.exchangeCodeForTokens(code);
+        }
 
         // Get user info from Google
         const userInfo = await googleOAuth.getUserInfo(tokens.access_token);
@@ -860,45 +930,98 @@ router.post('/google/callback', async (req, res) => {
         // Find or create user
         const user = await googleOAuth.findOrCreateUser(req.db, userInfo);
 
-        // Generate app tokens
-        const appTokens = jwtManager.generateTokenPair({
-            ...user,
-            user_id: user.user_id || user.id
-        });
-
-        // Create session
-        await client.query(`
-            INSERT INTO auth_sessions 
-            (user_id, refresh_token, expires_at, ip_address, user_agent)
-            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4)
-        `, [user.user_id || user.id, appTokens.refreshToken, req.ip, req.get('User-Agent')]);
-
-        await logAudit(client, user.user_id || user.id, 'oauth_login', true, { provider: 'google' }, req);
-
-        await client.query('COMMIT');
-
-        // Fetch full user details with organization
-        const fullUserResult = await req.db.query(
-            `SELECT u.id, u.user_id, u.username, u.email, u.role, u.org_id, u.department, u.oauth_avatar_url, u.custom_avatar_url, o.type as organization_type
-             FROM users u
-             LEFT JOIN organizations o ON u.org_id = o.id
-             WHERE u.id = $1`,
+        // Ensure user_org_mapping exists for this user
+        // (handles cases where user was created before mapping table existed)
+        const existingMapping = await client.query(
+            'SELECT id FROM user_org_mapping WHERE user_id = $1',
             [user.id]
         );
+        if (existingMapping.rows.length === 0 && user.org_id) {
+            await client.query(`
+                INSERT INTO user_org_mapping (user_id, org_id, role, department)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (user_id, org_id) DO NOTHING
+            `, [user.id, user.org_id, user.role, user.department]);
+        }
 
-        const fullUser = fullUserResult.rows[0];
+        // Query user_org_mapping for all organizations
+        const mappingResult = await client.query(`
+            SELECT m.org_id, m.role, m.department, o.name as organization_name, o.type as organization_type
+            FROM user_org_mapping m
+            JOIN organizations o ON m.org_id = o.id
+            WHERE m.user_id = $1
+        `, [user.id]);
+
+        const orgs = mappingResult.rows;
+
+        // If multiple orgs and no org_id selected yet -> ask user to choose
+        if (orgs.length > 1 && !org_id) {
+            await client.query('COMMIT');
+            return res.json({
+                message: 'Multiple organizations found',
+                requiresOrgSelection: true,
+                organizations: orgs.map(o => ({
+                    id: o.org_id,
+                    name: o.organization_name,
+                    type: o.organization_type
+                })),
+                // Pass back user info so frontend can finalize login after selection
+                tempUser: {
+                    userId: user.user_id || user.id,
+                    email: user.email,
+                    username: user.username,
+                    avatarUrl: user.custom_avatar_url || user.oauth_avatar_url
+                },
+                // Return the google tokens so the frontend can call back with org_id
+                googleAccessToken: tokens.access_token
+            });
+        }
+
+        // Determine selected organization
+        const selectedOrg = org_id ? orgs.find(o => o.org_id == org_id) : orgs[0];
+
+        if (!selectedOrg && orgs.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Unauthorized access to the selected organization' });
+        }
+
+        const finalRole = selectedOrg ? selectedOrg.role : (user.role || 'user');
+        const finalOrgId = selectedOrg ? selectedOrg.org_id : user.org_id;
+        const finalDepartment = selectedOrg ? selectedOrg.department : user.department;
+        const finalOrgType = selectedOrg ? selectedOrg.organization_type : null;
+        const finalOrgName = selectedOrg ? selectedOrg.organization_name : null;
+
+        // Generate app tokens with the correct org context
+        const appTokens = jwtManager.generateTokenPair({
+            ...user,
+            user_id: user.user_id || user.id,
+            role: finalRole,
+            org_id: finalOrgId
+        });
+
+        // Create session WITH org_id
+        await client.query(`
+            INSERT INTO auth_sessions 
+            (user_id, refresh_token, expires_at, ip_address, user_agent, org_id)
+            VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4, $5)
+        `, [user.user_id || user.id, appTokens.refreshToken, req.ip, req.get('User-Agent'), finalOrgId]);
+
+        await logAudit(client, user.user_id || user.id, 'oauth_login', true, { provider: 'google', org_id: finalOrgId }, req);
+
+        await client.query('COMMIT');
 
         res.json({
             message: 'Google login successful',
             user: {
-                userId: fullUser.user_id || fullUser.id,
-                username: fullUser.username,
-                email: fullUser.email,
-                role: fullUser.role,
-                org_id: fullUser.org_id,
-                organization_type: fullUser.organization_type,
-                department: fullUser.department,
-                avatarUrl: fullUser.custom_avatar_url || fullUser.oauth_avatar_url
+                userId: user.user_id || user.id,
+                username: user.username,
+                email: user.email,
+                role: finalRole,
+                org_id: finalOrgId,
+                organization_name: finalOrgName,
+                organization_type: finalOrgType,
+                department: finalDepartment,
+                avatarUrl: user.custom_avatar_url || user.oauth_avatar_url
             },
             ...appTokens
         });

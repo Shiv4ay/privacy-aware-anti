@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
-import { Lock, Mail, ArrowRight, Loader2, ShieldCheck, ShieldAlert, Eye, EyeOff } from 'lucide-react';
+import { Lock, Mail, ArrowRight, Loader2, ShieldCheck, ShieldAlert, Eye, EyeOff, Building2, Check } from 'lucide-react';
 import GoogleOAuthButton from '../components/GoogleOAuthButton';
 import toast from 'react-hot-toast';
 
@@ -13,6 +13,11 @@ export default function Login() {
   const [showMfa, setShowMfa] = useState(false);
   const [mfaToken, setMfaToken] = useState(null);
 
+  // Multi-org selection state
+  const [showOrgSelect, setShowOrgSelect] = useState(false);
+  const [availableOrgs, setAvailableOrgs] = useState([]);
+  const [selectedOrgId, setSelectedOrgId] = useState(null);
+
   const { login, verifyMFA, user } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -20,7 +25,7 @@ export default function Login() {
 
   // Redirect when user is authenticated
   useEffect(() => {
-    if (user && !showMfa) {
+    if (user && !showMfa && !showOrgSelect) {
       if (user.role === 'super_admin') {
         navigate('/super-admin');
       } else if (!user.organization) {
@@ -29,7 +34,7 @@ export default function Login() {
         navigate('/dashboard');
       }
     }
-  }, [user, navigate, showMfa]);
+  }, [user, navigate, showMfa, showOrgSelect]);
 
   const emailRef = useRef(null);
   const passRef = useRef(null);
@@ -45,11 +50,15 @@ export default function Login() {
     setLoading(true);
 
     try {
-      if (showMfa) {
+      if (showOrgSelect && selectedOrgId) {
+        // Step 3: Complete login with selected org
+        const data = await login(email.trim(), password, selectedOrgId);
+        toast.success('Login successful');
+        setShowOrgSelect(false); // Fix: dismiss selection screen to allow redirect
+      } else if (showMfa) {
         // Step 2: Verify MFA
         await verifyMFA(otp, mfaToken);
         toast.success('MFA Verified');
-        // Navigation handled by useEffect
       } else {
         // Step 1: Initial Login
         const data = await login(email.trim(), password);
@@ -58,6 +67,10 @@ export default function Login() {
           setShowMfa(true);
           setMfaToken(data.mfaToken);
           toast.success('Please enter MFA code');
+        } else if (data.requiresOrgSelection) {
+          setShowOrgSelect(true);
+          setAvailableOrgs(data.organizations);
+          toast.success('Please select your organization');
         } else {
           toast.success('Login successful');
         }
@@ -82,17 +95,19 @@ export default function Login() {
 
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-premium-gold/10 mb-4">
-            {showMfa ? <ShieldCheck className="w-6 h-6 text-premium-gold" /> : <Lock className="w-6 h-6 text-premium-gold" />}
+            {showOrgSelect ? <Building2 className="w-6 h-6 text-premium-gold" /> :
+              showMfa ? <ShieldCheck className="w-6 h-6 text-premium-gold" /> : <Lock className="w-6 h-6 text-premium-gold" />}
           </div>
           <h2 className="text-3xl font-bold text-white mb-2">
-            {showMfa ? 'Second Factor' : 'Welcome Back'}
+            {showOrgSelect ? 'Select Organization' : showMfa ? 'Second Factor' : 'Welcome Back'}
           </h2>
           <p className="text-gray-400">
-            {showMfa ? 'Enter the 6-digit code from your app' : 'Sign in to access your secure workspace'}
+            {showOrgSelect ? 'Choose which organization to access' :
+              showMfa ? 'Enter the 6-digit code from your app' : 'Sign in to access your secure workspace'}
           </p>
         </div>
 
-        {!showMfa && (
+        {!showMfa && !showOrgSelect && (
           <>
             {/* Google OAuth Button */}
             <GoogleOAuthButton mode="signin" className="mb-4" />
@@ -110,7 +125,35 @@ export default function Login() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6" autoComplete="off">
-          {!showMfa ? (
+          {showOrgSelect ? (
+            <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2">
+              {availableOrgs.map((org) => (
+                <button
+                  key={org.id}
+                  type="button"
+                  onClick={() => setSelectedOrgId(org.id)}
+                  className={`w-full flex items-center gap-4 p-4 rounded-xl border transition-all text-left group
+                    ${selectedOrgId === org.id
+                      ? 'bg-premium-gold/10 border-premium-gold'
+                      : 'bg-white/5 border-white/5 hover:bg-white/10'
+                    }`}
+                >
+                  <div className={`p-3 rounded-lg ${selectedOrgId === org.id ? 'bg-premium-gold/20' : 'bg-white/5'}`}>
+                    <Building2 className={`w-5 h-5 ${selectedOrgId === org.id ? 'text-premium-gold' : 'text-gray-400'}`} />
+                  </div>
+                  <div className="flex-1">
+                    <div className={`font-semibold ${selectedOrgId === org.id ? 'text-premium-gold' : 'text-white'}`}>
+                      {org.name}
+                    </div>
+                    {org.type && <div className="text-xs text-gray-500 mt-0.5">{org.type}</div>}
+                  </div>
+                  {selectedOrgId === org.id && (
+                    <Check className="w-5 h-5 text-premium-gold" />
+                  )}
+                </button>
+              ))}
+            </div>
+          ) : !showMfa ? (
             <>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-gray-300 ml-1">Email Address</label>
@@ -172,17 +215,19 @@ export default function Login() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || (showOrgSelect && !selectedOrgId)}
             className="w-full btn-primary py-3 rounded-xl flex items-center justify-center gap-2 group disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (showMfa ? 'Verify & Sign In' : 'Sign In')}
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (
+              showOrgSelect ? 'Continue' : showMfa ? 'Verify & Sign In' : 'Sign In'
+            )}
             {!loading && <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />}
           </button>
 
-          {showMfa && (
+          {(showMfa || showOrgSelect) && (
             <button
               type="button"
-              onClick={() => setShowMfa(false)}
+              onClick={() => { setShowMfa(false); setShowOrgSelect(false); setSelectedOrgId(null); }}
               className="w-full text-sm text-gray-400 hover:text-white transition-colors py-2"
             >
               Back to Login

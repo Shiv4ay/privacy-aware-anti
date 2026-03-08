@@ -1,0 +1,7 @@
+BEFORE:
+DOCUMENT RECORD 1:
+alumni_id: STU20240015 | student_id: STU20240015 | first_name: Andrea | last_name: Beck | email: andrea.beck@gmail.com | phone: 895-814-8465
+
+AFTER:
+DOCUMENT RECORD 1:
+full_name: Andrea Beck | alumni_id: STU20240015 | student_id: STU20240015 | email: andrea.beck@gmail.com | phone: 895-814-8465

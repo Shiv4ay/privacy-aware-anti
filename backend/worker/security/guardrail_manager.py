@@ -5,18 +5,24 @@ from typing import Tuple, List
 logger = logging.getLogger(__name__)
 
 class GuardrailManager:
-    # Patterns that indicate a potential jailbreak or prompt injection attempt
+    # Enterprise-grade patterns that indicate a potential jailbreak or prompt injection attempt
     JAILBREAK_PATTERNS = [
-        r"(?i)ignore (all )?previous instructions",
-        r"(?i)forget (all )?previous instructions",
-        r"(?i)you are now (a|an|the) ",
-        r"(?i)system (reset|override)",
-        r"(?i)disregard (all )?previous",
-        r"(?i)output (the )?full (system )?prompt",
-        r"(?i)repeat the text above",
-        r"(?i)new persona",
-        r"(?i)dan mode",
-        r"(?i)stay professional but"
+        r"(?i)ignore\s+(all\s+)?previous\s+(instructions|prompts|directions)",
+        r"(?i)forget\s+(all\s+)?(previous\s+)?instructions",
+        r"(?i)disregard\s+(all\s+)?previous",
+        r"(?i)you\s+are\s+now\s+(a|an|the)\s+(unfiltered|developer|system admin|DAN)",
+        r"(?i)act\s+as\s+(a|an|the)\s+(unfiltered|developer|system admin|DAN)",
+        r"(?i)system\s+(reset|override|bypass)",
+        r"(?i)output\s+(the\s+)?full\s+(system\s+)?prompt",
+        r"(?i)print\s+(your\s+)?(system\s+)?prompt",
+        r"(?i)what\s+are\s+your\s+(core\s+)?instructions",
+        r"(?i)(bypass|disable)\s+(security|filters|rules|guardrails)",
+        r"(?i)repeat\s+the\s+(text|words)\s+above",
+        r"(?i)new\s+persona",
+        r"(?i)dan\s+mode",
+        r"(?i)stay\s+professional\s+but",
+        r"(?i)base64", # common encoding trick
+        r"(?i)simulat(e|ion)"
     ]
 
     # Role-Aware System Prompt with Privacy Controls

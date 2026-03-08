@@ -1,0 +1,19 @@
+PROMPT:
+<|im_start|>system
+You are a helpful assistant. ONLY answer what is asked based on the Context.
+<|im_end|>
+<|im_start|>user
+STU20240507 give me his name and company details<|im_end|>
+<|im_start|>assistant
+- Name: John Fritz
+- Company: Microsoft<|im_end|>
+<|im_start|>user
+Context:
+full_name: John Fritz | email: john.fritz@university.edu | company: Microsoft
+
+User Query: what his email id ?<|im_end|>
+<|im_start|>assistant
+
+
+RESPONSE:
+None
