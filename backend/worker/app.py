@@ -45,7 +45,7 @@ import tiktoken
 from ingestion.web_scraper import WebScraper
 
 # Presidio NER setup
-from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
+from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern, RecognizerResult
 from presidio_anonymizer import AnonymizerEngine
 
 # Initialize Scraper
@@ -306,6 +306,7 @@ class SearchRequest(BaseModel):
     user_id: Optional[Any] = None
     model_preference: Optional[Dict[str, Any]] = None
     dp_enabled: Optional[bool] = DP_ENABLED
+    history: Optional[List[Dict[str, Any]]] = []
 
 class ChatRequest(BaseModel):
     query: str
@@ -317,6 +318,10 @@ class ChatRequest(BaseModel):
     department: Optional[str] = None
     user_category: Optional[str] = None
     model_preference: Optional[Dict[str, Any]] = None
+    conversation_history: Optional[List[Dict[str, Any]]] = []
+class RedactionRequest(BaseModel):
+    text: str
+    internal_only: bool = False
 
 def get_org_collection(org_id: Optional[int] = None, org_name: str = "default", user_role: str = "student"):
     """Get or create a ChromaDB collection for a specific organization or general use.
@@ -364,12 +369,28 @@ class DocumentChunk(BaseModel):
 # -----------------------------
 try:
     logger.info("Initializing Presidio Analyzer (loading NLP model en_core_web_md)...")
+    from presidio_analyzer import AnalyzerEngine, RecognizerResult, PatternRecognizer, Pattern
+    from presidio_anonymizer import AnonymizerEngine
+    
+    # --- Custom University Recognizers (Phase 7: Two-Tiered Redaction) ---
+    # PES USN Pattern: PES, digits, characters (PES1234567, PES1PG24CA169)
+    pes_pattern = Pattern(name="pes_pattern", regex=r"\bPES[A-Z0-9]{5,15}\b", score=0.9)
+    pes_recognizer = PatternRecognizer(supported_entity="STUDENT_ID", patterns=[pes_pattern])
+    
+    # Structural IDs: PLACEMENT, COMPANY, FACULTY, COURSE, DEPT
+    struct_pattern = Pattern(name="struct_pattern", regex=r"\b(STU|PLC|COMP|FAC|CRS|DEPT|MCA|ALU|USR|INT)[A_Z0-9_\-]{3,15}\b", score=0.9)
+    struct_recognizer = PatternRecognizer(supported_entity="SYSTEM_ID", patterns=[struct_pattern])
+    
     from presidio_analyzer.nlp_engine import NlpEngineProvider
     nlp_provider = NlpEngineProvider(nlp_configuration={
         "nlp_engine_name": "spacy",
         "models": [{"lang_code": "en", "model_name": "en_core_web_md"}]
     })
     analyzer = AnalyzerEngine(nlp_engine=nlp_provider.create_engine())
+    # Register custom recognizers
+    analyzer.registry.add_recognizer(pes_recognizer)
+    analyzer.registry.add_recognizer(struct_recognizer)
+    
     anonymizer = AnonymizerEngine()
     logger.info("Presidio Analyzer initialized successfully.")
 except Exception as e:
@@ -379,75 +400,194 @@ except Exception as e:
 
 def redact_text(text: str, return_map: bool = False, strictness: str = None, **kwargs):
     """
-    Redact PII from text using Presidio NER.
-    
-    If return_map=True, returns (redacted_text, pii_map) where pii_map maps
-    indexed tokens like '[PERSON:idx_0]' to their original values.
-    If return_map=False (default, backward compatible), returns just the redacted string.
-    
-    Args:
-        strictness: Accepted for backward compatibility but not used by Presidio.
-        **kwargs: Absorbs any other unexpected keyword arguments.
+    Surgically redact PII from text without ever touching HTML tags.
+    This prevents 'badge merging' across table cells and keeps UI structure 100% intact.
     """
     if not text or not analyzer:
         return (text, {}) if return_map else text
-    
-    # Run NER analyzer comprehensively for ALL available PII types globally
-    results = analyzer.analyze(text=text, language='en')
-    
-    if not results:
-        return (text, {}) if return_map else text
-    
-    # Sort results by start position (descending) so we can replace from end to start
-    # without shifting indices
-    sorted_results = sorted(results, key=lambda r: r.start, reverse=True)
-    
+
     # Entity type mapping for display labels
     TYPE_MAP = {
-        "PERSON": "PERSON",
-        "ORGANIZATION": "COMPANY",
-        "PHONE_NUMBER": "PHONE",
-        "EMAIL_ADDRESS": "EMAIL",
-        "US_SSN": "SSN",
-        "CREDIT_CARD": "CREDIT_CARD",
-        "CRYPTO": "CRYPTO",
-        "IBAN_CODE": "IBAN",
-        "IP_ADDRESS": "IP_ADDRESS",
-        "LOCATION": "LOCATION",
-        "MEDICAL_LICENSE": "MEDICAL_LICENSE",
-        "US_BANK_NUMBER": "BANK_ACCOUNT",
-        "US_DRIVER_LICENSE": "DRIVER_LICENSE",
-        "US_ITIN": "ITIN",
-        "US_PASSPORT": "PASSPORT",
-        "DATE_TIME": "DATE",
+        "PERSON": "PERSON", "ORGANIZATION": "COMPANY", "PHONE_NUMBER": "PHONE",
+        "EMAIL_ADDRESS": "EMAIL", "US_SSN": "SSN", "LOCATION": "LOCATION", "DATE_TIME": "DATE",
+        "STUDENT_ID": "USER_ID", "SYSTEM_ID": "ID"
     }
+
+    # Whitelists
+    # Tightened ID_PATTERN: Must have prefix AND at least two ending digits to avoid redacting labels like "Company"
+    ID_PATTERN = re.compile(r'\b(?:PES|STU|RES|INT|COMP|FAC|PLC|CRS|DEPT|MCA|ALU|USR|CSE|ISE|ECE|EEE|BME|BMS)[A-Z0-9_]*[0-9]{2,}\b|\b[A-Z]{2,4}[0-9]{3}[A-Z0-9]{0,3}\b', re.IGNORECASE)
+    YEAR_PATTERN = re.compile(r'\b(20\d{2}(?:-\d{2,4})?)\b')
+
+    # UNIVERSAL SEGMENTER: Split by tags, pipes, and newlines
+    # This ensures Presidio never sees words from different cells/fields together.
+    segments = re.split(r'(<[^>]+>|\||\n)', text)
     
-    pii_map = {}
-    counters = {}  # per-type counter for unique indexing
-    out = text
+    # --- Phase 4: Financial & Numerical PII (Harden for Stipend/Salary/LPA) ---
+    # Catch currency amounts (e.g. 25000, 14,00,000, 22 LPA, 15 CTC)
+    text = re.sub(r'\b(?:\d{4,10}|(?:\d{1,3}(?:,\d{2,3})+))\b', '[REDACTED_FINANCE]', text)
+    text = re.sub(r'\b\d{1,3}\s*(?:LPA|CTC|Per Annum|Monthly)\b', '[REDACTED_FINANCE]', text, flags=re.IGNORECASE)
     
-    # Regex for Student/Record IDs that should NOT be redacted for search matching
-    ID_PATTERN = re.compile(r'\b(PES|STU|RES|INT)[A-Z0-9]+\b', re.IGNORECASE)
+    # --- Phase 5: Date Redaction (Comprehensive Focus) ---
+    # Catch YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+    text = re.sub(r'\b\d{4}[-/\.]\d{2}[-/\.]\d{2}\b', '[REDACTED_DATE]', text)
+    text = re.sub(r'\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b', '[REDACTED_DATE]', text)
     
-    for result in sorted_results:
-        original_value = text[result.start:result.end]
-        
-        # If it looks like a student ID, skip redaction for this entity
-        if ID_PATTERN.search(original_value.upper()):
+    final_output_parts = []
+    # FIX: Always use the passed pii_map if provided so state is preserved across calls!
+    final_pii_map = kwargs.get("pii_map", {}) 
+    global_counters = kwargs.get("counters", {})
+
+    for segment in segments:
+        if not segment:
             continue
             
-        display_type = TYPE_MAP.get(result.entity_type, "REDACTED")
+        # If it's a separator, keep it exactly as is
+        if re.match(r'(<[^>]+>|\||\n)', segment):
+            final_output_parts.append(segment)
+            continue
+            
+        # Process text segments individually
+        # --- PHASE 1: CUSTOM RELIABLE REGEX (Priority) ---
+        custom_results = []
         
-        idx = counters.get(display_type, 0)
-        counters[display_type] = idx + 1
-        token = f"[{display_type}:idx_{idx}]"
+        # Financial Amounts (Salary, Stipend, CTC) - Must come BEFORE Presidio to prevent 'REDACTED' fallback
+        FINANCIAL_PATTERN = re.compile(r'\b(?:Salary|Stipend|CTC|Package|package)\s*[:\-]?\s*(?:Rs\.?|INR|USD|\$|₹)?\s*([\d,]{4,15})\b', re.IGNORECASE)
+        for m in FINANCIAL_PATTERN.finditer(segment):
+            custom_results.append(RecognizerResult(entity_type="MONEY", start=m.start(1), end=m.end(1), score=1.0))
+
+        # Organization/Field labels that Presidio mis-identifies
+        # IMPORTANT: Do NOT redact these labels themselves; they are required for UI tables.
+        LABEL_PATTERN = re.compile(
+            r'\b(Enrollment Date|Start Date|End Date|Placement Date|Date|Stipend|Salary|CTC|Package|Gender|Home State|Address|DOB|Pesu Id|Student Id)\b',
+            re.IGNORECASE
+        )
+        for m in LABEL_PATTERN.finditer(segment):
+            # We don't want to redact these LABELS, just protect them. 
+            # We'll use a special 'LABEL' type that we skip in the loop.
+            custom_results.append(RecognizerResult(entity_type="LABEL", start=m.start(), end=m.end(), score=1.0))
+
+        # --- PHASE 2: PRESIDIO ANALYZER ---
+        chunk_results = analyzer.analyze(text=segment, language='en') or []
         
-        pii_map[token] = original_value
-        out = out[:result.start] + token + out[result.end:]
-    
+        # Merge results, but CUSTOM wins on intersection
+        final_results = custom_results.copy()
+        for res in chunk_results:
+            # Check if this outcome intersects with any of our high-confidence custom hits
+            overlap = False
+            for c_res in custom_results:
+                if not (res.end <= c_res.start or res.start >= c_res.end):
+                    overlap = True
+                    break
+            if not overlap:
+                final_results.append(res)
+        chunk_results = final_results
+
+        # Add custom organization catch (only for non-overlapping)
+        ORG_PATTERN = re.compile(r'\b(?:Org|Institution|Employer|Firm|Placed in)\s*[:\-]?\s*([A-Z][a-zA-Z0-9&.\s]{2,40})\b', re.IGNORECASE)
+        for m in ORG_PATTERN.finditer(segment):
+            # Check overlap again
+            overlap = False
+            for c_res in chunk_results:
+                if not (m.end(1) <= c_res.start or m.start(1) >= c_res.end):
+                    overlap = True
+                    break
+            if not overlap:
+                chunk_results.append(RecognizerResult(entity_type="ORGANIZATION", start=m.start(1), end=m.end(1), score=0.95))
+        
+        # Add strict email catch
+        EMAIL_CHUNK_PATTERN = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+        for m in EMAIL_CHUNK_PATTERN.finditer(segment):
+            chunk_results.append(RecognizerResult(entity_type="EMAIL_ADDRESS", start=m.start(), end=m.end(), score=1.0))
+        
+        # PRIVACY PERFECTION: Additional custom patterns for comprehensive PII coverage
+        
+        # Indian Phone Numbers (+91, 0-prefixed, or bare 10-digit)
+        INDIAN_PHONE = re.compile(r'(?:\+91[\s\-]?)?(?:0?\d{10}|\d{5}[\s\-]\d{5})')
+        for m in INDIAN_PHONE.finditer(segment):
+            val = m.group(0).strip()
+            if len(re.sub(r'\D', '', val)) >= 10:  # Must have at least 10 digits
+                chunk_results.append(RecognizerResult(entity_type="PHONE_NUMBER", start=m.start(), end=m.end(), score=0.95))
+        
+        # Date of Birth patterns (YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY)
+        DOB_PATTERN = re.compile(r'\b(\d{4}-\d{2}-\d{2}|\d{2}[/\-]\d{2}[/\-]\d{4})\b')
+        for m in DOB_PATTERN.finditer(segment):
+            # Only redact if it looks like a specific date (not an academic year)
+            val = m.group(0)
+            if not re.match(r'20\d{2}-20\d{2}', val):  # Skip "2024-2025" academic years
+                chunk_results.append(RecognizerResult(entity_type="DATE_TIME", start=m.start(), end=m.end(), score=0.90))
+        
+        # Aadhar Number (12 digits, often formatted as XXXX XXXX XXXX)
+        AADHAR_PATTERN = re.compile(r'\b\d{4}\s?\d{4}\s?\d{4}\b')
+        for m in AADHAR_PATTERN.finditer(segment):
+            val = re.sub(r'\s', '', m.group(0))
+            if len(val) == 12 and val.isdigit():
+                chunk_results.append(RecognizerResult(entity_type="US_SSN", start=m.start(), end=m.end(), score=0.95))
+        
+        # PAN Card (XXXXX9999X format)
+        PAN_PATTERN = re.compile(r'\b[A-Z]{5}\d{4}[A-Z]\b')
+        for m in PAN_PATTERN.finditer(segment):
+            chunk_results.append(RecognizerResult(entity_type="US_SSN", start=m.start(), end=m.end(), score=0.95))
+            
+        # Financial moved to start of block for priority
+        pass
+        
+        if not chunk_results:
+            final_output_parts.append(segment)
+            continue
+            
+        # Redact the chunk from back to front
+        chunk_out = segment
+        sorted_chunks = sorted(chunk_results, key=lambda r: r.start, reverse=True)
+        for res in sorted_chunks:
+            val = segment[res.start:res.end].strip()
+            # Whitelist logic
+            # If internal_only is True (for Search Params/History), we skip redacting structural IDs.
+            # If False (for UI output), we redact everything including IDs.
+            is_generic_id = ID_PATTERN.search(val.upper()) or res.entity_type in ["STUDENT_ID", "SYSTEM_ID"]
+            
+            if kwargs.get("internal_only", False) and is_generic_id:
+                continue
+                
+            # Always skip standalone years/academic years (e.g. 2024, 2024-25), but NOT precise dates (YYYY-MM-DD)
+            # Skip our protected labels
+            if res.entity_type == "LABEL":
+                continue
+
+            if res.entity_type == "DATE_TIME":
+                # Check if it's exactly a year or exactly a year range (length <= 9)
+                if len(val) <= 9 and YEAR_PATTERN.fullmatch(val):
+                    continue
+                    
+            if val.isdigit() and len(val) <= 3:
+                continue
+                
+            dtype = TYPE_MAP.get(res.entity_type, "REDACTED")
+            
+            # CONSISTENT TOKEN MAPPING: 
+            # If we've seen this exact PII value in this session (e.g., query ID matches context ID),
+            # reuse the exact same token so the LLM can successfully match them.
+            existing_token = None
+            for tk, tv in final_pii_map.items():
+                if tv.lower() == val.lower() and tk.startswith(f"[{dtype}"):
+                    existing_token = tk
+                    break
+            
+            if existing_token:
+                token = existing_token
+            else:
+                idx = global_counters.get(dtype, 0)
+                global_counters[dtype] = idx + 1
+                token = f"[{dtype}:idx_{idx}]"
+                final_pii_map[token] = val
+                
+            chunk_out = chunk_out[:res.start] + token + chunk_out[res.end:]
+        
+        final_output_parts.append(chunk_out)
+
+    final_text = "".join(final_output_parts)
     if return_map:
-        return out, pii_map
-    return out
+        return (final_text, final_pii_map)
+    return final_text
 
 def hash_query(text: str) -> str:
     salt = QUERY_HASH_SALT or "change_me_query_salt"
@@ -681,7 +821,7 @@ _EMBEDDING_CACHE_MAX = 500  # Keep last 500 embeddings in memory
 def get_embedding(text: str, model_name: Optional[str] = None, timeout_per_call: int = 20) -> Optional[List[float]]:
     """
     Get embedding using nomic-embed-text to ensure consistency.
-    All embeddings must use the same dimensionality (384) to match indexed documents.
+    All embeddings must use the same dimensionality (768) to match indexed documents.
     Uses an in-memory LRU cache to avoid redundant computation.
     """
     global _embedding_cache
@@ -690,9 +830,9 @@ def get_embedding(text: str, model_name: Optional[str] = None, timeout_per_call:
         logger.debug("Embedding cache HIT for key=%s", cache_key[:8])
         return _embedding_cache[cache_key]
 
-    # ALWAYS use local nomic-embed-text to maintain 384-dim consistency
+    # ALWAYS use local nomic-embed-text to maintain 768-dim consistency
     local_model = "nomic-embed-text"
-    logger.info(f"Generating embedding using {local_model} (384-dim)")
+    logger.info(f"Generating embedding using {local_model} (768-dim)")
     result = _call_ollama_embeddings(local_model, text, timeout=timeout_per_call)
 
     if result:
@@ -705,53 +845,61 @@ def get_embedding(text: str, model_name: Optional[str] = None, timeout_per_call:
     return result
 
 def get_system_prompt(user_role: str = "student", context_present: bool = False) -> str:
-    """Factory for Role-Specific and Strict-RAG System Prompts (Phase 6.2 Anti-Hallucination Upgrade)."""
-    base_rules = """## YOUR RULES (never break these):
-1. Answer ONLY using information explicitly present in the <context> provided below.
-2. If the answer is NOT in the context, respond with exactly:
-   'I cannot find this information in the available documents.'
-3. NEVER use your training knowledge to fill gaps. NEVER guess or make up information.
-4. If a question is a follow-up, use the conversation history to understand it,
-   then still answer ONLY from the context.
-5. Cite which document record your answer comes from. The context contains labeled "RECORD N" blocks. Use these labels for your citations.
-6. Keep answers concise — 2-4 sentences maximum unless asked for more detail.
+    """Factory for Role-Specific and Strict-RAG System Prompts (Ultimate RAG v2)."""
+    base_rules = """## CORE PRINCIPLES (NEVER VIOLATE):
+1. Answer ONLY using information explicitly present in the <context> provided below. If the answer is NOT in the context, respond: "I could not find information about this in the available records. Please try rephrasing your query or provide a specific ID."
+2. NEVER use your training knowledge to fill gaps. NEVER guess, infer, or fabricate information.
+3. For follow-up questions, use conversation history to understand context, then still answer ONLY from the provided documents.
 
-## DATA INTEGRITY AND PRIVACY:
-7. ASSOCIATION ACCURACY: You MUST correctly associate fields with their corresponding RECORD. 
-   - For example, if Student Record 1 has Email: [EMAIL:idx_0] and Student Record 2 has Email: [EMAIL:idx_1], never swap them.
-   - Pay close attention to the Record headers (e.g., "STUDENT RECORD 1", "ALUMNI RECORD 2") and ensure all data in your response for a specific entity comes from the SAME record.
-8. FIELD PRECISION: Never put data from one field into another. 
-   - Never put an Email token in an Address field.
-   - Never put a Date of Birth token in a Name or Address field.
-   - If the context lists "Address: [LOCATION:idx_0]", use that EXACT token for address. Do NOT use an email token as a fallback.
-9. PI TOKEN HANDLING: The text has been anonymized. When the context contains privacy placeholders like [PERSON:idx_0], [COMPANY:idx_0], [EMAIL:idx_0], [PHONE:idx_0], etc., YOU MUST TREAT THESE AS THE ACTUAL VALUES. DO NOT say the information is missing. You MUST output these literal placeholders EXACTLY as they appear in the context.
-   IMPORTANT: If you see multiple adjacent [PERSON:idx_N] tokens (e.g., [PERSON:idx_0] [PERSON:idx_1]), they represent parts of a FULL NAME. Output ALL of them together: "[PERSON:idx_0] [PERSON:idx_1]" — never drop any part.
+## IDENTITY VERIFICATION (CRITICAL):
+4. BEFORE answering any query that contains an entity ID (which will appear as a privacy token like [ID:idx_0], [USER_ID:idx_0], [COMPANY:idx_0] due to anonymization), you MUST:
+   a. Check ALL context records and confirm that the EXACT requested ID token appears in the data.
+   b. If the context contains records for a DIFFERENT ID token (e.g., user asked for [ID:idx_0] but context has [ID:idx_1]), you MUST state clearly: "The records provided are for [found_token], not the requested [asked_token]. The exact record may not be indexed yet."
+   c. NEVER present data from one entity as if it belongs to another. This is the most critical rule.
+   d. NEVER say you couldn't find the raw string (e.g., PES1PG24CA169) because ALL raw strings have been replaced by these tokens. Verify using the tokens.
 
-## PROFESSIONAL RESPONSE GUIDELINES (PRESENTATION):
-10. PROFESSIONAL FORMATTING (MANDATORY): Always use professional **HTML Tables** to present data records. 
-    - AVOID using unnecessary symbols like asterisks (`*`) or dashes (`-`) for lists of attributes.
-    - Use clear table headers (e.g., | Field | Value |).
-    - Ensure tables are clean and easy to read.
-11. ANALYZE all provided context thoroughly — information may be spread across multiple document chunks.
-12. SYNTHESIZE information from multiple records when answering aggregate questions (averages, counts, lists).
-13. Numerical accuracy: Provide exact GPA, Semesters, and Batch years from the records.
-14. ANSWER ONLY WHAT WAS ASKED. If the user asks for 'name and email', output only Name and Email in the table. Do NOT add unrequested fields.
-15. STRICT CITATION FORMAT: When referencing source records, use labels like "According to Student Record 1" or "Based on Alumni Record 3". NEVER use bracket notation like [RECORD: 1] as citation."""
+   IMPORTANT: Output adjacent PERSON tokens together as a full name: "[PERSON:idx_0] [PERSON:idx_1]". 
+   - When asked for a "Name", look for [PERSON:idx_N] tokens in the context.
+
+## PROFESSIONAL RESPONSE FORMAT (THE EXECUTIVE STANDARD):
+8. **MANDATORY TABLE ARCHITECTURE**:
+   - Use high-quality **HTML Tables** (<table>, <tr>, <th>, <td>) for ALL data presentation.
+   - **CRITICAL**: Every activity (each Internship, each Placement) MUST have its own row in the table. 
+   - Column layout for Professional Activity: | Category | Position | Organization | Duration/Status | Stipend/Salary |
+   - Use simple, bold headers. DO NOT bunch data into a single cell with pipes (`|`).
+
+9. **ENTITY PRIVACY (ZERO TOLERANCE)**:
+   - **NEVER SHOW RAW IDs** (e.g., COMP_XXX, STU_XXX). If you see them, replace them with their Name or "[ID]".
+   - IF A NAME IS RESOLVED (e.g., "Wipro"), SHOW ONLY "Wipro". DO NOT add brackets or ID suffixes.
+   - If a salary or date appears unredacted in the context, REDACT IT YOURSELF to "[REDACTED]".
+
+10. **EXECUTIVE MASTER PROFILE (VERBATIM ACCURACY)**:
+    - Whenever "details" or "profile" is requested for an entity, you MUST provide a **Vertical Detailed Table** at the very top.
+    - Format: | FIELD | VALUE |
+    - **LIST EVERY FIELD** available in the record (e.g., First Name, Last Name, Email, Gender, DOB, Enrollment Date, Department, GPA, Phone, Address, Category, Home State, Admit Quota, Pesu Id, Batch).
+    - **STRICT VALUE ASSOCIATION**: The value in the "VALUE" column MUST correspond to that specific field in the context. Never repeat the Name in the DOB or Phone field. If a field's value is unknown, show "[N/A]".
+    - Result: Follow with Academic and Professional Activity tables.
+    - End with a "Professional Outlook" section (1 sentence).
+
+## UNIVERSAL DATA CHAINING:
+11. ASSOCIATION ACCURACY: You must check ALL retrieved records. If a student record mentions an Internship ID, find the corresponding Internship row. If that row mentions a Company ID, find the Company Name. CHAIN THEM ALL.
+12. CITATION: Reference source records naturally (e.g., "Verification: Master Profile #1, Placement Record #26").
+[RECORD: 1]."""
 
     # Normalize role for consistent matching
     normalized_role = user_role.lower().strip() if isinstance(user_role, str) else 'student'
 
     if normalized_role == 'super_admin':
-        role_desc = "You are the GLOBAL SYSTEM AUDITOR. You have overview access to all organizations."
+        role_desc = "You are the GLOBAL SYSTEM AUDITOR for a Privacy-Aware University Management System. You have overview access to all organizations and can analyze cross-departmental data. Provide executive-level insights."
         access_level = "FULL GLOBAL ACCESS"
     elif normalized_role == 'admin':
-        role_desc = "You are the UNIVERSITY ADMINISTRATOR. You are responsible for campus data oversight."
+        role_desc = "You are the UNIVERSITY ADMINISTRATOR for a Privacy-Aware University Management System. You oversee campus data including students, faculty, placements, and department operations. Provide administrative insights and data-driven summaries."
         access_level = "CAMPUS-WIDE ACCESS"
     elif normalized_role == 'general':
-        role_desc = "You are a PERSONAL GUIDANCE ASSISTANT. You help the user with their private documents."
+        role_desc = "You are a PERSONAL GUIDANCE ASSISTANT for a Privacy-Aware Document Management System. You help the user navigate their private documents with precision and clarity."
         access_level = "PERSONAL ISOLATED ACCESS"
     else:
-        role_desc = "You are a SECURE STUDENT ASSISTANT. Your goal is to help students find information in their records."
+        role_desc = "You are a SECURE UNIVERSITY ASSISTANT for a Privacy-Aware University Management System. You help users find accurate information about students, faculty, courses, placements, internships, alumni, and departments from the university records. Be professional, thorough, and precise."
         access_level = "STUDENT PORTAL ACCESS"
 
     return f"{role_desc}\n\n{base_rules}\n\n[ACCESS LEVEL: {access_level}]\n\n"
@@ -780,54 +928,11 @@ def call_openai_chat(messages: List[Dict[str, str]], model: str = PRIMARY_MODEL)
 
 def _merge_split_name_fields(context: str) -> str:
     """
-    Pre-process pipe-separated CSV context text to merge split first_name/last_name
-    fields into a single full_name field BEFORE Presidio runs.
-    
-    Problem: CSV rows stored as "first_name: John | last_name: Fritz | ..."
-    → Presidio detects "John" and "Fritz" as 2 separate PERSON entities.
-    → LLM only echoes one token → badge only shows "Fritz" not "John Fritz".
-    
-    Fix: Convert to "full_name: John Fritz | ..." so Presidio sees one full name.
+    Disable name merging as it causes AI confusion in vertical tables.
+    We return the context as-is to ensure individual fields (Last Name, first_name)
+    remain preserved for the AI to map correctly.
     """
-    if not context:
-        return context
-    
-    def _merge_names_in_record(record: str) -> str:
-        """Merge first_name + middle_name (optional) + last_name into full_name."""
-        fn_match = re.search(r'(?:first_name|firstname)\s*:\s*([^\|]+)', record, re.IGNORECASE)
-        ln_match = re.search(r'(?:last_name|lastname|surname)\s*:\s*([^\|]+)', record, re.IGNORECASE)
-
-        if fn_match and ln_match:
-            first = fn_match.group(1).strip()
-            last  = ln_match.group(1).strip()
-
-            # Middle name is optional — include only if the field exists and is not blank
-            mn_match = re.search(r'(?:middle_name|middlename)\s*:\s*([^\|]+)', record, re.IGNORECASE)
-            middle   = mn_match.group(1).strip() if mn_match else ''
-
-            # Build full name: "John Fritz" or "John Michael Fritz"
-            parts     = [p for p in [first, middle, last] if p]
-            full_name = ' '.join(parts)
-
-            if full_name:
-                # Remove each individual name component field, then prepend full_name
-                result = re.sub(r'(?:first_name|firstname)\s*:\s*[^\|]+\|?\s*', '', record, flags=re.IGNORECASE)
-                result = re.sub(r'(?:middle_name|middlename)\s*:\s*[^\|]+\|?\s*', '', result, flags=re.IGNORECASE)
-                result = re.sub(r'(?:last_name|lastname|surname)\s*:\s*[^\|]+\|?\s*', '', result, flags=re.IGNORECASE)
-                result = result.strip().strip('|').strip()
-                return f"full_name: {full_name} | {result}" if result else f"full_name: {full_name}"
-        return record
-    
-    # Process each DOCUMENT RECORD block separately
-    parts = re.split(r'(DOCUMENT RECORD \d+:\n)', context)
-    merged = []
-    for part in parts:
-        if part.startswith('DOCUMENT RECORD'):
-            merged.append(part)
-        else:
-            merged.append(_merge_names_in_record(part))
-    
-    return ''.join(merged)
+    return context
 
 def generate_chat_response(query: str, context: str, user_role: str = "student", conversation_history: list = None, privacy_level: str = "standard"):
     """
@@ -843,21 +948,33 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
     # 1. Pre-flight Privacy Redaction (The Bread of the Sandwich)
     #    IMPORTANT: capture the pii_map from context redaction — this is the authoritative
     #    source for placeholder→real-value mappings that the LLM will echo in its response.
-    redacted_query = redact_text(query, strictness=privacy_level)
+    pii_session_map = {}
+    pii_session_counters = {}
+    redacted_query = redact_text(query, pii_map=pii_session_map, counters=pii_session_counters, strictness=privacy_level)
     
     # ── Pre-process context: merge split name fields so Presidio sees full name ────
     # CSV rows are stored as "first_name: John | last_name: Fritz | ..."
     # Presidio detects "John" and "Fritz" as 2 separate PERSON entities → 2 tokens.
     # By combining them first, Presidio sees "John Fritz" as 1 entity → 1 token.
+    # Use standard normalization (redact_text will handle ID preservation)
     normalized_context = _merge_split_name_fields(context)
     
-    redacted_context, context_pii_map = redact_text(normalized_context, return_map=True, strictness=privacy_level)
-    logger.info(f"Context redaction produced {len(context_pii_map)} pii_map entries: {list(context_pii_map.keys())[:10]}")
+    redacted_context, context_pii_map = redact_text(
+        normalized_context, 
+        return_map=True, 
+        pii_map=pii_session_map, 
+        counters=pii_session_counters, 
+        strictness=privacy_level
+    )
+    logger.info(f"RAG SESSION: Consistent mapping for {len(context_pii_map)} entities. Query: {redacted_query[:50]}...")
 
     system_msg = get_system_prompt(user_role, bool(context))
 
     # Use OpenAI if configured
     use_openai = os.getenv("USE_OPENAI_CHAT", "FALSE").upper() == "TRUE" and OPENAI_API_KEY
+
+    # Sliding window for conversation history (last 10 messages) to manage tokens
+    active_history = conversation_history[-10:] if (conversation_history and len(conversation_history) > 0) else []
 
     if use_openai:
         logger.info(f"OpenAI Gateway: Sending REDACTED context (len={len(redacted_context)}) and query to cloud.")
@@ -870,14 +987,13 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
             {"role": "system", "content": system_msg}
         ]
         
-        # Add previous conversation for context (helps with follow-up questions)
-        if conversation_history and isinstance(conversation_history, list):
-            for msg in conversation_history:
-                if isinstance(msg, dict) and "role" in msg and "content" in msg:
-                    messages.append({
-                        "role": msg["role"],
-                        "content": redact_text(msg["content"], strictness=privacy_level)  # Redact PII from history too
-                    })
+        # Add filtered history
+        for msg in active_history:
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                messages.append({
+                    "role": msg["role"],
+                    "content": redact_text(msg["content"], strictness=privacy_level)  # Redact PII from history too
+                })
         
         # Add current query with document context
         messages.append({
@@ -895,14 +1011,13 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
         # Start prompt with system message and context
         prompt = f"<|im_start|>system\n{system_msg}\nContext:\n{redacted_context}\n<|im_end|>\n"
         
-        # Add conversation history
-        if conversation_history and isinstance(conversation_history, list):
-            for msg in conversation_history:
-                if isinstance(msg, dict) and "role" in msg and "content" in msg:
-                    # Map roles (frontend might send 'user'/'ai' or 'user'/'assistant')
-                    role = "assistant" if msg["role"] in ["assistant", "ai"] else "user"
-                    safe_content = redact_text(msg["content"], strictness=privacy_level)
-                    prompt += f"<|im_start|>{role}\n{safe_content}\n<|im_end|>\n"
+        # Add filtered history
+        for msg in active_history:
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                # Map roles (frontend might send 'user'/'ai' or 'user'/'assistant')
+                role = "assistant" if msg["role"] in ["assistant", "ai"] else "user"
+                safe_content = redact_text(msg["content"], strictness=privacy_level)
+                prompt += f"<|im_start|>{role}\n{safe_content}\n<|im_end|>\n"
         
         # Add the current query
         prompt += f"<|im_start|>user\n{redacted_query}\n<|im_end|>\n<|im_start|>assistant\n"
@@ -1170,16 +1285,38 @@ def extract_text_from_file(file_path: str) -> str:
                     row_parts = []
                     address_val = None
                     pincode_found = False
+                    home_state_val = None
                     
                     for k, v in row.items():
                         if v and str(v).strip():
-                            clean_key = k.replace('_', ' ').title()
+                            raw_key = str(k).strip()
+                            key_lower = raw_key.lower()
+                            
+                            # Normalize header names
+                            if key_lower == "sex":
+                                clean_key = "Gender"
+                            elif key_lower == "home_state":
+                                clean_key = "Home State"
+                            else:
+                                clean_key = raw_key.replace('_', ' ').title()
+                            
                             val = str(v).strip()
+                            
+                            # Normalize gender values
+                            if key_lower in ("sex", "gender"):
+                                v_lower = val.lower()
+                                if v_lower in ("m", "male"):
+                                    val = "Male"
+                                elif v_lower in ("f", "female"):
+                                    val = "Female"
+
                             row_parts.append(f"  {clean_key}: {val}")
                             
-                            # Keep track of address for pincode extraction
+                            # Keep track of address and home state for enrichment
                             if clean_key.lower() == 'address':
                                 address_val = val
+                            if key_lower == "home_state":
+                                home_state_val = val
                             if clean_key.lower() == 'pincode':
                                 pincode_found = True
                     
@@ -1189,6 +1326,19 @@ def extract_text_from_file(file_path: str) -> str:
                         pins = re.findall(r'\b\d{6}\b', address_val)
                         if pins:
                             row_parts.append(f"  Pincode: {pins[0]}")
+
+                    # Home State normalization:
+                    # If a dedicated home_state column exists, we already captured it.
+                    # Otherwise, attempt to infer state name/code from the address (word before pincode).
+                    if not home_state_val and address_val:
+                        m = re.search(r'([A-Za-z\s]+)\s+\d{6}\b', address_val)
+                        if m:
+                            # Take the last token before the pincode as a best-effort state indicator
+                            state_candidate = m.group(1).strip().split()[-1]
+                            if state_candidate:
+                                home_state_val = state_candidate
+                    if home_state_val:
+                        row_parts.append(f"  Home State: {home_state_val}")
 
                     if row_parts:
                         # Use more descriptive RECORD labels based on filename (e.g., STUDENT RECORD 1)
@@ -1393,10 +1543,10 @@ def process_document_job(job_data: Dict[str, Any]):
                     # Prepare metadata
                     metadatas = []
                     for i, chunk in enumerate(batch_chunks):
-                        # Extract potential Student ID for metadata filtering
-                        # Pattern matches PES, STU, RES, INT followed by alphanumeric
-                        id_match = re.search(r'\b(PES|STU|RES|INT)[A-Z0-9]+\b', chunk, re.IGNORECASE)
-                        student_id = id_match.group(0).upper() if id_match else ""
+                        # Extract potential Primary Entity ID for metadata bridging
+                        # Pattern matches a wide range of campus identifiers
+                        id_match = re.search(r'\b(PES|STU|RES|INT|COMP|FAC|PLC|CRS|DEPT|MCA|ALU)[A-Z0-9_]*\b', chunk, re.IGNORECASE)
+                        primary_entity_id = id_match.group(0).upper() if id_match else ""
                         
                         metadatas.append({
                             "org_id": str(org_id) if org_id else "",
@@ -1405,7 +1555,7 @@ def process_document_job(job_data: Dict[str, Any]):
                             "user_category": job_data.get("user_category", ""),
                             "document_id": str(job_data.get("document_id", "")),
                             "filename": job_data.get("filename", ""),
-                            "student_id": student_id,
+                            "source_id": primary_entity_id, # Generic Bridging field for Student/Company/Faculty
                             "access_level": "general"
                         })
 
@@ -1585,8 +1735,19 @@ def health_check():
     except Exception:
         checks["minio"] = False
 
-    status = "healthy" if all(checks.values()) else "degraded"
-    return {"status": status, "checks": checks, "timestamp": datetime.now().isoformat()}
+@app.post("/redact")
+def redact_api_endpoint(request: RedactionRequest):
+    """
+    Standardize PII redaction endpoint.
+    internal_only=True: Skips structural ID redaction (keeps raw USNs/Placements for joins).
+    internal_only=False: Redacts EVERYTHING to secure badges (for UI display).
+    """
+    try:
+        redacted_text = redact_text(request.text, internal_only=request.internal_only)
+        return {"redacted_text": redacted_text}
+    except Exception as e:
+        logger.error(f"Redaction API error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/embed")
 def embed_text(request: EmbedRequest):
@@ -1628,185 +1789,412 @@ def search_documents(request: SearchRequest):
         query_redacted = redact_text(raw_query)
         query_hash = hash_query(raw_query)
 
-        # Generate embedding
-        query_embedding = get_embedding(raw_query)
-        if not query_embedding:
-            # audit with error and return failure
-            details = {
-                "query_hash": query_hash,
-                "query_redacted": query_redacted,
-                "error": "Failed to generate query embedding",
-                "result_count": 0,
-                "document_ids": []
-            }
+        # Initialize Org Collection and Filters
+        org_id = request.org_id
+        org_collection = get_org_collection(org_id=org_id)
+        
+        # Access Level RBAC - Disabled until model is updated
+        where_filter = None
+        
+        fetch_k = request.top_k or 15
+        depth_k = 150 # Increased significantly to find demographic data in crowded datasets
+
+        # 0.0 TARGETED ID ROUTING (Prefer exact ID, but allow graceful fallback)
+        # If the user provides a concrete entity ID (e.g., PES1PG24CA169),
+        # we first try metadata-based lookup on `source_id`, then exact keyword search.
+        # If nothing is found, we LOG the miss but DO NOT hard-block the search:
+        # we fall back to the standard semantic + variant search pipeline so that
+        # records that lack source_id metadata can still be discovered.
+        id_candidates = []
+        ALL_PREFIXES_ID_ROUTING = ["STU", "RES", "INT", "PES", "COMP", "FAC", "PLC", "CRS", "DEPT", "ALU", "USR", "MCA"]
+        words_upper = re.findall(r'[A-Z0-9_]+', raw_query.upper())
+        for word in words_upper:
+            if any(word.startswith(p) for p in ALL_PREFIXES_ID_ROUTING) and any(c.isdigit() for c in word):
+                if word not in id_candidates:
+                    id_candidates.append(word)
+
+        if id_candidates:
+            asked_id = id_candidates[0]
+            exact_docs = []
+
+            # (A) Metadata-based lookup by source_id
             try:
-                insert_audit_log(request.user_id, "search", "document", None, details, success=False, error_message="Failed to generate query embedding")
-            except Exception:
-                pass
-            raise HTTPException(status_code=500, detail="Failed to generate query embedding")
+                meta_results = org_collection.get(
+                    where={"source_id": asked_id},
+                    limit=fetch_k,
+                    include=["documents", "metadatas"]
+                )
+            except Exception as e:
+                logger.error(f"ID Routing: metadata lookup failed for {asked_id}: {e}")
+                meta_results = None
 
+            id_word_pattern = re.compile(rf'\b{re.escape(asked_id)}\b', re.IGNORECASE)
 
-        # Query ChromaDB (fetch slightly more if noise enabled for distractor injection)
-        logger.info(f"SEARCH DEBUG: role={request.user_role} user_id={request.user_id} org_id={request.org_id} query='{request.query}'")
-        
-        org_collection = get_org_collection(org_id=request.org_id, org_name=request.organization, user_role=request.user_role)
-        logger.info(f"Target Collection: {org_collection.name} | Items: {org_collection.count()}")
-        
-        where_filter = {}
-        # Apply Metadata Filtering for RBAC (Document-Level Access Control)
-        role = request.user_role
-        
-        if role == 'student':
-            # Students can only see student and general chunks
-            where_filter["access_level"] = {"$in": ["student", "general"]}
-        elif role == 'faculty':
-            # Faculty can see faculty, student, and general chunks
-            where_filter["access_level"] = {"$in": ["faculty", "student", "general"]}
-        elif role in ['admin', 'super_admin']:
-            # Admins bypass document-level RBAC and see all chunks in the namespace
-            pass
-        elif role == 'general':
-            # General users only see general chunks, and only if uploaded by them (if applicable)
-            where_filter["access_level"] = "general"
-            if request.user_id:
-                where_filter["uploaded_by"] = int(request.user_id)
+            if meta_results and meta_results.get("documents"):
+                for doc in meta_results["documents"]:
+                    # Some Chroma versions may return nested lists; normalize to strings
+                    if isinstance(doc, list):
+                        for d_txt in doc:
+                            if isinstance(d_txt, str) and id_word_pattern.search(d_txt):
+                                exact_docs.append(d_txt)
+                    elif isinstance(doc, str) and id_word_pattern.search(doc):
+                        exact_docs.append(doc)
 
-        fetch_k = request.top_k + 2 if (request.dp_enabled and DifferentialPrivacy) else request.top_k
-        
-        # Call chromadb_query with filter
-        if where_filter:
-            logger.info(f"Applying metadata filter: {where_filter}")
-            results = org_collection.query(
-                query_embeddings=[query_embedding],
-                n_results=fetch_k,
-                include=["documents", "metadatas", "distances"],
-                where=where_filter
-            )
-        else:
-            results = chromadb_query([query_embedding], fetch_k, collection=org_collection)
+            # (B) Fallback: exact keyword search on document text
+            if not exact_docs:
+                try:
+                    kw_results = org_collection.get(
+                        where_document={"$contains": asked_id},
+                        limit=150,
+                        include=["documents", "metadatas"]
+                    )
+                except Exception as e:
+                    logger.error(f"ID Routing: keyword lookup failed for {asked_id}: {e}")
+                    kw_results = None
 
-        # HYBRID SEARCH: Keyword matching for Student IDs (STU, RES, INT)
+                if kw_results and kw_results.get("documents"):
+                    for doc in kw_results["documents"]:
+                        if isinstance(doc, list):
+                            for d_txt in doc:
+                                if isinstance(d_txt, str) and id_word_pattern.search(d_txt):
+                                    exact_docs.append(d_txt)
+                        elif isinstance(doc, str) and id_word_pattern.search(doc):
+                            exact_docs.append(doc)
+
+            # (C) If we found any exact-ID records, short-circuit the rest of the pipeline.
+            if exact_docs:
+                logger.info(f"ID Routing: Resolved exact records for ID '{asked_id}' (count={len(exact_docs)})")
+                documents = [
+                    DocumentChunk(
+                        id=f"id_meta_{asked_id}_{idx}",
+                        text=txt,
+                        # PRIORITY: Force demographic data to the very top if it's from students.csv
+                        score=1.0 if "first_name:" in txt.lower() or "gender:" in txt.lower() else 0.99
+                    )
+                    for idx, txt in enumerate(exact_docs[:fetch_k])
+                ]
+                filtered = documents
+                doc_ids_local = [d.id for d in filtered]
+
+                # Build audit-style details (kept for parity with main flow)
+                details = {
+                    "query_hash": query_hash,
+                    "query_redacted": query_redacted,
+                    "result_count": len(filtered),
+                    "document_ids": doc_ids_local
+                }
+
+                return {
+                    "query": raw_query,
+                    "query_redacted": query_redacted,
+                    "query_hash": query_hash,
+                    "results": filtered,
+                    "total_found": len(filtered)
+                }
+
+            # (D) No exact match for the asked ID.
+            # Relaxed firewall: log the miss, but continue into the standard
+            # semantic + hybrid search path so that text-only records are still
+            # discoverable (important for partially-ingested orgs like PES).
+            logger.warning(f"ID Routing: No exact records found for '{asked_id}'. Falling back to semantic search pipeline.")
+
+        # 0.1 Intent-Based Query Expansion (Phase 11)
+        search_variants = generate_search_variants(raw_query)
+        logger.info(f"SEARCH EXPANSION: Generated {len(search_variants)} variants: {search_variants}")
+
+        # Final results aggregator
+        final_chunks = []
+        seen_texts = set()
+        doc_ids = []
+
+        for variant in search_variants:
+            v_embedding = get_embedding(variant)
+            if not v_embedding: continue
+
+            # Query ChromaDB with current variant
+            if where_filter:
+                v_results = org_collection.query(
+                    query_embeddings=[v_embedding],
+                    n_results=depth_k,
+                    include=["documents", "metadatas", "distances"],
+                    where=where_filter
+                )
+            else:
+                v_results = chromadb_query([v_embedding], depth_k, collection=org_collection)
+
+            if v_results and v_results.get("documents") and v_results["documents"][0]:
+                for i in range(len(v_results["documents"][0])):
+                    txt = v_results["documents"][0][i]
+                    if txt not in seen_texts:
+                        dist = float(v_results["distances"][0][i]) if v_results.get("distances") else 0.5
+                        rid = v_results["ids"][0][i]
+                        # Score: Rational kernel sigma=500
+                        score = 500.0 / (500.0 + dist)
+                        final_chunks.append(DocumentChunk(id=rid, text=txt, score=score))
+                        doc_ids.append(rid)
+                        seen_texts.add(txt)
+
+        # 0.2 HYBRID SEARCH: Exact Entity-ID Matching (Identity Firewall)
+        # Covers ALL entity types: Students, Faculty, Alumni, Companies, Departments, etc.
+        exact_id_found = False
         try:
             potential_ids = []
-            # Find words like STUXXXX or RESXXXX or INTXXXX or PESXXXX or literal uppercase words with digits
-            words = re.findall(r'[A-Z0-9]+', request.query.upper())
+            # Extract potential entity IDs using expanded prefix list
+            ALL_PREFIXES = ["STU", "RES", "INT", "PES", "COMP", "FAC", "PLC", "CRS", "DEPT", "ALU", "USR", "MCA"]
+            words = re.findall(r'[A-Z0-9_]+', raw_query.upper())
             for word in words:
-                if any(p in word for p in ["STU", "RES", "INT", "PES"]) and any(c.isdigit() for c in word):
-                    potential_ids.append(word)
+                if any(p in word for p in ALL_PREFIXES) and any(c.isdigit() for c in word):
+                    if word not in potential_ids:
+                        potential_ids.append(word)
             
             if potential_ids:
-                keyword = potential_ids[0]
-                logger.info(f"Hybrid Search: Found potential ID '{keyword}' - Querying Chroma...")
-                
-                # Hybrid 1: Metadata check (highly reliable if indexed with student_id)
-                kw_results = org_collection.get(
-                    where={"student_id": keyword},
-                    limit=50,
-                    include=["metadatas", "documents"]
-                )
-                
-                # Hybrid 2: Fallback to content search if metadata check found nothing
-                if not kw_results or not kw_results.get("ids"):
-                    logger.info(f"Hybrid Search: Metadata miss for '{keyword}', trying document content search...")
-                    kw_results = org_collection.get(
-                        where_document={"$contains": keyword},
-                        limit=150,
-                        include=["metadatas", "documents"]
-                    )
-                
-                if kw_results and kw_results.get("ids") and len(kw_results["ids"]) > 0:
-                    logger.info(f"Hybrid Search: Found {len(kw_results['ids'])} EXACT matches for '{keyword}'")
-
-                    # --- ROUND-ROBIN DIVERSIFICATION ---
-                    # Group by filename so profile records (alumni, students) are not crowded out by many grade records.
-                    from collections import defaultdict
-                    groups = defaultdict(list)  # filename -> [(id, doc, meta, distance)]
-                    for i in range(len(kw_results["ids"])):
-                        fname = (kw_results["metadatas"][i] or {}).get("filename", "unknown") if kw_results.get("metadatas") else "unknown"
-                        groups[fname].append((
-                            kw_results["ids"][i],
-                            kw_results["documents"][i],
-                            kw_results["metadatas"][i] if kw_results.get("metadatas") else {},
-                            0.0
-                        ))
-                    # Priority order: student/alumni profiles FIRST, then grades, then others.
-                    priority = ["students.csv", "alumni.csv", "internships.csv", "placements.csv", "companies.csv"]
-                    ordered_fnames = [f for f in priority if f in groups] + [f for f in groups if f not in priority]
-                    diversified_ids, diversified_docs, diversified_metas, diversified_dists = [], [], [], []
-                    group_iters = {f: iter(groups[f]) for f in ordered_fnames}
-                    # Round-robin: take one from each group, cycling, up to request.top_k items
-                    added = 0
-                    max_per_round = max(request.top_k * 2, 30)  # get enough for a good diverse context
-                    while added < max_per_round:
-                        any_added = False
-                        for fname in ordered_fnames:
-                            try:
-                                rid, rdoc, rmeta, rdist = next(group_iters[fname])
-                                diversified_ids.append(rid)
-                                diversified_docs.append(rdoc)
-                                diversified_metas.append(rmeta)
-                                diversified_dists.append(rdist)
-                                added += 1
-                                any_added = True
-                                if added >= max_per_round:
-                                    break
-                            except StopIteration:
-                                continue
-                        if not any_added:
-                            break
-                    logger.info(f"Hybrid Search: After round-robin diversification: {len(diversified_ids)} records from {len(ordered_fnames)} file types")
-                    kw_results["ids"] = diversified_ids
-                    kw_results["documents"] = diversified_docs
-                    kw_results["metadatas"] = diversified_metas
-                    # --- END DIVERSIFICATION ---
-
-                    # Merge into main results
-                    if not results or not results.get("ids") or not results["ids"][0]:
-                        results = {
-                            "ids": [kw_results["ids"]],
-                            "documents": [kw_results["documents"]],
-                            "metadatas": [kw_results["metadatas"]],
-                            "distances": [[0.0] * len(kw_results["ids"])] # Virtual distance for exact match
-                        }
-                    else:
-                        exist = set(results["ids"][0])
-                        # INSERT direct ID matches at the BEGINNING (index 0) to ensure LLM priority
-                        # Iterate in REVERSE so that the first item in kw_results ends up at index 0
-                        for i in reversed(range(len(kw_results["ids"]))):
-                            rid = kw_results["ids"][i]
-                            if rid not in exist:
-                                exist.add(rid) # Just in case of duplicates inside kw_results
-                                results["ids"][0].insert(0, rid)
-                                results["documents"][0].insert(0, kw_results["documents"][i])
-                                results["distances"][0].insert(0, 0.0)
-                                if results.get("metadatas") and kw_results.get("metadatas"):
-                                    results["metadatas"][0].insert(0, kw_results["metadatas"][i])
-                else:
-                    logger.info(f"Hybrid Search: No exact matches found for ID '{keyword}' in documents.")
+                logger.info(f"Identity Firewall: Exact-matching IDs: {potential_ids}")
+                for keyword in potential_ids[:3]:
+                    # Step 1: Broad fetch using $contains (Increased limit for Global Chaining)
+                    kw_results = org_collection.get(where_document={"$contains": keyword}, limit=150, include=["metadatas", "documents"])
+                    if kw_results and kw_results.get("ids"):
+                        # Step 2: POST-FILTER — only keep records where the EXACT full ID appears as a whole word
+                        exact_pattern = re.compile(rf'\b{re.escape(keyword)}\b', re.IGNORECASE)
+                        for idx, rid in enumerate(kw_results["ids"]):
+                            txt = kw_results["documents"][idx]
+                            if exact_pattern.search(txt) and rid not in doc_ids and txt not in seen_texts:
+                                final_chunks.append(DocumentChunk(id=rid, text=txt, score=0.97))
+                                doc_ids.append(rid)
+                                seen_texts.add(txt)
+                                exact_id_found = True
+                        
+                        if exact_id_found:
+                            logger.info(f"Identity Firewall: Found exact matches for '{keyword}'. Filtering vector noise.")
         except Exception as e:
             logger.error(f"Hybrid Search Error: {e}")
 
-        final_count = len(results['ids'][0]) if results and results.get('ids') else 0
-        logger.info(f"CHROMA FINAL RESULTS: {final_count} chunks (Primary + Hybrid)")
+        # IDENTITY FIREWALL: If exact ID matches were found, remove vector search results
+        # that DON'T contain the queried ID — these are "neighbor noise" that causes mismatches.
+        if exact_id_found and potential_ids:
+            filtered_chunks = []
+            for chunk in final_chunks:
+                # Always keep all exact-match results (score >= 0.97) unconditionally
+                if chunk.score >= 0.97:
+                    filtered_chunks.append(chunk)
+                    continue
+                # For vector results, only keep if they contain at least one queried ID
+                keep = False
+                for pid in potential_ids:
+                    if re.search(rf'\b{re.escape(pid)}\b', chunk.text, re.IGNORECASE):
+                        keep = True
+                        break
+                if keep:
+                    filtered_chunks.append(chunk)
+                else:
+                    logger.info(f"Identity Firewall: Discarded noise vector result (id={chunk.id})")
+        # 0.3 RECORD ISOLATION: Prevent "Neighbor Pollution"
+        # If we have exact IDs, split chunks into individual records and keep ONLY the relevant blocks.
+        if potential_ids:
+            logger.info(f"Record Isolation: Filtering {len(final_chunks)} chunks for {potential_ids}")
+            isolated_chunks = []
+            for chunk in final_chunks:
+                if chunk.score >= 0.99 or chunk.id.startswith("resolve_"):
+                    isolated_chunks.append(chunk)
+                    continue
+                
+                # Split chunk by standard record delimiters
+                blocks = re.split(r'---|(?=RECORD \d+:)', chunk.text)
+                relevant_blocks = []
+                for block in blocks:
+                    if any(re.search(rf'\b{re.escape(pid)}\b', block, re.IGNORECASE) for pid in potential_ids):
+                        relevant_blocks.append(block.strip())
+                
+                if relevant_blocks:
+                    chunk.text = "\n---\n".join(relevant_blocks)
+                    isolated_chunks.append(chunk)
+                    logger.info(f"Record Isolation: Kept {len(relevant_blocks)} blocks from chunk {chunk.id}")
+            documents = isolated_chunks
+        else:
+            documents = final_chunks
 
-        documents = []
-        doc_ids = []
-        if results and results.get("documents") and results["documents"][0]:
-            for (doc_text, doc_id, distance) in zip(
-                results["documents"][0],
-                results["ids"][0],
-                results["distances"][0]
-            ):
-                # ChromaDB returns L2 (Euclidean) distance, not similarity
-                # Assuming L2 distance (or similar unbounded metric) from Chroma
-                # DEBUG: Log the raw distance to calibrate
-                # Distance ~ 300-500 observed. Use rational kernel with sigma=500 to map to 0-1.
-                # score = sigma / (sigma + distance)
-                # 326 -> 500/826 = ~60%
-                logger.info(f"DEBUG: Doc {doc_id} Distance: {distance}")
-                score = 500.0 / (500.0 + distance)  # Ranges from 0 to 1
-                documents.append(DocumentChunk(id=doc_id, text=doc_text, score=score))
-                doc_ids.append(doc_id)
+        # --- RECURSIVE ENTITY RESOLUTION (Phase 6.3: MULTI-HOP) ---
+        # Implement 3-pass resolution to handle deep links (Student -> Internship -> Company)
+        ID_PURGE_REGEX = re.compile(r'\b(?:COMP|STU|PES|INT|PLC|FAC|USR|RES|ALU|MCA|CRS|DEPT|BATCH)[A-Z0-9_\-]*[0-9]{2,}\b', re.IGNORECASE)
+        try:
+            hops_completed = 0
+            while hops_completed < 3:
+                entity_hop_ids = set()
+                for d in documents:
+                    # Find Company, Faculty, Course, and Dept IDs
+                    found = re.findall(r'\b(?:COMP|FAC|CRS|DEPT|STU|RES|INT|PLC|MCA|USR)[A-Z0-9_]*[0-9]{2,}\b', d.text, re.IGNORECASE)
+                    for f in found:
+                        fid = f.upper()
+                        # Only hop if we haven't already resolved this EXACT ID this session
+                        if fid not in doc_ids and f"resolve_{fid}" not in doc_ids:
+                            entity_hop_ids.add(fid)
+                
+                if not entity_hop_ids:
+                    break
+                    
+                logger.info(f"Recursive Retrieval (Pass {hops_completed+1}): Resolving {entity_hop_ids}")
+                new_hop_found = False
+                
+                # Increase limit to handle larger datasets, prioritizing non-result IDs if needed
+                # But for now, just increasing the cap to 100
+                for hop_id in sorted(list(entity_hop_ids))[:100]:
+                    lookup_id_stripped = re.sub(r'_(MCA|CSE|ISE|ECE|EEE|BME|BMS)', '', hop_id)
+                    # VANTABLACK RESOLVER: Use metadata filtering specifically for Company/Faculty master records
+                    where_filter = {"source_id": {"$in": [hop_id, lookup_id_stripped]}}
+                    # If it's a COMP ID, prioritize records with record_type 'company'
+                    if hop_id.startswith("COMP"):
+                        # We try to get the specific company record first
+                        hop_results = org_collection.get(
+                            where={"$and": [where_filter, {"record_type": "company"}]},
+                            limit=1,
+                            include=["documents"]
+                        )
+                    else:
+                        hop_results = org_collection.get(
+                            where=where_filter,
+                            limit=1,
+                            include=["documents"]
+                        )
+                    
+                    hop_doc = None
+                    hop_id_val = f"resolve_{hop_id}"
+                    
+                    if hop_results and hop_results.get("ids") and len(hop_results["ids"]) > 0:
+                        hop_doc = hop_results["documents"][0]
+                    else:
+                        # FALLBACK: Keyword search for both full and stripped ID
+                        # Try full ID first as it's more specific
+                        search_ids = [hop_id]
+                        if lookup_id_stripped != hop_id:
+                            search_ids.append(lookup_id_stripped)
+                        
+                        for sid in search_ids:
+                            logger.info(f"Recursive Retrieval: Attempting Keyword Fallback for {sid}")
+                            hop_emb = get_embedding(sid)
+                            kw_results = org_collection.query(
+                                query_embeddings=[hop_emb],
+                                n_results=1,
+                                where_document={"$contains": sid}
+                            )
+                            if kw_results and kw_results.get("ids") and kw_results.get("documents") and len(kw_results["documents"][0]) > 0:
+                                fallback_text = kw_results["documents"][0][0]
+                                if re.search(rf'\b{re.escape(sid)}\b', fallback_text, re.IGNORECASE):
+                                    hop_doc = fallback_text
+                                    hop_id_val = f"resolve_kw_{hop_id}"
+                                    break
+
+                        if hop_doc and hop_id_val not in doc_ids:
+                            new_hop_found = True
+                            resolved_name = "REDACTED_ENTITY"
+                            
+                            # RECORD ISOLATION: Split batch chunk into individual records
+                            # Identify the specific block containing the target ID
+                            temp_records = re.split(r'---|\bRECORD \d+:', hop_doc)
+                            target_block = hop_doc # Fallback to full doc
+                            for block in temp_records:
+                                if re.search(rf'\b{re.escape(hop_id)}\b', block, re.IGNORECASE):
+                                    target_block = block
+                                    break
+                                    
+                            # Improved Name Extraction from the specific block
+                            hop_parts = re.split(r'[,||\n]', target_block) 
+                            forbidden_values = ["ID", "id", "PES", "STU", "RES", "INT", "COMP", "FAC", "PLC", "CRS", "DEPT", "MCA", "ALU", "USR", "BATCH", "RECORD", "POSITION", "STATUS", "STIPEND", "SALARY", "LOCATION", "INDUSTRY"]
+                            
+                            # Target labels based on ID prefix for maximum accuracy
+                            target_labels = ["name", "title", "company name", "organization"]
+                            if hop_id.startswith("COMP"):
+                                target_labels = ["company name", "name", "company", "organization"]
+                            
+                            # Priority forbid list for values (words that are NEVER names)
+                            forbidden_values = ["ID", "id", "PES", "STU", "RES", "INT", "COMP", "FAC", "PLC", "CRS", "DEPT", "MCA", "ALU", "USR", "BATCH", "RECORD", "POSITION", "STATUS", "STIPEND", "SALARY", "LOCATION", "INDUSTRY", "SDE", "INTERN", "COMPLETED", "PLACED"]
+                            
+                            for part in hop_parts:
+                                clean_part = part.strip()
+                                if ":" in clean_part:
+                                    try:
+                                        label, val = clean_part.split(":", 1)
+                                        label = label.lower()
+                                        val = val.strip()
+                                        
+                                        # Match label "name" or "company"
+                                        # CRITICAL: If prefix is COMP, ensure length is > 1 and not a position
+                                        if any(tl in label for tl in target_labels) and "id" not in label:
+                                            # STRICT CHECK: Must not be a position/status or purely numeric
+                                            u_val = val.upper()
+                                            if val and val != "REDACTED_ENTITY" and not any(p in u_val for p in ["SDE", "DEVELOPER", "INTERN", "POSITION", "STATUS", "ROLE", "TITLE"]):
+                                                # AGGRESSIVE NUMERIC CHECK: Forbid values that look like amounts or IDs
+                                                if not re.search(r'^\d+$|[\d,]{4,}|Rs\.|INR|LPA|CTC|Pincode', val, re.IGNORECASE):
+                                                    if len(val.split()) <= 4 and len(val) > 1:
+                                                        resolved_name = val
+                                                        break
+                                    except: continue
+                            
+                            # Fallback: MUST be a real name, not a role or a generic title
+                            if resolved_name == "REDACTED_ENTITY":
+                                sub_parts = re.split(r'[,|:\n]', target_block)
+                                for p in sub_parts:
+                                    clean_p = p.strip()
+                                    u_p = clean_p.upper()
+                                    # Strict fallback: No SDE, No Intern, No Status words, NO NUMBERS
+                                    if len(clean_p) > 3 and not any(x in u_p for x in forbidden_values + ["SDE", "ENGINEER", "DEVELOPER", "ROLE", "QUOTA", "MANAGEMENT", "MERIT"]):
+                                        # Reject purely numeric/currency strings in fallback too
+                                        if not re.search(r'^\d+$|[\d,]{4,}|Rs\.|INR|LPA|CTC|Pincode', clean_p, re.IGNORECASE):
+                                            if not any(x in u_p for x in ["INTERN", "PLACED", "COMPLETED", "STATUS"]):
+                                                resolved_name = clean_p
+                                                break
+                                        
+                            if resolved_name.upper() == hop_id.upper() or len(resolved_name) < 2:
+                                resolved_name = "REDACTED_ENTITY"
+
+                        # In-Place Source Enrichment (CLEAN VERSION: NO RAW IDS)
+                        if resolved_name and resolved_name != "REDACTED_ENTITY":
+                            logger.info(f"Recursive Retrieval: Resolved {hop_id} -> {resolved_name}")
+                            replacement_count = 0
+                            for d_idx in range(len(documents)):
+                                # ENHANCEMENT: Keep original ID for AI verification while enriching with Name
+                                documents[d_idx].text = re.sub(rf'\b{re.escape(hop_id)}\b', f"{hop_id} ({resolved_name})", documents[d_idx].text)
+                                if before_text != documents[d_idx].text:
+                                    replacement_count += 1
+                        else:
+                            logger.info(f"Recursive Retrieval: No name found for {hop_id}")
+
+                        # Prepare record for context (Names are already enriched)
+                        clean_hop_doc = hop_doc
+                        documents.append(DocumentChunk(id=hop_id_val, text=f"[RELIABLE_NAME_RESOLUTION]: {resolved_name} is the name for the entity mentioned in other records. Details: {clean_hop_doc}", score=0.99))
+                        doc_ids.append(hop_id_val)
+                
+                if not new_hop_found:
+                    break
+                hops_completed += 1
+        except Exception as e:
+            logger.error(f"Recursive Retrieval Error: {e}")
+
+        # FINAL IDENTITY CLEANUP: After recursive resolution, some resolved entity documents
+        # may mention OTHER student IDs (e.g., a company record that lists multiple students).
+        # Remove these noise documents to ensure the AI only sees the queried student's data.
+        if exact_id_found and potential_ids:
+            clean_documents = []
+            for d in documents:
+                # Always keep system-resolved metadata blocks (they provide names for IDs)
+                if d.id and (d.id.startswith("resolve_") or "[RELIABLE_NAME_RESOLUTION]" in d.text):
+                    clean_documents.append(d)
+                    continue
+                # For all other documents, verify they contain at least one queried ID
+                keep = False
+                for pid in potential_ids:
+                    if re.search(rf'\b{re.escape(pid)}\b', d.text, re.IGNORECASE):
+                        keep = True
+                        break
+                # RELAXED FIREWALL: If a document is extremely high score, keep it even if ID isn't found (might be contextually relevant)
+                if keep or (hasattr(d, 'score') and d.score > 0.98):
+                    clean_documents.append(d)
+            documents = clean_documents
+            logger.info(f"Identity Firewall (Final): {len(documents)} clean documents remain.")
+
+        # --- FINAL CLEANUP ---
+        # Names are already resolved in-place. We rely on redact_text to hide any missed IDs.
+        for d in documents:
+            # Clean up artifacts like "( : AMD)" or similar if they formed
+            d.text = d.text.replace("( : )", "").replace("(: )", "")
 
         # Apply Differential Privacy if enabled
         if request.dp_enabled and DifferentialPrivacy:
@@ -1839,45 +2227,226 @@ def search_documents(request: SearchRequest):
         logger.exception("Search error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- Smart Query Builder (Phase 6.1) ---
+# --- Smart Query Builder (Phase 6.1: Advanced Entity-Aware Context) ---
 def build_search_query(message: str, history: list) -> str:
     """
-    For follow-up questions like 'How many days?' we combine
-    with previous conversation context for better retrieval.
-    Includes the VERY FIRST question (which usually sets the main entity/subject)
-    along with the latest question.
+    For follow-up questions like 'How many days?' or 'What are his scores?',
+    we scan history for entity identifiers (IDs, names) to 'bridge' the context
+    into the current retrieval query.
     """
     if not history or len(history) == 0:
-        return message  # First message — use as-is
+        return message
 
-    # Extract first and last user message for context
-    first_user = ""
-    last_user = ""
+    # 1. Extract potential identifiers from recent history
+    context_ids = set()
+    context_names = set()
     
-    for h in history:
-        if isinstance(h, dict) and h.get("role") == "user":
-            first_user = h.get("content", "")
-            break
-            
-    for h in reversed(history):
-        if isinstance(h, dict) and h.get("role") == "user":
-            last_user = h.get("content", "")
-            break
-
-    # If message is short/vague (follow-up), prepend context from first question
-    if len(message.split()) < 10:
-        parts = []
-        if first_user: 
-            parts.append(first_user)
-        if last_user and last_user != first_user: 
-            parts.append(last_user)
-        parts.append(message)
+    # Analyze recent turns (last 6 messages) for active entities
+    recent_history = history[-6:]
+    for h in recent_history:
+        content = h.get("content", "") if isinstance(h, dict) else ""
+        if not content: continue
         
+        # Extract IDs: PES..., STU..., RES..., INT..., COMP..., PLC..., FAC...
+        for m in re.finditer(r'\b(PES|STU|RES|INT|PLC|COMP|FAC|CRS|DEPT|MCA|ALU|USR)[A-Z0-9_\-]*\b', content, re.IGNORECASE):
+            found_id = m.group(0).upper()
+            context_ids.add(found_id)
+            logger.info(f"BRIDGE: Found ID '{found_id}' in history turn.")
+            
+        # Extract potential Names (Title Case sequences)
+        # This helps bridge names mentioned in previous turn to IDs in current turn
+        # matches 2+ words starting with capital letters
+        for name in re.finditer(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b', content):
+            found_name = name.group(0)
+            context_names.add(found_name)
+            logger.info(f"BRIDGE: Found Name '{found_name}' in history turn.")
+            
+        # Extract course acronyms (e.g., OS, DBMS, ML, AI)
+        for acronym in re.finditer(r'\b(OS|DBMS|ML|AI|CN|DSA|OOP)\b', content):
+            found_acronym = acronym.group(0)
+            context_names.add(found_acronym)
+            logger.info(f"BRIDGE: Found Acronym '{found_acronym}' in history turn.")
+
+    # 2. Decision: Is this a follow-up?
+    pronouns = ["he", "she", "him", "her", "they", "them", "his", "hers", "their", "it", "who", "where", "what", "which"]
+    targets = ["score", "mark", "grade", "detail", "result", "address", "phone", "email", "internship", "placement", "placed", "teach", "study", "lives"]
+    message_lower = message.lower()
+    
+    is_follow_up = (
+        len(message.split()) < 12 or 
+        any(f" {p} " in f" {message_lower} " for p in pronouns) or 
+        any(t in message_lower for t in targets) or
+        re.search(r'\b(he|she|it|his|her|they|their)\b', message_lower)
+    )
+    
+    logger.info(f"BRIDGE: is_follow_up={is_follow_up}, context_ids={list(context_ids)}, context_names={list(context_names)}")
+    
+    if is_follow_up and (context_ids or context_names):
+        # ACTIVE MEMORY INJECTION: Ensure contextual IDs are prioritized
+        parts = []
+        # Inject most relevant context IDs first
+        for cid in context_ids:
+            if cid.lower() not in message_lower:
+                parts.append(cid)
+        
+        # Inject Names
+        for nm in context_names:
+            if nm.lower() not in message_lower:
+                parts.append(nm)
+                
+        parts.append(message)
         combined = " ".join(parts)
-        logger.info(f"SMART QUERY: Short follow-up detected. Combined query: '{combined[:100]}...'")
+        logger.info(f"SMART QUERY (Universal Chain): Injected {len(parts)-1} context entities. Combined: '{combined}'")
         return combined
 
     return message
+
+# --- Relationship Resolution (Phase 10: RRR) ---
+def recursive_resolve_links(initial_results: list, org_id: int, user_role: str, user_id: str, organization: str) -> list:
+    """
+    Scans retrieved text for 'Bridge IDs' (PLC_, COMP_, FAC_) and automatically
+    fetches related records to provide the LLM with a 360-degree view.
+    """
+    if not initial_results: return initial_results
+    
+    found_bridge_ids = set()
+    existing_ids = set()
+    
+    # 1. Collect all IDs in the current context
+    for r in initial_results:
+        text = r.get("text", "")
+        # Look for potential entity bridges (now includes PES + ALU for student/master records)
+        for m in re.finditer(r'\b(PLC|COMP|FAC|STU|CRS|DEPT|MCA|USR|PES|ALU)[A-Z0-9_\-]*\b', text, re.IGNORECASE):
+            found_bridge_ids.add(m.group(0).upper())
+        
+        # Track what we already have to avoid infinite recursion or redundancy
+        if r.get("metadata") and r["metadata"].get("doc_id"):
+            existing_ids.add(str(r["metadata"]["doc_id"]))
+
+    if not found_bridge_ids:
+        return initial_results
+    
+    logger.info(f"RRR: Detected {len(found_bridge_ids)} potential bridge IDs in initial results: {list(found_bridge_ids)[:5]}")
+    
+    # 2. Perform a second-pass search for THESE specific IDs
+    # We use a keyword-first search, prioritizing MASTER/STUDENT/ALUMNI records,
+    # then fall back to semantic embeddings if needed.
+    enriched_results = list(initial_results)
+    
+    for bridge_id in found_bridge_ids:
+        # Avoid re-fetching bridge IDs that are essentially the same as the query or already present
+        # But we want to be aggressive in fetching 'Master' details (e.g. Company name/address)
+        try:
+            org_col = get_org_collection(org_id=org_id, org_name=organization, user_role=user_role)
+
+            linked_batch = None
+            master_idx = 0
+
+            # (A) Keyword-based query_texts search (preferred for exact IDs)
+            try:
+                linked_batch = org_col.query(
+                    query_texts=[bridge_id],
+                    n_results=5,
+                    include=["documents", "metadatas", "distances"],
+                )
+            except TypeError:
+                # Older Chroma versions may not support query_texts; fall back to embeddings.
+                query_emb = get_embedding(bridge_id)
+                if not query_emb:
+                    continue
+                linked_batch = org_col.query(
+                    query_embeddings=[query_emb],
+                    n_results=5,
+                    include=["documents", "metadatas", "distances"],
+                )
+
+            if linked_batch and linked_batch.get("documents") and linked_batch["documents"][0]:
+                docs = linked_batch["documents"][0]
+                metas = linked_batch.get("metadatas", [[{}]])[0]
+
+                # Prefer MASTER/STUDENT/ALUMNI records when available
+                master_keywords = ("MASTER RECORD", "STUDENT RECORD", "ALUMNI RECORD")
+                chosen_text = None
+                chosen_meta = None
+
+                for idx, txt in enumerate(docs):
+                    if not isinstance(txt, str):
+                        continue
+                    upper_txt = txt.upper()
+                    if all(k in upper_txt for k in ("RECORD", bridge_id.upper())) and any(
+                        mk in upper_txt for mk in master_keywords
+                    ):
+                        chosen_text = txt
+                        chosen_meta = metas[idx] if idx < len(metas) else {}
+                        master_idx = idx
+                        break
+
+                # Fallback to the first document if no explicit master record is detected
+                if chosen_text is None:
+                    chosen_text = docs[0]
+                    chosen_meta = metas[0] if metas else {}
+
+                # Check if this record is already in our results to avoid duplication
+                if chosen_meta.get("doc_id") and str(chosen_meta["doc_id"]) in existing_ids:
+                    continue
+
+                logger.info(f"RRR: Successfully linked record for '{bridge_id}' (idx={master_idx})")
+                enriched_results.append({
+                    "text": f"[RELATIONSHIP BRIDGE: {bridge_id}]\n{chosen_text}",
+                    "metadata": chosen_meta,
+                    # Lower score → higher priority when later sorted/considered
+                    "score": 0.05,
+                    "id": f"bridge_{bridge_id}"
+                })
+                existing_ids.add(str(chosen_meta.get("doc_id", "link")))
+                
+        except Exception as e:
+            logger.warning(f"RRR: Failed to resolve link for '{bridge_id}': {e}")
+            
+    return enriched_results
+
+# --- Query Expansion (Phase 11: Intent-Based Search) ---
+def generate_search_variants(query: str) -> List[str]:
+    """
+    Intent-based search expansion for all entity types.
+    Generates semantic variants to catch indirect questions across the full dataset.
+    """
+    variants = [query]
+    query_lower = query.lower()
+    
+    # Rule-based expansion for common intent patterns
+    if "teach" in query_lower or "professor" in query_lower or "instructor" in query_lower:
+        variants.extend(["Faculty teaching course", "Department head and instructors", "faculty_id course assignment"])
+    
+    if "hod" in query_lower or "head of department" in query_lower:
+        variants.extend(["Department head", "Faculty HOD designation", "department_id head"])
+    
+    # Curated expansion map for University data — covers ALL entity types
+    expansion_map = {
+        "placement": ["placement record", "salary package", "job position", "company placed", "placement_id"],
+        "internship": ["internship record", "stipend", "intern position", "company internship", "internship_id"],
+        "scores": ["result record", "semester results", "academic grade", "course marks", "GPA score"],
+        "marks": ["result record", "semester results", "academic grade", "course score"],
+        "result": ["result record", "semester grade", "academic performance", "result_id"],
+        "salary": ["placement salary", "package CTC", "annual compensation", "highest salary"],
+        "company": ["company record", "placement company", "employer details", "company_id"],
+        "faculty": ["faculty record", "professor details", "teaching staff", "faculty_id"],
+        "alumni": ["alumni record", "graduated student", "alumni details", "alumni_id"],
+        "department": ["department record", "dept details", "department_id", "MCA department"],
+        "course": ["course record", "subject details", "course_id", "semester course"],
+        "details": ["full profile", "contact information", "placement summary", "internship history", "academic record", "student master info"],
+        "detail": ["full profile", "contact information", "placement summary", "internship history", "academic record", "student master info"],
+        "highest": ["maximum value", "top performer", "best score", "rank 1"],
+        "topper": ["highest score", "top performer", "best GPA", "rank 1 student"],
+        "compare": ["comparison", "versus", "difference between", "side by side"],
+    }
+    
+    for key, terms in expansion_map.items():
+        if key in query_lower:
+            variants.extend(terms)
+            
+    return list(set(variants))[:4]  # Slightly increased from 3 for better coverage
+
 
 @app.post("/chat")
 async def chat_with_documents(req: Request):
@@ -1961,19 +2530,38 @@ async def chat_with_documents(req: Request):
                     user_id=user_id
                 )
                 search_results = search_documents(sr)
+
+                # Build initial result objects for relationship resolution
+                initial_results = []
+                if isinstance(search_results, dict) and "results" in search_results:
+                    for r in search_results["results"]:
+                        if hasattr(r, "text"):
+                            txt = r.text
+                            sc = getattr(r, "score", 0.5)
+                        elif isinstance(r, dict):
+                            txt = r.get("text", "")
+                            sc = r.get("score", 0.5)
+                        else:
+                            txt = ""
+                            sc = 0.5
+                        if txt:
+                            initial_results.append({"text": txt, "metadata": {}, "score": sc})
+
+                # Phase 10: Relationship Resolution (RRR) — enrich with linked master/company records
+                enriched_results = recursive_resolve_links(
+                    initial_results,
+                    org_id=org_id,
+                    user_role=user_role,
+                    user_id=user_id,
+                    organization=organization or "default",
+                )
+
                 # Build context with clear record separators for better Reasoning
                 context_parts = []
-                if isinstance(search_results, dict) and "results" in search_results:
-                    for idx, r in enumerate(search_results["results"]):
-                        chunk_text = ""
-                        if hasattr(r, "text"):
-                            chunk_text = r.text
-                        elif isinstance(r, dict):
-                            chunk_text = r.get("text", "")
-                        
-                        if chunk_text:
-                            # Use explicit labeling to help LLM associate data
-                            context_parts.append(f"DOCUMENT RECORD {idx+1}:\n{chunk_text}\n---")
+                for idx, r in enumerate(enriched_results):
+                    chunk_text = r.get("text", "")
+                    if chunk_text:
+                        context_parts.append(f"DOCUMENT RECORD {idx+1}:\n{chunk_text}\n---")
                 
                 context = "\n\n".join(context_parts)
                 logger.info(f"CHAT: Final context assembly complete. {len(context_parts)} records. Total len: {len(context)}")
@@ -1986,6 +2574,7 @@ async def chat_with_documents(req: Request):
         # generate_chat_response now returns (text, context_pii_map)
         # context_pii_map is the authoritative source: it maps [PERSON:idx_0] -> 'John Fritz'
         # because it was built when redacting the context BEFORE sending to the LLM.
+        logger.info(f"FINAL_CONTEXT_FOR_LLM (len={len(context or '')}): {(context or '')[:2000]}")
         response_text, context_pii_map = generate_chat_response(
             query, 
             context or "", 
@@ -2112,15 +2701,26 @@ async def chat_stream(req: Request):
         logger.exception("Stream: error building context: %s", e)
 
     # Redact
-    redacted_query = redact_text(query)
-    redacted_context = redact_text(context)
+    pii_session_map = {}
+    pii_session_counters = {}
+    
+    redacted_query = redact_text(query, pii_map=pii_session_map, counters=pii_session_counters, strictness=privacy_level)
+    redacted_context = redact_text(context, pii_map=pii_session_map, counters=pii_session_counters, strictness=privacy_level)
     system_msg = get_system_prompt(user_role, bool(context))
 
     messages = [{"role": "system", "content": system_msg}]
     if conversation_history and isinstance(conversation_history, list):
         for msg in conversation_history:
             if isinstance(msg, dict) and "role" in msg and "content" in msg:
-                messages.append({"role": msg["role"], "content": redact_text(msg["content"])})
+                messages.append({
+                    "role": msg["role"], 
+                    "content": redact_text(
+                        msg["content"], 
+                        pii_map=pii_session_map, 
+                        counters=pii_session_counters, 
+                        strictness=privacy_level
+                    )
+                })
     messages.append({"role": "user", "content": f"Context:\n{redacted_context}\n\nQuestion: {redacted_query}"})
 
     use_openai = os.getenv("USE_OPENAI_CHAT", "FALSE").upper() == "TRUE" and OPENAI_API_KEY
@@ -2509,7 +3109,7 @@ async def run_batch_processing(org_id: int, batch_size: int = 100, max_documents
                         if openai and OPENAI_API_KEY:
                             # Only check first 1000 chars to save API calls
                             check_text = text[:1000]
-                            oa_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+                            oa_client = openai.OpenAI(api_key=OPENAI_API_KEY, timeout=5.0, max_retries=0)
                             mod_response = oa_client.moderations.create(input=check_text)
                             if mod_response.results:
                                 result = mod_response.results[0]
@@ -2553,14 +3153,12 @@ async def run_batch_processing(org_id: int, batch_size: int = 100, max_documents
                         else:
                             access_level = "general"
                     
-                    # First, remove any old vectors for this document (important for force-reprocess)
-                    try:
-                        old_ids = [f"doc_{org_id}_{doc_id}"] + [f"doc_{org_id}_{doc_id}_chunk_{i}" for i in range(200)]
-                        collection.delete(ids=old_ids)
-                    except Exception:
-                        pass  # OK if they don't exist
-                    
                     doc_chunk_count = 0
+                    all_chunk_ids = []
+                    all_chunk_docs = []
+                    all_chunk_embs = []
+                    all_chunk_metas = []
+
                     for chunk_idx, chunk_text_content in enumerate(chunks):
                         # Generate embedding with retry
                         embedding = None
@@ -2577,31 +3175,60 @@ async def run_batch_processing(org_id: int, batch_size: int = 100, max_documents
                             logger.warning(f"Embedding failed for doc {doc_id} chunk {chunk_idx}, skipping chunk")
                             continue
                         
-                        # Use chunk-specific ID for multi-chunk documents
                         if len(chunks) == 1:
                             chunk_id = f"doc_{org_id}_{doc_id}"
                         else:
                             chunk_id = f"doc_{org_id}_{doc_id}_chunk_{chunk_idx}"
                         
+                        # Phase 4.1: Source Discovery (Extract ID for metadata-based retrieval)
+                        # We scan the metadata/text for valid entity IDs to populate source_id
+                        source_id = None
+                        if isinstance(metadata_dict, dict):
+                            # Try known ID fields in priority order
+                            id_keys = ['student_id', 'id', 'srn', 'usn', 'company_id', 'faculty_id', 'course_id', 'dept_id']
+                            for ik in id_keys:
+                                if ik in metadata_dict and metadata_dict[ik]:
+                                    source_id = str(metadata_dict[ik]).upper()
+                                    break
+                        
+                        if not source_id:
+                            # Heuristic: Find the first token that looks like an ID in the chunk text
+                            id_match = re.search(r'\b(PES|STU|RES|INT|PLC|COMP|FAC|CRS|DEPT|ALU|USR)[A-Z0-9_\-]{2,}\b', chunk_text_content, re.IGNORECASE)
+                            if id_match:
+                                source_id = id_match.group(0).upper()
+
                         collection_metadata = {
                             "org_id": org_id, 
                             "doc_id": doc_id, 
                             "filename": filename,
                             "access_level": access_level,
-                            "chunk_index": chunk_idx
+                            "chunk_index": chunk_idx,
+                            "source_id": source_id
                         }
                         
-                        chromadb_add(
-                            ids=[chunk_id],
-                            documents=[chunk_text_content],
-                            embeddings=[embedding],
-                            metadatas=[collection_metadata],
-                            collection=collection
-                        )
+                        all_chunk_ids.append(chunk_id)
+                        all_chunk_docs.append(chunk_text_content)
+                        all_chunk_embs.append(embedding)
+                        all_chunk_metas.append(collection_metadata)
                         doc_chunk_count += 1
                     
+                    if doc_chunk_count > 0:
+                        # ATOMIC INDEXING: Only delete old vectors if we have new ones to replace them
+                        try:
+                            # Cleanup old potential chunk formats (doc_ID, doc_ID_chunk_N)
+                            old_ids_to_clean = [f"doc_{org_id}_{doc_id}"] + [f"doc_{org_id}_{doc_id}_chunk_{i}" for i in range(100)]
+                            collection.delete(ids=old_ids_to_clean)
+                        except Exception:
+                            pass
+                            
+                        chromadb_add(
+                            ids=all_chunk_ids,
+                            documents=all_chunk_docs,
+                            embeddings=all_chunk_embs,
+                            metadatas=all_chunk_metas,
+                            collection=collection
+                        )
                     if doc_chunk_count == 0:
-                        failed_docs.append({"id": doc_id, "error": "All chunk embeddings failed"})
                         cursor.execute("UPDATE documents SET status = 'failed' WHERE id = %s", (doc_id,))
                         total_failed += 1
                         continue
