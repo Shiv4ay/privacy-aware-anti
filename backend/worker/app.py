@@ -857,6 +857,7 @@ def get_system_prompt(user_role: str = "student", context_present: bool = False)
    b. If the context contains records for a DIFFERENT ID token (e.g., user asked for [ID:idx_0] but context has [ID:idx_1]), you MUST state clearly: "The records provided are for [found_token], not the requested [asked_token]. The exact record may not be indexed yet."
    c. NEVER present data from one entity as if it belongs to another. This is the most critical rule.
    d. NEVER say you couldn't find the raw string (e.g., PES1PG24CA169) because ALL raw strings have been replaced by these tokens. Verify using the tokens.
+   e. If there is NO data about the requested token, you MUST output ONLY: "No data found for the requested entity. The exact record may not be indexed yet." DO NOT hallucinate.
 
    IMPORTANT: Output adjacent PERSON tokens together as a full name: "[PERSON:idx_0] [PERSON:idx_1]". 
    - When asked for a "Name", look for [PERSON:idx_N] tokens in the context.
@@ -1968,16 +1969,17 @@ def search_documents(request: SearchRequest):
         except Exception as e:
             logger.error(f"Hybrid Search Error: {e}")
 
-        # IDENTITY FIREWALL: If exact ID matches were found, remove vector search results
-        # that DON'T contain the queried ID — these are "neighbor noise" that causes mismatches.
-        if exact_id_found and potential_ids:
+        # 0.25 STRICT IDENTITY FIREWALL: Hard Partitioning
+        # If ANY specific ID was queried, PURGE all search results that DON'T contain the queried ID.
+        # This completely eliminates "neighbor noise" and cross-student hallucinations.
+        if potential_ids:
             filtered_chunks = []
             for chunk in final_chunks:
-                # Always keep all exact-match results (score >= 0.97) unconditionally
+                # Always keep exact-match results (score >= 0.97) unconditionally
                 if chunk.score >= 0.97:
                     filtered_chunks.append(chunk)
                     continue
-                # For vector results, only keep if they contain at least one queried ID
+                # For baseline vector results, only keep if they contain at least one queried ID
                 keep = False
                 for pid in potential_ids:
                     if re.search(rf'\b{re.escape(pid)}\b', chunk.text, re.IGNORECASE):
@@ -1986,7 +1988,9 @@ def search_documents(request: SearchRequest):
                 if keep:
                     filtered_chunks.append(chunk)
                 else:
-                    logger.info(f"Identity Firewall: Discarded noise vector result (id={chunk.id})")
+                    logger.info(f"Identity Firewall Purge: Discarded noise vector result (id={chunk.id})")
+            final_chunks = filtered_chunks
+
         # 0.3 RECORD ISOLATION: Prevent "Neighbor Pollution"
         # If we have exact IDs, split chunks into individual records and keep ONLY the relevant blocks.
         if potential_ids:
