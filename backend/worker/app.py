@@ -415,7 +415,8 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
 
     # Whitelists
     # Tightened ID_PATTERN: Must have prefix AND at least two ending digits to avoid redacting labels like "Company"
-    ID_PATTERN = re.compile(r'\b(?:PES|STU|RES|INT|COMP|FAC|PLC|CRS|DEPT|MCA|ALU|USR|CSE|ISE|ECE|EEE|BME|BMS)[A-Z0-9_]*[0-9]{2,}\b|\b[A-Z]{2,4}[0-9]{3}[A-Z0-9]{0,3}\b', re.IGNORECASE)
+    # Added greedy suffix matching for complex IDs like 'dx_7]16' to avoid leftover fragments.
+    ID_PATTERN = re.compile(r'\b(?:PES|STU|RES|INT|COMP|FAC|PLC|CRS|DEPT|MCA|ALU|USR|CSE|ISE|ECE|EEE|BME|BMS)[A-Z0-9_]*[0-9]{2,}\b(?:\s*[a-z0-9_\]]+)?|\b[A-Z]{2,4}[0-9]{3}[A-Z0-9]{0,3}\b', re.IGNORECASE)
     YEAR_PATTERN = re.compile(r'\b(20\d{2}(?:-\d{2,4})?)\b')
 
     # UNIVERSAL SEGMENTER: Split by tags, pipes, and newlines
@@ -879,6 +880,7 @@ def get_system_prompt(user_role: str = "student", context_present: bool = False)
     - Format: | FIELD | VALUE |
     - **LIST EVERY FIELD** available in the record (e.g., First Name, Last Name, Email, Gender, DOB, Enrollment Date, Department, GPA, Phone, Address, Category, Home State, Admit Quota, Pesu Id, Batch).
     - **STRICT VALUE ASSOCIATION**: The value in the "VALUE" column MUST correspond to that specific field in the context. Never repeat the Name in the DOB or Phone field. If a field's value is unknown, show "[N/A]".
+    - **VERIFICATION GUARD**: You MUST ensure the data in the Master Profile matches the requested entity token. Do NOT fill in data from a different token!
     - Result: Follow with Academic and Professional Activity tables.
     - End with a "Professional Outlook" section (1 sentence).
 
@@ -2239,6 +2241,12 @@ def build_search_query(message: str, history: list) -> str:
     into the current retrieval query.
     """
     if not history or len(history) == 0:
+        return message
+
+    # 0. IDENTITY SWITCH LOCK: If the user provides a new ID, ignore history to prevent bleeding
+    current_ids = set([m.group(0).upper() for m in re.finditer(r'\b(PES|STU|RES|INT|PLC|COMP|FAC|CRS|DEPT|MCA|ALU|USR)[A-Z0-9_\-]*\b', message, re.IGNORECASE)])
+    if current_ids:
+        logger.info(f"BRIDGE: Identity Switch detected. Resetting history for {current_ids}")
         return message
 
     # 1. Extract potential identifiers from recent history
