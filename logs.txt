@@ -1,82 +1,39 @@
-[DEBUG] Request GET /api/health started
-[DEBUG] CORS passed
-[DEBUG] Body parser passed
-[DEBUG] Security Headers passed
-[DEBUG] Sanitizer passed
-[DEBUG] Entering Rate Limiter
-[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
-[DEBUG] Rate Limiter passed
-[DEBUG] DB Context attached
-[DEBUG] Entering DevAuth
-[DEBUG] Request GET /api/health started
-[DEBUG] CORS passed
-[DEBUG] Body parser passed
-[DEBUG] Security Headers passed
-[DEBUG] Sanitizer passed
-[DEBUG] Entering Rate Limiter
-[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
-[DEBUG] Rate Limiter passed
-[DEBUG] DB Context attached
-[DEBUG] Entering DevAuth
-
-> api@1.0.0 start
-> node index.js
-
-🔐 Initializing Auth System...
-✅ Simple Auth mounted at /api/simple-auth
-🚧 Dev Auth Routes enabled at /api/dev/token
-✅ SimpleAuth mounted at /api/auth (Schema Compatible)
-🚀 Server running on port 3001
-✅ Auth & Application endpoints ready
-✅ MinIO bucket 'privacy-documents' ready
-[DEBUG] Request GET /api/health started
-[DEBUG] CORS passed
-[DEBUG] Body parser passed
-[DEBUG] Security Headers passed
-[DEBUG] Sanitizer passed
-[DEBUG] Entering Rate Limiter
-[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
-[DEBUG] Rate Limiter passed
-[DEBUG] DB Context attached
-[DEBUG] Entering DevAuth
-[DEBUG] Request GET /api/health started
-[DEBUG] CORS passed
-[DEBUG] Body parser passed
-[DEBUG] Security Headers passed
-[DEBUG] Sanitizer passed
-[DEBUG] Entering Rate Limiter
-[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
-[DEBUG] Rate Limiter passed
-[DEBUG] DB Context attached
-[DEBUG] Entering DevAuth
-[DEBUG] Request POST /api/simple-auth/login started
-[DEBUG] CORS passed
-[DEBUG] Body parser passed
-[DEBUG] Security Headers passed
-[DEBUG] Sanitizer passed
-[DEBUG] Entering Rate Limiter
-[DEBUG] RateLimit KeyGen: IP=172.18.0.1 User=undefined
-[DEBUG] Rate Limiter passed
-[DEBUG] DB Context attached
-🔑 Simple login attempt: admin@privacy-aware-rag.local
-❌ Invalid password for: admin@privacy-aware-rag.local
-[DEBUG] Request GET /api/health started
-[DEBUG] CORS passed
-[DEBUG] Body parser passed
-[DEBUG] Security Headers passed
-[DEBUG] Sanitizer passed
-[DEBUG] Entering Rate Limiter
-[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
-[DEBUG] Rate Limiter passed
-[DEBUG] DB Context attached
-[DEBUG] Entering DevAuth
-[DEBUG] Request GET /api/health started
-[DEBUG] CORS passed
-[DEBUG] Body parser passed
-[DEBUG] Security Headers passed
-[DEBUG] Sanitizer passed
-[DEBUG] Entering Rate Limiter
-[DEBUG] RateLimit KeyGen: IP=127.0.0.1 User=undefined
-[DEBUG] Rate Limiter passed
-[DEBUG] DB Context attached
-[DEBUG] Entering DevAuth
+INFO:     127.0.0.1:45130 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:35876 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38416 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:41000 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38952 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:43620 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59144 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:47046 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55748 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:47988 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40760 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:48978 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42584 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:57054 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47818 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:33468 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44556 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:46262 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35688 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.1:34990 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45356 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43214 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54322 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50562 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39626 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60128 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:39844 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:35778 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43766 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:39766 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49498 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:52332 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55140 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:60562 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40034 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:37120 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43124 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:36014 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43246 - "GET /health HTTP/1.1" 200 OK

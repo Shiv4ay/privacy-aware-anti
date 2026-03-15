@@ -1,0 +1,51 @@
+INFO:     172.18.0.8:45646 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38860 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:38708 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:44552 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42674 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:39754 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58450 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:45004 - "GET /health HTTP/1.1" 200 OK
+SEARCHING with embeddings in collection: privacy_documents_4
+RAW RESULTS: {'ids': [[]], 'distances': [[]], 'embeddings': None, 'metadatas': [[]], 'documents': [[]], 'uris': None, 'data': None, 'included': ['metadatas', 'documents', 'distances']}
+SEARCHING with embeddings in collection: privacy_documents_4
+RAW RESULTS: {'ids': [[]], 'distances': [[]], 'embeddings': None, 'metadatas': [[]], 'documents': [[]], 'uris': None, 'data': None, 'included': ['metadatas', 'documents', 'distances']}
+SEARCHING with embeddings in collection: privacy_documents_4
+RAW RESULTS: {'ids': [[]], 'distances': [[]], 'embeddings': None, 'metadatas': [[]], 'documents': [[]], 'uris': None, 'data': None, 'included': ['metadatas', 'documents', 'distances']}
+SEARCHING with embeddings in collection: privacy_documents_4
+RAW RESULTS: {'ids': [[]], 'distances': [[]], 'embeddings': None, 'metadatas': [[]], 'documents': [[]], 'uris': None, 'data': None, 'included': ['metadatas', 'documents', 'distances']}
+INFO:     172.18.0.7:45010 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33754 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48094 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56394 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:48794 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42174 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:44338 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51384 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:46810 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55288 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:42476 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42688 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:34140 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41834 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:50660 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50932 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:50500 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55782 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:53992 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42486 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:59402 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38298 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:47846 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53102 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:40954 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41014 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:35160 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50970 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:56468 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:60006 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36600 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:47366 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33132 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.7:38782 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60306 - "GET /health HTTP/1.1" 200 OK

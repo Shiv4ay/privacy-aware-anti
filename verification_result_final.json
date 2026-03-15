@@ -1,0 +1,1 @@
+{"query":"Can you get me the complete details of the student with id PES1PG24CA135?","response":"The records provided are for [USER_ID:idx_0], not the requested [COMPANY:idx_0]. The exact record may not be indexed yet.","context_used":true,"status":"success","pii_detected":true,"pii_types":["company"],"pii_map":null}

@@ -1,0 +1,5 @@
+INFO:app:DIAG_RRR: Detected ids: ['MCA802A', 'MCA751A', 'DEPT_MCA', 'COMPLETED', 'MCA756A', 'STUDENT_ID', 'COMPANY_ID', 'PLC00028', 'MCA755A', 'MCA654B', 'COMP_MCA015', 'MCA601A', 'MCA653B', 'PESSAT', 'MCA641A', 'PESU_ID', 'PES1202404419', 'MCA652B', 'PES1PG24CA169', 'MCA801A', 'MCA753A', 'MCA852SE', 'COMPUTER', 'MCA651A', 'MCA851A', 'MCA754A', 'MCA853SE', 'MCA752A']
+INFO:app:DIAG_RRR: Resolved DEPT_MCA -> Master of Computer Applications
+INFO:app:DIAG_RRR: Resolved COMP_MCA015 -> Swiggy
+INFO:app:DIAG_RRR: Resolved PES1PG24CA169 -> company_id
+INFO:app:DIAG_RRR: Starting substitution for map: {'DEPT_MCA': 'Master of Computer Applications', 'COMP_MCA015': 'Swiggy', 'PES1PG24CA169': 'company_id'}
