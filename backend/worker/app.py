@@ -412,31 +412,19 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
     # Entity type mapping for display labels
     TYPE_MAP = {
         "PERSON": "PERSON", "ORGANIZATION": "COMPANY", "PHONE_NUMBER": "PHONE",
-        "EMAIL_ADDRESS": "EMAIL", "US_SSN": "SSN", "LOCATION": "LOCATION", "DATE_TIME": "DATE",
-        "STUDENT_ID": "USER_ID", "SYSTEM_ID": "ID"
+        "EMAIL_ADDRESS": "EMAIL", "US_SSN": "SSN", "LOCATION": "LOCATION", 
+        "DATE_TIME": "DATE", "STUDENT_ID": "USER_ID", "SYSTEM_ID": "ID",
+        "MONEY": "FINANCE", "FINANCE": "FINANCE", "US_ITIN": "ID",
+        "ZIP_CODE": "LOCATION", "STATE": "LOCATION", "CITY": "LOCATION"
     }
 
-    # Whitelists
-    # Tightened ID_PATTERN: removed dangerous greedy suffix that caused fragmenting (e.g. [COMPANY:idx_1]0])
     ID_PATTERN = re.compile(r'\b(?:PES|STU|RES|INT|COMP|FAC|PLC|CRS|DEPT|MCA|ALU|USR|CSE|ISE|ECE|EEE|BME|BMS)[A-Z0-9_]*[0-9]{2,}\b|\b[A-Z]{2,4}[0-9]{3}[A-Z0-9]{0,3}\b', re.IGNORECASE)
     YEAR_PATTERN = re.compile(r'\b(20\d{2}(?:-\d{2,4})?)\b')
 
     # UNIVERSAL SEGMENTER: Split by tags, pipes, and newlines
-    # This ensures Presidio never sees words from different cells/fields together.
     segments = re.split(r'(<[^>]+>|\||\n)', text)
     
-    # --- Phase 4: Financial & Numerical PII (Harden for Stipend/Salary/LPA) ---
-    # Catch currency amounts (e.g. 25000, 14,00,000, 22 LPA, 15 CTC)
-    text = re.sub(r'\b(?:\d{4,10}|(?:\d{1,3}(?:,\d{2,3})+))\b', '[REDACTED_FINANCE]', text)
-    text = re.sub(r'\b\d{1,3}\s*(?:LPA|CTC|Per Annum|Monthly)\b', '[REDACTED_FINANCE]', text, flags=re.IGNORECASE)
-    
-    # --- Phase 5: Date Redaction (Comprehensive Focus) ---
-    # Catch YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
-    text = re.sub(r'\b\d{4}[-/\.]\d{2}[-/\.]\d{2}\b', '[REDACTED_DATE]', text)
-    text = re.sub(r'\b\d{2}[-/\.]\d{2}[-/\.]\d{4}\b', '[REDACTED_DATE]', text)
-    
     final_output_parts = []
-    # FIX: Always use the passed pii_map if provided so state is preserved across calls!
     final_pii_map = kwargs.get("pii_map", {}) 
     global_counters = kwargs.get("counters", {})
 
@@ -444,33 +432,32 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
         if not segment:
             continue
             
-        # If it's a separator, keep it exactly as is
         if re.match(r'(<[^>]+>|\||\n)', segment):
             final_output_parts.append(segment)
             continue
             
-        # Process text segments individually
+        # 0. TOKEN PROTECTION: If the segment is ALREADY a token (e.g. from follow-up history), skip it
+        if re.fullmatch(r'\[[A-Z_]+:idx_\d+\]', segment.strip()):
+            final_output_parts.append(segment)
+            continue
+            
         # --- PHASE 1: CUSTOM RELIABLE REGEX (Priority) ---
         custom_results = []
         
-        # Financial Amounts (Salary, Stipend, CTC) - Must come BEFORE Presidio to prevent 'REDACTED' fallback
+        # Financial Amounts (Salary, Stipend, CTC)
         FINANCIAL_PATTERN = re.compile(r'\b(?:Salary|Stipend|CTC|Package|package)\s*[:\-]?\s*(?:Rs\.?|INR|USD|\$|₹)?\s*([\d,]{4,15})\b', re.IGNORECASE)
         for m in FINANCIAL_PATTERN.finditer(segment):
             custom_results.append(RecognizerResult("MONEY", m.start(1), m.end(1), 1.0))
 
-        # Organization/Field labels that Presidio mis-identifies
-        # IMPORTANT: Do NOT redact these labels themselves; they are required for UI tables.
+        # Protect structural labels
         LABEL_PATTERN = re.compile(
-            r'\b(Enrollment Date|Start Date|End Date|Placement Date|Date|Stipend|Salary|CTC|Package|Gender|Home State|Address|DOB|Pesu Id|Student Id)\b',
+            r'\b(Enrollment Date|Start Date|End Date|Placement Date|Date|Stipend|Salary|CTC|Package|Gender|Home State|Address|DOB|Pesu Id|Student Id|SRN|result_id|course_id|department_id|placement_id|internship_id)\b',
             re.IGNORECASE
         )
         for m in LABEL_PATTERN.finditer(segment):
-            # We don't want to redact these LABELS, just protect them. 
-            # We'll use a special 'LABEL' type that we skip in the loop.
             custom_results.append(RecognizerResult("LABEL", m.start(), m.end(), 1.0))
 
-        # University IDs (Force deterministic STUDENT_ID type ONLY for PES/STU prefixes)
-        # Other prefixes (COMP, FAC, CRS, etc.) should NOT be forced to STUDENT_ID
+        # University IDs
         for m in ID_PATTERN.finditer(segment):
             matched_val = segment[m.start():m.end()].upper()
             if matched_val.startswith(("PES", "STU")):
@@ -478,8 +465,7 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
             else:
                 custom_results.append(RecognizerResult("SYSTEM_ID", m.start(), m.end(), 1.0))
 
-        # Indian Phone Numbers — Must come BEFORE Presidio to prevent DATE misclassification
-        # Matches: +91-78918-90467, 91-7891890467, +917891890467, 078918-90467, 7891890467
+        # Indian Phone Numbers
         PHONE_PATTERN = re.compile(r'(?:\+?91[\-\s]?)?(?:0?[6-9]\d{4}[\-\s]?\d{5})\b')
         for m in PHONE_PATTERN.finditer(segment):
             custom_results.append(RecognizerResult("PHONE_NUMBER", m.start(), m.end(), 1.0))
@@ -487,10 +473,9 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
         # --- PHASE 2: PRESIDIO ANALYZER ---
         chunk_results = analyzer.analyze(text=segment, language='en') or []
         
-        # Merge results, but CUSTOM wins on intersection
+        # Merge results
         final_results = custom_results.copy()
         for res in chunk_results:
-            # Check if this outcome intersects with any of our high-confidence custom hits
             overlap = False
             for c_res in custom_results:
                 if not (res.end <= c_res.start or res.start >= c_res.end):
@@ -500,10 +485,9 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
                 final_results.append(res)
         chunk_results = final_results
 
-        # Add custom organization catch (only for non-overlapping)
+        # Add custom organization catch
         ORG_PATTERN = re.compile(r'\b(?:Org|Institution|Employer|Firm|Placed in)\s*[:\-]?\s*([A-Z][a-zA-Z0-9&.\s]{2,40})\b', re.IGNORECASE)
         for m in ORG_PATTERN.finditer(segment):
-            # Check overlap again
             overlap = False
             for c_res in chunk_results:
                 if not (m.end(1) <= c_res.start or m.start(1) >= c_res.end):
@@ -512,75 +496,34 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
             if not overlap:
                 chunk_results.append(RecognizerResult(entity_type="ORGANIZATION", start=m.start(1), end=m.end(1), score=0.95))
         
-        # Add strict email catch
+        # Email catch
         EMAIL_CHUNK_PATTERN = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
         for m in EMAIL_CHUNK_PATTERN.finditer(segment):
             chunk_results.append(RecognizerResult(entity_type="EMAIL_ADDRESS", start=m.start(), end=m.end(), score=1.0))
         
-        # PRIVACY PERFECTION: Additional custom patterns for comprehensive PII coverage
-        
-        # Indian Phone Numbers (+91, 0-prefixed, or bare 10-digit)
-        INDIAN_PHONE = re.compile(r'(?:\+91[\s\-]?)?(?:0?\d{10}|\d{5}[\s\-]\d{5})')
-        for m in INDIAN_PHONE.finditer(segment):
-            val = m.group(0).strip()
-            if len(re.sub(r'\D', '', val)) >= 10:  # Must have at least 10 digits
-                chunk_results.append(RecognizerResult(entity_type="PHONE_NUMBER", start=m.start(), end=m.end(), score=0.95))
-        
-        # Date of Birth patterns (YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY)
+        # DOB patterns
         DOB_PATTERN = re.compile(r'\b(\d{4}-\d{2}-\d{2}|\d{2}[/\-]\d{2}[/\-]\d{4})\b')
         for m in DOB_PATTERN.finditer(segment):
-            # Only redact if it looks like a specific date (not an academic year)
             val = m.group(0)
-            if not re.match(r'20\d{2}-20\d{2}', val):  # Skip "2024-2025" academic years
+            if not re.match(r'20\d{2}-20\d{2}', val):
                 chunk_results.append(RecognizerResult(entity_type="DATE_TIME", start=m.start(), end=m.end(), score=0.90))
         
-        # Aadhar Number (12 digits, often formatted as XXXX XXXX XXXX)
-        AADHAR_PATTERN = re.compile(r'\b\d{4}\s?\d{4}\s?\d{4}\b')
-        for m in AADHAR_PATTERN.finditer(segment):
-            val = re.sub(r'\s', '', m.group(0))
-            if len(val) == 12 and val.isdigit():
-                chunk_results.append(RecognizerResult(entity_type="US_SSN", start=m.start(), end=m.end(), score=0.95))
-        
-        # PAN Card (XXXXX9999X format)
-        PAN_PATTERN = re.compile(r'\b[A-Z]{5}\d{4}[A-Z]\b')
-        for m in PAN_PATTERN.finditer(segment):
-            chunk_results.append(RecognizerResult(entity_type="US_SSN", start=m.start(), end=m.end(), score=0.95))
-            
-        # Financial moved to start of block for priority
-        pass
-        
-        if not chunk_results:
-            final_output_parts.append(segment)
-            continue
-            
         # Redact the chunk from back to front
         chunk_out = segment
         sorted_chunks = sorted(chunk_results, key=lambda r: r.start, reverse=True)
         for res in sorted_chunks:
             val = segment[res.start:res.end].strip()
 
-            # PHONE GUARD: Reject short purely-numeric strings misclassified as PHONE
-            # Real phones are 7+ digits, or contain +/- formatting. Stipends like '22000' or '1400000' are NOT phones.
+            # PHONE GUARD: Reject short numbers (stipends) misclassified as PHONE
             if res.entity_type == "PHONE_NUMBER":
                 digits_only = re.sub(r'[^\d]', '', val)
                 if (len(digits_only) <= 6) and not re.search(r'[+\-()]', val):
-                    continue  # Skip: this is a number (stipend/amount), NOT a phone
+                    continue 
 
-            # Whitelist logic
-            # If internal_only is True (for Search Params/History), we skip redacting structural IDs.
-            # If False (for UI output), we redact everything including IDs.
-            is_generic_id = ID_PATTERN.search(val.upper()) or res.entity_type in ["STUDENT_ID", "SYSTEM_ID"]
-            
-            if kwargs.get("internal_only", False) and is_generic_id:
-                continue
-                
-            # Always skip standalone years/academic years (e.g. 2024, 2024-25), but NOT precise dates (YYYY-MM-DD)
-            # Skip our protected labels
             if res.entity_type == "LABEL":
                 continue
 
             if res.entity_type == "DATE_TIME":
-                # Check if it's exactly a year or exactly a year range (length <= 9)
                 if len(val) <= 9 and YEAR_PATTERN.fullmatch(val):
                     continue
                     
@@ -589,16 +532,15 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
                 
             dtype = TYPE_MAP.get(res.entity_type, "REDACTED")
             
-            # CONSISTENT TOKEN MAPPING (Universal Token Lock): 
-            # If we've seen this exact PII value in this session (e.g., query ID matches context ID),
-            # reuse the exact same token even if Presidio classifies it as a different type this time.
-            # This prevents "The records are for [COMPANY:idx_1], not [USER_ID:idx_0]" errors.
+            # CONSISTENT TOKEN MAPPING
             existing_token = None
             for tk, tv in final_pii_map.items():
                 if tv.lower() == val.lower():
-                    existing_token = tk
-                    # logger.info(f"PII_SYNC: Reusing existing token {existing_token} for '{val}'")
-                    break
+                    # Check if the existing token's type matches or is a reasonable sibling
+                    # (Preventing 22000 from becoming a LOCATION just because Karnataka was idx_0)
+                    if dtype in tk:
+                        existing_token = tk
+                        break
             
             if existing_token:
                 token = existing_token
@@ -607,7 +549,6 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
                 global_counters[dtype] = idx + 1
                 token = f"[{dtype}:idx_{idx}]"
                 final_pii_map[token] = val
-                logger.info(f"PII_SYNC: Created NEW token {token} for '{val}'")
                 
             chunk_out = chunk_out[:res.start] + token + chunk_out[res.end:]
         
@@ -881,12 +822,12 @@ def get_system_prompt(user_role: str = "student", context_present: bool = False)
 3. For follow-up questions, use conversation history to understand context, then still answer ONLY from the provided documents.
 
 ## IDENTITY VERIFICATION (CRITICAL):
-4. BEFORE answering any query that contains an entity ID (which will appear as a privacy token like [ID:idx_0], [USER_ID:idx_0], [COMPANY:idx_0] due to anonymization), you MUST:
-   a. Check ALL context records and confirm that the EXACT requested ID token appears in the data.
-   b. If the context contains records for a DIFFERENT ID token (e.g., user asked for [ID:idx_0] but context has [ID:idx_1]), you MUST state clearly: "The records provided are for [found_token], not the requested [asked_token]. The exact record may not be indexed yet."
-   c. NEVER present data from one entity as if it belongs to another. This is the most critical rule.
-   d. NEVER say you couldn't find the raw string (e.g., PES1PG24CA169) because ALL raw strings have been replaced by these tokens. Verify using the tokens.
-   e. If there is NO data about the requested token, you MUST output ONLY: "No data found for the requested entity. The exact record may not be indexed yet." DO NOT hallucinate.
+4. BEFORE answering any query regarding an entity (Student, Company, etc.), you MUST:
+   a. Check ALL context records for the requested ID token (e.g., [USER_ID:idx_0]). 
+   b. If the context contains an "IDENTITY CONFIRMED: [NAME] is [ID]" record from the RAG engine, you MUST accept this as a 100% valid association for the requested entity.
+   c. If you find records for a DIFFERENT ID that is NOT confirmed as the requested entity, you MUST state: "The records provided are for [found_token], not the requested [asked_token]. The exact record may not be indexed yet."
+   d. NEVER present data from one entity as if it belongs to another. This is the ultimate privacy rule.
+   e. If there is NO confirmed data for the requested entity, state that the record may not be indexed.
 
    IMPORTANT: Output adjacent PERSON tokens together as a full name: "[PERSON:idx_0] [PERSON:idx_1]". 
    - When asked for a "Name", look for [PERSON:idx_N] tokens in the context.
@@ -2531,8 +2472,8 @@ def recursive_resolve_links(initial_results: list, org_id: int, user_role: str, 
     # 1. Collect all IDs in the current context
     for r in initial_results:
         text = r.get("text", "")
-        # REQUIRE DIGITS: prevents general words like 'MCA' or 'DEPT' from being bridge IDs
-        for m in re.finditer(r'\b(PLC|COMP|FAC|STU|CRS|DEPT|MCA|USR|PES|ALU)[A-Z0-9_\-]*[0-9]{2,}\b', text, re.IGNORECASE):
+        # MODIFIED: Allow semantic IDs like DEPT_MCA or COMP_SWIGGY even without digits if they match our known prefixes
+        for m in re.finditer(r'\b(PLC|COMP|FAC|STU|CRS|DEPT|MCA|USR|PES|ALU)[A-Z0-9_\-]*\b', text, re.IGNORECASE):
             found_bridge_ids.add(m.group(0).upper())
         if r.get("metadata") and r["metadata"].get("doc_id"):
             existing_ids.add(str(r["metadata"]["doc_id"]))
@@ -2544,30 +2485,59 @@ def recursive_resolve_links(initial_results: list, org_id: int, user_role: str, 
     enriched_results = list(initial_results)
     
     for bridge_id in found_bridge_ids:
+        # 1. TYPE GUARD: Ensure bridge_id is a string (Prevents 'int' object has no attribute 'upper')
+        if not isinstance(bridge_id, str):
+            logger.warning(f"DIAG_RRR: Skipping non-string bridge_id: {bridge_id}")
+            continue
+
         bridge_id_upper = bridge_id.upper()
+        
+        # 2. FILTER GUARD: Skip generic header fragments that look like IDs but aren't
+        if bridge_id_upper in ("PESU", "USER_ID", "STUDENT_ID", "ID", "DEPARTMENT", "PROGRAM", "BATCH"):
+            continue
+
         try:
             org_col = get_org_collection(org_id=org_id, org_name=organization, user_role=user_role)
             linked_batch = None
             
             # (A) METADATA-BASED FETCH (Primary)
             try:
-                # Simplified filter: just search source_id first
+                logger.info(f"DIAG_RRR: Querying Chroma for source_id={bridge_id_upper}")
+                # Use source_id first
                 linked_batch = org_col.get(where={"source_id": bridge_id_upper}, limit=8, include=["documents", "metadatas"])
-                
-                # STRICTURE HUNTER: If this is a student ID, ensure we get the student info record
+                logger.info(f"DIAG_RRR: Chroma returned {len(linked_batch.get('ids', [])) if linked_batch else 0} results for source_id={bridge_id_upper}")
+
+                # STRICTURE HUNTER: If this is a student ID, always ensure we get the student info record
                 if bridge_id_upper.startswith("PES"):
-                    if not linked_batch or not any("STUDENT RECORD" in str(d).upper() for d in (linked_batch.get("documents") or [])):
-                        # Force a specific hunt for the info record
-                        extra = org_col.get(where={"$and": [{"source_id": bridge_id_upper}, {"filename": "students.csv"}]}, limit=1)
-                        if extra and extra.get("ids"):
-                            # Merge into batch
-                            if not linked_batch: linked_batch = {"ids": [], "documents": [], "metadatas": []}
-                            linked_batch["ids"].extend(extra["ids"])
-                            linked_batch["documents"].extend(extra["documents"])
-                            linked_batch["metadatas"].extend(extra["metadatas"])
+                    logger.info(f"DIAG_RRR: Hunter activated for {bridge_id_upper}")
+                    
+                    # 1. Force retrieval of students.csv for this ID
+                    # Some Chroma versions/indices mismatch exact source_id; we also try checking documents for the USN
+                    master_hunt = org_col.get(where={"$and": [{"filename": "students.csv"}, {"source_id": bridge_id_upper}]}, limit=1)
+                    if not master_hunt or not master_hunt.get("documents"):
+                        # Fallback: search for the USN string in students.csv documents
+                        logger.info(f"DIAG_RRR: USN search failed. Trying fallback name hunt for {bridge_id_upper}")
+                        master_hunt = org_col.query(query_texts=[bridge_id_upper], n_results=1, where={"filename": "students.csv"})
+
+                    if master_hunt and master_hunt.get("documents"):
+                        student_doc = master_hunt["documents"][0][0] if isinstance(master_hunt["documents"][0], list) else master_hunt["documents"][0]
+                        # Extract name: handles "PES1..., Name, Surname"
+                        # CSV Header: student_id, first_name, last_name...
+                        parts = [p.strip() for p in student_doc.split(",")]
+                        if len(parts) >= 3:
+                            fname, lname = parts[1], parts[2]
+                            identity_anchor = f"IDENTITY ANCHOR RECORD:\nUSN: {bridge_id_upper}\nNAME: {fname} {lname}\nSTATUS: IDENTITY CONFIRMED\nSOURCE: students.csv\n---\nSTUDENT RECORD:\n{student_doc}\n---"
+                            enriched_results.insert(0, {"text": identity_anchor, "metadata": {"source": "identity_anchor"}, "score": 1.0})
+                            logger.info(f"DIAG_RRR: Identity Anchor injected for {fname} {lname} ({bridge_id_upper})")
+
+                    # 2. Document Enrichment (General results)
+                    if linked_batch and linked_batch.get("ids"):
+                        linked_documents = []
+                        for rid, doc, meta in zip(linked_batch["ids"], linked_batch["documents"], linked_batch["metadatas"]):
+                            linked_documents.append({"text": doc, "metadata": meta, "score": 0.95})
+                        enriched_results.extend(linked_documents)
 
                 if not linked_batch or not linked_batch.get("ids"):
-                    # Fallback to id field
                     linked_batch = org_col.get(where={"id": bridge_id_upper}, limit=5, include=["documents", "metadatas"])
             except Exception as e:
                 logger.warning(f"DIAG_RRR: Fetch failed for {bridge_id_upper}: {e}")
@@ -2577,11 +2547,10 @@ def recursive_resolve_links(initial_results: list, org_id: int, user_role: str, 
                 docs = linked_batch["documents"]
                 metas = linked_batch.get("metadatas", [{}])
 
-                master_keywords = ("MASTER RECORD", "STUDENT RECORD", "ALUMNI RECORD", "COMPANY RECORD", "FACULTY RECORD", "COURSE RECORD")
+                master_keywords = ("MASTER RECORD", "STUDENT RECORD", "ALUMNI RECORD", "COMPANY RECORD", "FACULTY RECORD", "COURSE RECORD", "DEPARTMENT RECORD")
                 chosen_text = None
                 chosen_meta = None
 
-                # Optimization: Look for a TRUE master record first
                 for idx, txt in enumerate(docs):
                     if not isinstance(txt, str): continue
                     upper_txt = txt.upper()
@@ -2590,28 +2559,23 @@ def recursive_resolve_links(initial_results: list, org_id: int, user_role: str, 
                         chosen_meta = metas[idx] if idx < len(metas) else {}
                         break
 
-                # If no master record, fall back to any document at least
                 if chosen_text is None and docs:
                     chosen_text = docs[0]
                     chosen_meta = metas[0] if metas else {}
 
                 if not chosen_text: continue
 
-                # (B) UNIVERSAL NAME EXTRACTION (Harden for CSV, Pipes, and Colons)
+                # (B) UNIVERSAL NAME EXTRACTION
                 resolved_name = "REDACTED_ENTITY"
+                BLACKLIST = {"SRN", "STUDENT_ID", "COMPANY_ID", "FACULTY_ID", "COURSE_ID", "MCA", "DEPT_MCA", "RESULT_ID", "PLACEMENT_ID", "DEPARTMENT", "PROGRAM"}
                 
-                # Blacklist: These are headers, not names
-                BLACKLIST = {"SRN", "STUDENT_ID", "COMPANY_ID", "FACULTY_ID", "COURSE_ID", "MCA", "DEPT_MCA", "RESULT_ID", "PLACEMENT_ID"}
-                
-                # Try specific label matching first
-                label_match = re.search(r'(?:company_name|NAME|student_name|course_name|faculty_name)\s*[:=]\s*([^|,\n]+)', chosen_text, re.IGNORECASE)
+                label_match = re.search(r'(?:company_name|NAME|student_name|course_name|faculty_name|dept_name)\s*[:=]\s*([^|,\n]+)', chosen_text, re.IGNORECASE)
                 if label_match:
                     name_candidate = label_match.group(1).strip()
                     if name_candidate.upper() not in BLACKLIST:
                         resolved_name = name_candidate
                 
                 if resolved_name == "REDACTED_ENTITY":
-                    # Fallback to positional split (flexible separators)
                     parts = [p.strip() for p in re.split(r'[,|:]', chosen_text) if p.strip()]
                     id_pos = -1
                     for ii, part in enumerate(parts):
@@ -2620,24 +2584,22 @@ def recursive_resolve_links(initial_results: list, org_id: int, user_role: str, 
                             break
                     if id_pos >= 0 and id_pos + 1 < len(parts):
                         candidate = parts[id_pos + 1].strip()
-                        # Harden name check: No digits, length check, not a generic ID prefix
                         is_likely_id = any(prefix in candidate.upper() for prefix in ["PES", "COMP", "PLC", "FAC", "STU"])
                         if candidate and not any(c.isdigit() for c in candidate) and len(candidate) > 2 and not is_likely_id:
                             if candidate.upper() not in BLACKLIST:
                                 resolved_name = candidate
 
-                # If we have a resolved name, map it!
                 if resolved_name != "REDACTED_ENTITY":
                     id_to_name[bridge_id_upper] = resolved_name
                     logger.info(f"DIAG_RRR: Resolved {bridge_id_upper} -> {resolved_name}")
 
-                # (C) ENRICH CONTEXT (Only if NOT already present)
                 if chosen_meta and chosen_meta.get("doc_id") and str(chosen_meta["doc_id"]) in existing_ids:
                     continue
 
                 display_text = chosen_text
                 if resolved_name != "REDACTED_ENTITY":
-                    display_text = f"NAME: {resolved_name} | {chosen_text}"
+                    # IDENTITY LINKER: Explicitly tell LLM this name and ID are the same person/entity
+                    display_text = f"IDENTITY CONFIRMED: {resolved_name} is {bridge_id_upper} | {chosen_text}"
 
                 enriched_results.append({
                     "text": f"[RELATIONSHIP BRIDGE: {bridge_id_upper}]\n{display_text}",
@@ -2661,14 +2623,13 @@ def recursive_resolve_links(initial_results: list, org_id: int, user_role: str, 
             sub_count = 0
             for tid in sorted_tids:
                 tname = id_to_name[tid]
-                # CASE-SENSITIVE Guard: ensure we only replace exact matches to avoid partial header mangling
                 if tid.upper() in new_text.upper():
                     pattern = re.compile(re.escape(tid), re.IGNORECASE)
+                    # For people IDs, keep the ID in parentheses to rescue follow-up reasoning
                     replacement = f"{tname} ({tid})" if any(prefix in tid.upper() for prefix in ["PES", "STU", "ALU", "USR"]) else tname
                     new_text, n = pattern.subn(replacement, new_text)
                     sub_count += n
             if sub_count > 0:
-                logger.debug(f"DIAG_RRR: Chunk {idx} | Substituted {sub_count} entities")
                 res_map["text"] = new_text
 
     return enriched_results
