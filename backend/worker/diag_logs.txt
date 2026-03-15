@@ -1,0 +1,29 @@
+INFO:app:DIAG_RRR: Detected ids: ['MCA641A', 'MCA755A', 'COMP_MCA015', 'PES1202404419', 'MCA651A', 'MCA652B', 'MCA801A', 'MCA852SE', 'MCA802A', 'MCA754A', 'COMPANY_ID', 'PESU_ID', 'COMP_MCA001', 'MCA654B', 'MCA756A', 'DEPT_MCA', 'MCA851A', 'PLC00028', 'MCA601A', 'COMPANY_NAME', 'MCA653B', 'MCA752A', 'PES1PG24CA169', 'MCA751A', 'COMPLETED', 'MCA853SE', 'COMPUTER', 'STUDENT_ID', 'PESSAT']
+INFO:app:DIAG_RRR: Resolved MCA641A -> memory
+INFO:app:DIAG_RRR: Resolved MCA755A -> Docker
+INFO:app:DIAG_RRR: Resolved MCA651A -> OOP
+INFO:app:DIAG_RRR: Resolved MCA652B -> TCP/IP
+INFO:app:DIAG_RRR: Resolved MCA754A -> Flink
+INFO:app:DIAG_RRR: Resolved MCA654B -> Node.js
+INFO:app:DIAG_RRR: Resolved MCA756A -> penetration testing
+INFO:app:DIAG_RRR: Resolved MCA752A -> Django
+INFO:app:DIAG_RRR: Resolved MCA751A -> Hibernate
+INFO:app:DIAG_RRR: Starting substitution for map: {'MCA641A': 'memory', 'MCA755A': 'Docker', 'MCA651A': 'OOP', 'MCA652B': 'TCP/IP', 'MCA754A': 'Flink', 'MCA654B': 'Node.js', 'MCA756A': 'penetration testing', 'MCA752A': 'Django', 'MCA751A': 'Hibernate'}
+INFO:app:DIAG_RRR: Chunk 3 | Substituted 1 entities
+INFO:app:DIAG_RRR: Chunk 7 | Substituted 1 entities
+INFO:app:DIAG_RRR: Chunk 9 | Substituted 1 entities
+INFO:app:DIAG_RRR: Chunk 10 | Substituted 1 entities
+INFO:app:DIAG_RRR: Chunk 11 | Substituted 1 entities
+INFO:app:DIAG_RRR: Chunk 13 | Substituted 1 entities
+INFO:app:DIAG_RRR: Chunk 14 | Substituted 1 entities
+INFO:app:DIAG_RRR: Chunk 18 | Substituted 1 entities
+INFO:app:DIAG_RRR: Chunk 19 | Substituted 1 entities
+INFO:app:DIAG_RRR: Chunk 20 | Substituted 2 entities
+INFO:app:DIAG_RRR: Chunk 21 | Substituted 2 entities
+INFO:app:DIAG_RRR: Chunk 24 | Substituted 2 entities
+INFO:app:DIAG_RRR: Chunk 25 | Substituted 2 entities
+INFO:app:DIAG_RRR: Chunk 29 | Substituted 2 entities
+INFO:app:DIAG_RRR: Chunk 31 | Substituted 3 entities
+INFO:app:DIAG_RRR: Chunk 32 | Substituted 2 entities
+INFO:app:DIAG_RRR: Chunk 38 | Substituted 3 entities
+INFO:app:DIAG_RRR: Chunk 40 | Substituted 2 entities

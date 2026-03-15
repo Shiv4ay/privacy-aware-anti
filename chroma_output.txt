@@ -1,0 +1,7 @@
+Checking candidates: ['privacy_documents', 'privacy_documents', 'privacy_documents_1']
+
+Found 4 collections:
+- privacy_documents_4: 1018 embeddings
+- privacy_documents_default: 0 embeddings
+- privacy_documents_1: 17160 embeddings
+- university_records: 0 embeddings

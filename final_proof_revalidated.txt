@@ -1,0 +1,64 @@
+INFO:     172.18.0.8:49020 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48672 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:40844 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37684 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:60244 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44392 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:48734 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51132 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:38944 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58650 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.1:50932 - "POST /ingest HTTP/1.1" 422 Unprocessable Entity
+INFO:     172.18.0.8:39406 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38368 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:53114 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48974 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:53068 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47764 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:38650 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.1:57716 - "POST /ingest HTTP/1.1" 422 Unprocessable Entity
+INFO:     127.0.0.1:55406 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:41542 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49276 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:47186 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41204 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:50802 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57068 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:43978 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43298 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:40448 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52220 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:56430 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40400 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:42578 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38934 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.1:49490 - "POST /ingest HTTP/1.1" 422 Unprocessable Entity
+INFO:     172.18.0.8:48312 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33384 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:58476 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53990 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:41738 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54798 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:49010 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45460 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:53294 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48732 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:43910 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37954 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:35976 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41230 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:60970 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40056 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.8:48626 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51538 - "GET /health HTTP/1.1" 200 OK
+SEARCHING with embeddings in collection: privacy_documents_4
+RAW RESULTS: {'ids': [[]], 'distances': [[]], 'embeddings': None, 'metadatas': [[]], 'documents': [[]], 'uris': None, 'data': None, 'included': ['metadatas', 'documents', 'distances']}
+SEARCHING with embeddings in collection: privacy_documents_4
+RAW RESULTS: {'ids': [[]], 'distances': [[]], 'embeddings': None, 'metadatas': [[]], 'documents': [[]], 'uris': None, 'data': None, 'included': ['metadatas', 'documents', 'distances']}
+SEARCHING with embeddings in collection: privacy_documents_4
+RAW RESULTS: {'ids': [[]], 'distances': [[]], 'embeddings': None, 'metadatas': [[]], 'documents': [[]], 'uris': None, 'data': None, 'included': ['metadatas', 'documents', 'distances']}
+SEARCHING with embeddings in collection: privacy_documents_4
+RAW RESULTS: {'ids': [[]], 'distances': [[]], 'embeddings': None, 'metadatas': [[]], 'documents': [[]], 'uris': None, 'data': None, 'included': ['metadatas', 'documents', 'distances']}
+INFO:     172.18.0.1:56824 - "POST /chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60938 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52462 - "GET /health HTTP/1.1" 200 OK

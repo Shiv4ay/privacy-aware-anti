@@ -18,6 +18,8 @@ const PII_CONFIG = {
     DRIVER_LICENSE: { color: 'from-indigo-500/30 to-indigo-600/10 border-indigo-500/40 text-indigo-300', icon: '🪪', label: 'Driver License' },
     ITIN: { color: 'from-indigo-500/30 to-indigo-600/10 border-indigo-500/40 text-indigo-300', icon: '🆔', label: 'Individual Taxpayer ID' },
     MEDICAL_LICENSE: { color: 'from-teal-500/30 to-teal-600/10 border-teal-500/40 text-teal-300', icon: '⚕️', label: 'Medical License' },
+    USER_ID: { color: 'from-fuchsia-500/30 to-fuchsia-600/10 border-fuchsia-500/40 text-fuchsia-300', icon: '🎓', label: 'Student USN' },
+    ID: { color: 'from-neutral-500/30 to-neutral-600/10 border-neutral-500/40 text-neutral-300', icon: '⛓️', label: 'System Identifier' },
     REDACTED: { color: 'from-gray-500/30 to-gray-600/10 border-gray-500/40 text-gray-300', icon: '🛡️', label: 'Sensitive Data' },
 };
 
