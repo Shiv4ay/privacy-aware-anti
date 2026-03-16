@@ -365,7 +365,7 @@ router.post('/login', loginLimiter, async (req, res) => {
         }
 
         // Reset failed attempts on success
-        await req.db.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE user_id = $1', [user.user_id]);
+        await req.db.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE id = $1', [user.id]);
 
         // MFA check follows
 
@@ -571,12 +571,12 @@ router.post('/request-password-reset', async (req, res) => {
         const { email } = req.body;
         if (!email) return res.status(400).json({ error: 'Email required' });
 
-        const userRes = await req.db.query('SELECT user_id FROM users WHERE email = $1', [email]);
+        const userRes = await req.db.query('SELECT id FROM users WHERE email = $1', [email]);
         if (userRes.rows.length === 0) {
             // Return success to prevent email enumeration
             return res.json({ message: 'If account exists, OTP has been sent.' });
         }
-        const userId = userRes.rows[0].user_id;
+        const userId = userRes.rows[0].id;
 
         // Generate OTP
         const otp = crypto.randomInt(100000, 999999).toString();
@@ -619,9 +619,9 @@ router.post('/reset-password', async (req, res) => {
 
         // Verify OTP
         const query = `
-            SELECT t.token_id, u.user_id
+            SELECT t.token_id, u.id as user_id
             FROM password_reset_tokens t
-            JOIN users u ON t.user_id = u.user_id
+            JOIN users u ON t.user_id = u.id
             WHERE u.email = $1 
             AND t.otp_code = $2 
             AND t.used = FALSE 
@@ -640,7 +640,7 @@ router.post('/reset-password', async (req, res) => {
         const passwordHash = await bcrypt.hash(newPassword, 12);
 
         // Update User
-        await client.query('UPDATE users SET password_hash = $1 WHERE user_id = $2', [passwordHash, user_id]);
+        await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, user_id]);
 
         // Mark Token Used
         await client.query('UPDATE password_reset_tokens SET used = TRUE, used_at = NOW() WHERE token_id = $1', [token_id]);
@@ -1009,6 +1009,7 @@ router.post('/google/callback', async (req, res) => {
 
         // Find or create user
         const user = await googleOAuth.findOrCreateUser(req.db, userInfo);
+        console.log(`[DEBUG] User object from findOrCreateUser:`, JSON.stringify(user, null, 2));
 
         // Ensure user_org_mapping exists for this user
         // (handles cases where user was created before mapping table existed)

@@ -22,9 +22,11 @@ async function attachUserId(req, res, next) {
 
     // Fallback: lookup by username in DB
     if (user.username) {
-      const result = await pool.query('SELECT id FROM users WHERE username = $1 LIMIT 1', [user.username]);
+      const result = await pool.query('SELECT id, user_id FROM users WHERE username = $1 LIMIT 1', [user.username]);
       if (result.rows.length > 0) {
         user.id = result.rows[0].id;
+        user.user_id = result.rows[0].user_id;
+        user.userId = result.rows[0].user_id;
         req.user = user;
       }
     }

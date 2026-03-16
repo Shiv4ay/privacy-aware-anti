@@ -255,6 +255,7 @@ class SearchRequest(BaseModel):
     org_id: Optional[int] = None
     department: Optional[str] = None
     user_category: Optional[str] = None
+    entity_id: Optional[str] = None
     model_preference: Optional[Dict[str, Any]] = None
 
 class ChatRequest(BaseModel):
@@ -264,6 +265,7 @@ class ChatRequest(BaseModel):
     org_id: Optional[int] = None
     department: Optional[str] = None
     user_category: Optional[str] = None
+    entity_id: Optional[str] = None
     model_preference: Optional[Dict[str, Any]] = None
 
 def get_org_collection(org_id: Optional[int] = None, org_name: str = "default"):
@@ -606,13 +608,18 @@ def chromadb_add(ids: List[str], documents: List[str], embeddings: List[List[flo
         metadatas=metadatas
     )
 
-def chromadb_query(query_embeddings: List[List[float]], n_results: int = TOP_K, collection=None):
-    """Query ChromaDB for most relevant documents using Python client"""
+def chromadb_query(query_embeddings: List[List[float]], n_results: int = TOP_K, collection=None, where=None):
+    """Query ChromaDB for most relevant documents using Python client with optional metadata filtering"""
     target_collection = collection or chroma_collection
-    results = target_collection.query(
-        query_embeddings=query_embeddings,
-        n_results=n_results
-    )
+    query_params = {
+        "query_embeddings": query_embeddings,
+        "n_results": n_results
+    }
+    if where:
+        query_params["where"] = where
+        logger.info(f"Applying ChromaDB where filter: {where}")
+        
+    results = target_collection.query(**query_params)
     return results
 
 # -----------------------------
@@ -1167,9 +1174,22 @@ def search_documents(request: SearchRequest):
 
 
         # Query ChromaDB
-        logger.info(f"SEARCH DEBUG: org_id={request.org_id} org_name={request.organization} query='{request.query}' top_k={request.top_k}")
+        logger.info(f"SEARCH DEBUG: org_id={request.org_id} org_name={request.organization} query='{request.query}' top_k={request.top_k} role={request.user_role} entity_id={request.entity_id}")
+        
+        # Build document-level scoping filter (Phase 10: Zero-Trust)
+        where_filter = None
+        if request.user_role in ['student', 'faculty'] and request.entity_id:
+            # Map role to metadata key
+            id_key = "student_id" if request.user_role == 'student' else "faculty_id"
+            # Strict scoping: only return docs that belong to this ID
+            where_filter = {id_key: request.entity_id}
+            logger.info(f"Enforcing Zero-Trust scoping for {request.user_role}: {id_key} = {request.entity_id}")
+        elif request.user_role not in ['admin', 'super_admin', 'university_admin', 'data_steward']:
+            # For other non-admin roles, we might want a different default, but for now we follow the restricted path
+            logger.warning(f"Unmapped role {request.user_role} - no specific scoping filter applied (broad access or restricted by org_id)")
+
         org_collection = get_org_collection(org_id=request.org_id, org_name=request.organization)
-        results = chromadb_query([query_embedding], request.top_k, collection=org_collection)
+        results = chromadb_query([query_embedding], request.top_k, collection=org_collection, where=where_filter)
         documents = []
         doc_ids = []
         if results and results.get("documents") and results["documents"][0]:

@@ -663,80 +663,223 @@ export default function SuperAdminDashboard() {
                                 TAB: SYSTEM ANALYTICS
                             ════════════════════════════════ */}
                             {tab === 'analytics' && (
-                                <div className="space-y-5">
-                                    <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-                                        <h2 className="text-lg font-black text-white">Audit Log Explorer</h2>
-                                        <div className="flex gap-3 flex-wrap">
-                                            <select value={auditAction} onChange={e => { setAuditAction(e.target.value); setAuditPage(1); }}
-                                                className="glass-input text-xs py-2 px-3 rounded-xl">
-                                                <option value="">All Actions</option>
-                                                {['chat', 'search', 'upload', 'login', 'logout', 'jailbreak_attempt', 'admin_role_change', 'admin_suspend_user', 'register'].map(a => (
-                                                    <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
-                                                ))}
-                                            </select>
-                                            <button onClick={fetchAuditLogs} className="flex items-center gap-1.5 px-3 py-2 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 text-gray-400 text-xs transition-all">
-                                                <RefreshCw className="w-3.5 h-3.5" /> Refresh
+                                <div className="space-y-6">
+                                    {/* Futuristic Summary Row */}
+                                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                        <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 relative overflow-hidden group">
+                                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-blue-500/10 rounded-full blur-2xl group-hover:bg-blue-500/20 transition-all" />
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="p-2 bg-blue-500/10 rounded-xl">
+                                                    <BarChart3 className="w-4 h-4 text-blue-400" />
+                                                </div>
+                                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Total Events</span>
+                                            </div>
+                                            <div className="text-2xl font-black text-white">{auditTotal.toLocaleString()}</div>
+                                            <div className="text-[9px] text-gray-600 mt-1 flex items-center gap-1">
+                                                <div className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
+                                                Aggregated across all services
+                                            </div>
+                                        </div>
+
+                                        <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 relative overflow-hidden group">
+                                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-purple-500/10 rounded-full blur-2xl group-hover:bg-purple-500/20 transition-all" />
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="p-2 bg-purple-500/10 rounded-xl">
+                                                    <Zap className="w-4 h-4 text-purple-400" />
+                                                </div>
+                                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Active Velocity</span>
+                                            </div>
+                                            <div className="text-2xl font-black text-white">
+                                                {liveActivity.length > 0 ? (liveActivity.length * 60).toLocaleString() : '—'}
+                                            </div>
+                                            <div className="text-[9px] text-gray-600 mt-1 flex items-center gap-1">
+                                                <div className="w-1 h-1 rounded-full bg-purple-400 animate-pulse" />
+                                                Est. events per hour (live)
+                                            </div>
+                                        </div>
+
+                                        <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 relative overflow-hidden group">
+                                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-red-500/10 rounded-full blur-2xl group-hover:bg-red-500/20 transition-all" />
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="p-2 bg-red-500/10 rounded-xl">
+                                                    <ShieldAlert className="w-4 h-4 text-red-400" />
+                                                </div>
+                                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Critical Anomalies</span>
+                                            </div>
+                                            <div className="text-2xl font-black text-white">{threats.length}</div>
+                                            <div className="text-[9px] text-gray-600 mt-1 flex items-center gap-1">
+                                                <div className="w-1 h-1 rounded-full bg-red-400 animate-pulse" />
+                                                Detected jailbreak attempts
+                                            </div>
+                                        </div>
+
+                                        <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 relative overflow-hidden group">
+                                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all" />
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="p-2 bg-emerald-500/10 rounded-xl">
+                                                    <Globe className="w-4 h-4 text-emerald-400" />
+                                                </div>
+                                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Unique IPs</span>
+                                            </div>
+                                            <div className="text-2xl font-black text-white">
+                                                {new Set(auditLogs.map(l => l.ip_address)).size}
+                                            </div>
+                                            <div className="text-[9px] text-gray-600 mt-1 flex items-center gap-1">
+                                                <div className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+                                                Distributions in current page
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Action Bar */}
+                                    <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between p-1 bg-white/[0.02] rounded-2xl border border-white/5 pr-4">
+                                        <div className="flex items-center gap-2 pl-4">
+                                            <div className="p-1.5 bg-yellow-500/10 rounded-lg">
+                                                <Search className="w-3.5 h-3.5 text-yellow-400" />
+                                            </div>
+                                            <h2 className="text-xs font-black text-white uppercase tracking-widest">Audit Explorer</h2>
+                                        </div>
+                                        <div className="flex gap-2 flex-wrap items-center">
+                                            <div className="relative">
+                                                <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500" />
+                                                <select
+                                                    value={auditAction}
+                                                    onChange={e => { setAuditAction(e.target.value); setAuditPage(1); }}
+                                                    className="bg-white/5 border border-white/10 text-white text-[11px] rounded-xl pl-8 pr-4 py-2 hover:bg-white/10 transition-all appearance-none min-w-[140px] focus:outline-none focus:border-yellow-500/50"
+                                                >
+                                                    <option value="">All Streams</option>
+                                                    {['chat', 'search', 'upload', 'login', 'logout', 'jailbreak_attempt', 'admin_role_change', 'admin_suspend_user', 'register'].map(a => (
+                                                        <option key={a} value={a}>{a.replace(/_/g, ' ').toUpperCase()}</option>
+                                                    ))}
+                                                </select>
+                                                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+                                            </div>
+                                            
+                                            <button onClick={fetchAuditLogs} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 text-gray-300 text-[11px] transition-all font-bold">
+                                                <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin text-yellow-500' : ''}`} /> Sync
                                             </button>
-                                            <button onClick={exportAuditCSV} className="flex items-center gap-1.5 px-3 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 rounded-xl border border-yellow-500/20 text-yellow-400 text-xs font-bold transition-all">
-                                                <Download className="w-3.5 h-3.5" /> Export CSV
+                                            
+                                            <div className="h-6 w-px bg-white/10 mx-1" />
+                                            
+                                            <button onClick={exportAuditCSV} className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 rounded-xl border border-yellow-500/20 text-yellow-400 text-[11px] font-black uppercase tracking-widest transition-all">
+                                                <Download className="w-3 h-3" /> Export .csv
                                             </button>
                                         </div>
                                     </div>
 
-                                    <GlassCard className="overflow-hidden">
-                                        <div className="px-5 py-3 border-b border-white/5 text-[10px] text-gray-500 font-bold">
-                                            {auditTotal.toLocaleString()} total records
-                                        </div>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-left">
-                                                <thead>
-                                                    <tr className="border-b border-white/5 bg-white/[0.02]">
-                                                        {['Time', 'Action', 'Resource', 'User', 'Organization', 'IP'].map(h => (
-                                                            <th key={h} className="px-5 py-3 text-[10px] font-black text-gray-500 uppercase tracking-widest">{h}</th>
+                                    {/* Main Explorer Table */}
+                                    <div className="rounded-2xl border border-white/10 bg-black/40 backdrop-blur-xl overflow-hidden shadow-2xl">
+                                        <div className="overflow-x-auto overflow-y-auto max-h-[600px] custom-scrollbar">
+                                            <table className="w-full text-left border-collapse">
+                                                <thead className="sticky top-0 z-20">
+                                                    <tr className="bg-white/[0.04] border-b border-white/10 backdrop-blur-md">
+                                                        {['Timestamp', 'Signal', 'Entity', 'Context', 'Source IP'].map(h => (
+                                                            <th key={h} className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">{h}</th>
                                                         ))}
                                                     </tr>
                                                 </thead>
-                                                <tbody className="divide-y divide-white/5">
+                                                <tbody className="divide-y divide-white/[0.04]">
                                                     {auditLogs.map((log, i) => (
-                                                        <tr key={log.id || i} className="hover:bg-white/[0.02] transition-colors">
-                                                            <td className="px-5 py-3 text-[10px] font-mono text-gray-500 whitespace-nowrap">
-                                                                {new Date(log.created_at).toLocaleString()}
+                                                        <motion.tr
+                                                            key={log.id || i}
+                                                            initial={{ opacity: 0, x: -4 }}
+                                                            animate={{ opacity: 1, x: 0 }}
+                                                            transition={{ delay: i * 0.02 }}
+                                                            className="group hover:bg-white/[0.02] transition-colors relative"
+                                                        >
+                                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                                <div className="flex items-center gap-3">
+                                                                    <div className="w-1 h-3 rounded-full bg-white/10 group-hover:bg-yellow-500/50 transition-all" />
+                                                                    <div className="flex flex-col">
+                                                                        <span className="text-[10px] font-mono text-white font-black tracking-tighter">
+                                                                            {new Date(log.created_at).toLocaleTimeString()}
+                                                                        </span>
+                                                                        <span className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">
+                                                                            {new Date(log.created_at).toLocaleDateString()}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
                                                             </td>
-                                                            <td className="px-5 py-3">
-                                                                <Badge color={
-                                                                    log.action?.includes('jailbreak') ? 'red' :
-                                                                        log.action?.includes('fail') || log.action?.includes('suspend') ? 'amber' :
-                                                                            log.action?.includes('chat') || log.action?.includes('search') ? 'blue' :
-                                                                                log.action?.includes('login') || log.action?.includes('register') ? 'green' : 'gray'
-                                                                }>{log.action?.replace(/_/g, ' ')}</Badge>
+                                                            <td className="px-6 py-4">
+                                                                <div className={`px-2 py-0.5 rounded border inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest shadow-sm ${
+                                                                    log.action?.includes('jailbreak') ? 'bg-red-500/10 text-red-500 border-red-500/20 shadow-red-500/5' :
+                                                                    log.action?.includes('fail') || log.action?.includes('suspend') ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
+                                                                    log.action?.includes('chat') || log.action?.includes('search') ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20 shadow-cyan-500/5' :
+                                                                    log.action?.includes('login') || log.action?.includes('register') ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
+                                                                    'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                                                }`}>
+                                                                    <div className={`w-1 h-1 rounded-full animate-pulse ${
+                                                                        log.action?.includes('jailbreak') ? 'bg-red-500' :
+                                                                        log.action?.includes('chat') ? 'bg-cyan-400' : 'bg-current'
+                                                                    }`} />
+                                                                    {log.action?.replace(/_/g, ' ')}
+                                                                </div>
                                                             </td>
-                                                            <td className="px-5 py-3 text-xs text-gray-500">{log.resource_type || '—'}</td>
-                                                            <td className="px-5 py-3">
-                                                                <div className="text-xs font-bold text-white">{log.username || '—'}</div>
-                                                                <div className="text-[10px] text-gray-600">{log.email || ''}</div>
+                                                            <td className="px-6 py-4">
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-6 h-6 rounded-lg bg-white/5 flex items-center justify-center shrink-0 border border-white/5 group-hover:border-white/20 transition-all">
+                                                                        <Users className="w-3 h-3 text-gray-400" />
+                                                                    </div>
+                                                                    <div className="flex flex-col">
+                                                                        <span className="text-xs font-bold text-white tracking-tight">{log.username || 'System'}</span>
+                                                                        <span className="text-[9px] text-gray-600 font-mono tracking-tighter">{log.email || 'INTERNAL_PROC'}</span>
+                                                                    </div>
+                                                                </div>
                                                             </td>
-                                                            <td className="px-5 py-3 text-xs text-gray-500">{log.org_name || '—'}</td>
-                                                            <td className="px-5 py-3 text-[10px] font-mono text-gray-600">{log.ip_address || '—'}</td>
-                                                        </tr>
+                                                            <td className="px-6 py-4">
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span className="text-[10px] text-gray-400 font-black uppercase tracking-[0.1em]">{log.org_name || 'Global'}</span>
+                                                                    <span className="text-[9px] text-gray-600 flex items-center gap-1">
+                                                                        <div className="w-1.5 h-px bg-yellow-500/30" />
+                                                                        {log.resource_type || 'unlinked'}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-right">
+                                                                <div className="inline-flex items-center gap-2 px-2 py-1 bg-white/[0.03] border border-white/5 rounded-lg">
+                                                                    <Globe className="w-2.5 h-2.5 text-gray-600" />
+                                                                    <span className="text-[10px] font-mono text-gray-400">{log.ip_address || '0.0.0.0'}</span>
+                                                                </div>
+                                                            </td>
+                                                        </motion.tr>
                                                     ))}
                                                     {auditLogs.length === 0 && (
-                                                        <tr><td colSpan="6" className="px-5 py-16 text-center text-gray-600 text-sm">No logs found</td></tr>
+                                                        <tr><td colSpan="5" className="px-6 py-20 text-center">
+                                                            <div className="flex flex-col items-center gap-3 opacity-30">
+                                                                <Database className="w-8 h-8 text-gray-400" />
+                                                                <p className="text-xs font-black uppercase tracking-widest text-gray-500">No signals intercepted</p>
+                                                            </div>
+                                                        </td></tr>
                                                     )}
                                                 </tbody>
                                             </table>
                                         </div>
-                                        {auditTotal > 50 && (
-                                            <div className="flex items-center justify-between px-5 py-3 border-t border-white/5">
-                                                <span className="text-[10px] text-gray-500">Page {auditPage} of {Math.ceil(auditTotal / 50)}</span>
-                                                <div className="flex gap-2">
-                                                    <button disabled={auditPage === 1} onClick={() => setAuditPage(p => p - 1)}
-                                                        className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 text-xs disabled:opacity-30 transition-all">← Prev</button>
-                                                    <button disabled={auditPage >= Math.ceil(auditTotal / 50)} onClick={() => setAuditPage(p => p + 1)}
-                                                        className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 text-xs disabled:opacity-30 transition-all">Next →</button>
-                                                </div>
+                                        
+                                        {/* Pagination Footer */}
+                                        <div className="flex items-center justify-between px-6 py-5 bg-white/[0.02] border-t border-white/10">
+                                            <div className="text-[9px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                                                <span className="text-white">Page {auditPage}</span> of {Math.ceil(auditTotal / 50)}
+                                                <div className="h-3 w-px bg-white/10 mx-1" />
+                                                Viewing <span className="text-yellow-500">{auditLogs.length}</span> of {auditTotal} segments
                                             </div>
-                                        )}
-                                    </GlassCard>
+                                            <div className="flex gap-2">
+                                                <button 
+                                                    disabled={auditPage === 1} 
+                                                    onClick={() => { setAuditPage(p => p - 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                                                    className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-400 text-[10px] font-black uppercase tracking-widest disabled:opacity-20 transition-all flex items-center gap-2"
+                                                >
+                                                    ← Backtrack
+                                                </button>
+                                                <button 
+                                                    disabled={auditPage >= Math.ceil(auditTotal / 50)} 
+                                                    onClick={() => { setAuditPage(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                                                    className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-200 text-[10px] font-black uppercase tracking-widest disabled:opacity-20 transition-all flex items-center gap-2"
+                                                >
+                                                    Advance →
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
 

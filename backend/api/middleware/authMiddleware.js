@@ -90,7 +90,7 @@ async function authenticateJWT(req, res, next) {
                             COALESCE(sel_o.name, o.name) as organization_name,
                             COALESCE(sel_o.type, o.type) as organization_type
                      FROM users u
-                     LEFT JOIN user_org_mapping m ON u.id = m.user_id AND (m.org_id = $2::int OR ($2::int IS NULL AND m.org_id = u.org_id))
+                     LEFT JOIN user_org_mapping m ON u.user_id = m.user_id AND (m.org_id = $2::int OR ($2::int IS NULL AND m.org_id = u.org_id))
                      LEFT JOIN organizations o ON o.id = COALESCE(m.org_id, u.org_id)
                      LEFT JOIN organizations sel_o ON sel_o.id = $2::int
                      WHERE u.user_id = $1`,
@@ -106,7 +106,7 @@ async function authenticateJWT(req, res, next) {
 
                 // Check if user is active
                 if (!user.is_active) {
-                    console.error(`[Auth] User ID ${user.id} is deactivated`);
+                    console.error(`[Auth] User ID ${user.user_id} is deactivated`);
                     return res.status(401).json({ error: 'Account is deactivated' });
                 }
 

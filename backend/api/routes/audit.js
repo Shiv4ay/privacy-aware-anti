@@ -11,12 +11,12 @@ router.get('/stats', async (req, res) => {
         const isSuperAdmin = req.user.role === 'super_admin';
 
         let joinClause = '';
-        let whereClause = "WHERE a.action IN ('search','chat')";
+        let whereClause = "WHERE a.action IN ('search', 'chat', 'jailbreak_attempt')";
         let piiWhereClause = "WHERE a.details->>'pii_detected' = 'true'";
         const params = [];
 
         if (!isSuperAdmin) {
-            joinClause = 'JOIN users u ON a.user_id = u.id JOIN user_org_mapping m ON u.id = m.user_id';
+            joinClause = 'JOIN users u ON a.user_id = u.user_id JOIN user_org_mapping m ON u.user_id = m.user_id';
             whereClause += ' AND m.org_id = $1';
             piiWhereClause += ' AND m.org_id = $1';
             params.push(orgId);
@@ -91,9 +91,9 @@ router.get('/logs', async (req, res) => {
                 u.email,
                 ur.name                                                     AS role
             FROM  audit_logs  a
-            LEFT  JOIN users      u  ON a.user_id  = u.id
+            LEFT  JOIN users      u  ON a.user_id  = u.user_id
             LEFT  JOIN user_roles ur ON u.role_id   = ur.id
-            LEFT  JOIN user_org_mapping m ON u.id = m.user_id
+            LEFT  JOIN user_org_mapping m ON u.user_id = m.user_id
             ${whereClause}
             ORDER BY a.created_at DESC
             LIMIT  $1 OFFSET $2
@@ -118,7 +118,7 @@ router.get('/logs', async (req, res) => {
         const countWhereClause = countConditions.length > 0 ? 'WHERE ' + countConditions.join(' AND ') : '';
 
         const countRes = await db.query(
-            `SELECT COUNT(*) FROM audit_logs a LEFT JOIN users u ON a.user_id = u.id LEFT JOIN user_org_mapping m ON u.id = m.user_id ${countWhereClause}`, cleanCountParams
+            `SELECT COUNT(*) FROM audit_logs a LEFT JOIN users u ON a.user_id = u.user_id LEFT JOIN user_org_mapping m ON u.user_id = m.user_id ${countWhereClause}`, cleanCountParams
         );
         const total = parseInt(countRes.rows[0].count) || 0;
 

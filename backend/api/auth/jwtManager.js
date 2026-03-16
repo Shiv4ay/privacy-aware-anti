@@ -36,6 +36,8 @@ function generateAccessToken(user) {
         role: user.role,
         department: user.department_id || user.department,
         organizationId: user.org_id || user.organization_id || user.organization, // Robust org check prioritizing org_id
+        entityId: user.entityId || user.entity_id,
+        userCategory: user.userCategory || user.user_category,
         type: 'access'
     };
 

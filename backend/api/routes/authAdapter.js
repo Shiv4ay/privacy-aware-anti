@@ -39,7 +39,7 @@ router.post('/phase4/register', async (req, res) => {
         const result = await req.db.query(
             `INSERT INTO users (username, email, password_hash, name, org_id, role, department, is_active)
              VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
-             RETURNING id, username, email, name, role, org_id, department`,
+             RETURNING id, user_id, username, email, name, role, org_id, department`,
             [username, email, passwordHash, username, org_id, role, department || 'general']
         );
 
@@ -47,7 +47,7 @@ router.post('/phase4/register', async (req, res) => {
 
         // Generate JWT
         const tokens = jwtManager.generateTokenPair({
-            user_id: user.id, // Map id to user_id for JWT
+            user_id: user.user_id, // Map UUID to user_id for JWT
             id: user.id,
             username: user.username,
             email: user.email,
@@ -81,7 +81,7 @@ router.post('/phase4/login', async (req, res) => {
 
         // Get user
         const result = await req.db.query(
-            `SELECT id, username, email, password_hash, role, org_id, department, is_active
+            `SELECT id, user_id, username, email, password_hash, role, org_id, department, is_active
              FROM users WHERE email = $1`,
             [email]
         );
@@ -104,7 +104,7 @@ router.post('/phase4/login', async (req, res) => {
 
         // Generate tokens
         const tokens = jwtManager.generateTokenPair({
-            user_id: user.id,
+            user_id: user.user_id,
             id: user.id,
             username: user.username,
             email: user.email,
@@ -116,9 +116,9 @@ router.post('/phase4/login', async (req, res) => {
         // Save session
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         await req.db.query(
-            `INSERT INTO auth_sessions (user_id,refresh_token, expires_at, ip_address)
+            `INSERT INTO auth_sessions (user_id, refresh_token, expires_at, ip_address)
              VALUES ($1, $2, $3, $4)`,
-            [user.id, tokens.refreshToken, expiresAt, req.ip]
+            [user.user_id, tokens.refreshToken, expiresAt, req.ip]
         );
 
         res.json({
@@ -153,8 +153,8 @@ router.get('/phase4/me', async (req, res) => {
         const payload = jwtManager.verifyAccessToken(token);
 
         const result = await req.db.query(
-            'SELECT id, username, email, role, org_id, department FROM users WHERE id = $1',
-            [payload.user_id || payload.id]
+            'SELECT id, user_id, username, email, role, org_id, department FROM users WHERE user_id = $1',
+            [payload.user_id || payload.userId]
         );
 
         if (result.rows.length === 0) {
