@@ -97,7 +97,7 @@ class AnomalyDetector {
         try {
             const result = await this.db.query(
                 `SELECT COUNT(*) as access_count 
-         FROM audit_log 
+         FROM audit_logs 
          WHERE user_id = $1 
          AND action IN ('read', 'access')
          AND created_at > NOW() - INTERVAL '10 minutes'`,
@@ -142,7 +142,7 @@ class AnomalyDetector {
             // Get last login IPs
             const result = await this.db.query(
                 `SELECT DISTINCT ip_address 
-         FROM audit_log 
+         FROM audit_logs 
          WHERE user_id = $1 
          AND action = 'login'
          AND success = TRUE
@@ -209,7 +209,7 @@ class AnomalyDetector {
         try {
             for (const alert of alerts) {
                 await this.db.query(
-                    `INSERT INTO audit_log (user_id, action, success, error_message, metadata)
+                    `INSERT INTO audit_logs (user_id, action, success, error_message, metadata)
            VALUES ($1, $2, FALSE, $3, $4)`,
                     [
                         userId,

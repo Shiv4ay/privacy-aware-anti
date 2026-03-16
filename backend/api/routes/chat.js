@@ -10,8 +10,8 @@ const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
 /**
  * Helper: Write audit log to audit_logs + broadcast via Redis for real-time UI
  *
- * CRITICAL: req.user.id  = integer PK  (matches audit_logs.user_id INTEGER)
- *           req.user.userId = UUID string  (DO NOT use for audit_logs)
+ * CRITICAL: req.user.userId = UUID string (matches audit_logs.user_id UUID)
+ *           req.user.id     = integer PK (DO NOT use for audit_logs as it is now UUID)
  */
 async function logAndBroadcast(req, { action, success, details }) {
   try {
@@ -21,21 +21,21 @@ async function logAndBroadcast(req, { action, success, details }) {
       return;
     }
 
-    // Use req.user.id (integer PK) — NOT req.user.userId (UUID)
-    const userIdInt = req.user?.id || null;
+    // Use req.user.userId (UUID) — NOT req.user.id (integer PK)
+    const userId = req.user?.userId || req.user?.user_id || null;
     const username = req.user?.username || 'System';
     const email = req.user?.email || null;
     const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null;
     const ua = req.get('User-Agent') || null;
 
-    console.log(`[Audit] Logging ${action} for user ${username} (id=${userIdInt})`);
+    console.log(`[Audit] Logging ${action} for user ${username} (uuid=${userId})`);
 
     // Write to audit_logs (the table SecurityDashboard reads from)
     const result = await db.query(
       `INSERT INTO audit_logs (user_id, action, resource_type, details, ip_address, user_agent, created_at)
              VALUES ($1, $2, 'query', $3, $4, $5, NOW())
              RETURNING id, created_at`,
-      [userIdInt, action, JSON.stringify(details), ip, ua]
+      [userId, action, JSON.stringify(details), ip, ua]
     );
 
     if (result.rows.length > 0) {
@@ -44,7 +44,7 @@ async function logAndBroadcast(req, { action, success, details }) {
 
       const event = {
         id: row.id,
-        user_id: userIdInt,
+        user_id: userId,
         action,
         resource_type: 'query',
         success,
@@ -98,10 +98,11 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
       query: query.trim(),
       privacy_level,
       org_id,
-      user_id: req.user?.id,
+      user_id: req.user?.userId || req.user?.user_id || req.user?.id,
       user_role: req.user?.role || 'student',
       department: req.user?.department || null,
-      user_category: req.user?.user_category || null,
+      user_category: req.user?.user_category || req.user?.userCategory || null,
+      entity_id: req.user?.entityId || req.user?.entity_id || null, // Zero-Trust ID
       conversation_history: req.body.conversation_history || [],
     }, { timeout: 300000 });
 
@@ -206,8 +207,11 @@ router.post('/chat/stream', authenticateJWT, aiLimiter, async (req, res) => {
       query: query.trim(),
       privacy_level,
       org_id,
-      user_id: req.user?.id,
+      user_id: req.user?.userId || req.user?.user_id || req.user?.id,
       user_role: req.user?.role || 'student',
+      department: req.user?.department || null,
+      user_category: req.user?.user_category || req.user?.userCategory || null,
+      entity_id: req.user?.entityId || req.user?.entity_id || null, // Zero-Trust ID
       conversation_history: req.body.conversation_history || [],
     }, {
       responseType: 'stream',
@@ -265,8 +269,11 @@ router.post('/search', authenticateJWT, aiLimiter, async (req, res) => {
       query: query.trim(),
       top_k: top_k || 5,
       org_id: org_id || null,
+      user_id: req.user?.userId || req.user?.user_id || req.user?.id,
+      user_role: req.user?.role || 'student',
       department: req.user?.department || null,
-      user_category: req.user?.user_category || null
+      user_category: req.user?.user_category || req.user?.userCategory || null,
+      entity_id: req.user?.entityId || req.user?.entity_id || null // Zero-Trust ID
     }, { timeout: 300000 });
 
     // Audit log BEFORE sending response

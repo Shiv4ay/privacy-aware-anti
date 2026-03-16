@@ -141,7 +141,10 @@ router.get('/stats', requireAdmin, async (req, res) => {
 // GET /api/admin/threats - Recent security threats and jailbreak attempts
 router.get('/threats', requireAdmin, async (req, res) => {
     try {
-        const query = `
+        const isSuperAdmin = req.user.role === 'super_admin';
+        const orgId = req.user.org_id;
+
+        let query = `
             SELECT 
                 al.id,
                 al.created_at as time,
@@ -152,12 +155,19 @@ router.get('/threats', requireAdmin, async (req, res) => {
                 al.details,
                 al.details->>'error_message' as error_message
             FROM audit_logs al
-            LEFT JOIN users u ON al.user_id = u.id
+            LEFT JOIN users u ON al.user_id = u.user_id
             WHERE al.action = 'jailbreak_attempt'
-            ORDER BY al.created_at DESC
-            LIMIT 50
         `;
-        const result = await pool.query(query);
+        const params = [];
+
+        if (!isSuperAdmin) {
+            query += ' AND u.org_id = $1';
+            params.push(orgId);
+        }
+
+        query += ' ORDER BY al.created_at DESC LIMIT 50';
+
+        const result = await pool.query(query, params);
         res.json({ success: true, threats: result.rows });
     } catch (error) {
         console.error('Threats Fetch Error:', error);
@@ -424,14 +434,19 @@ router.put('/users/:id/suspend', requireAdmin, async (req, res) => {
         }
 
         // Suspend user and invalidate existing refresh tokens to force kill sessions
+        const userRes = await pool.query('SELECT user_id FROM users WHERE id = $1', [userId]);
+        const uuid = userRes.rows[0]?.user_id;
+
         await pool.query('UPDATE users SET is_active = FALSE WHERE id = $1', [userId]);
-        await pool.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [userId]);
+        if (uuid) {
+            await pool.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [uuid]);
+        }
 
         // Audit log
         await pool.query(
-            `INSERT INTO audit_log (user_id, action, resource_type, resource_id, success, error_message, ip_address, user_agent, metadata)
-             VALUES ($1, 'admin_suspend_user', 'users', $2, TRUE, 'User manually suspended by Admin', $3, $4, $5)`,
-            [req.user.id, userId, req.ip, req.get('User-Agent'), { admin_id: req.user.id }]
+            `INSERT INTO audit_logs (user_id, action, resource_type, details, ip_address, user_agent, created_at)
+             VALUES ($1, 'admin_suspend_user', 'users', $2, $3, $4, NOW())`,
+            [req.user.user_id, JSON.stringify({ target_id: userId, message: 'User manually suspended by Admin' }), req.ip, req.get('User-Agent')]
         );
 
         res.json({ success: true, message: 'User successfully suspended' });
@@ -551,7 +566,7 @@ router.get('/audit-logs', requireSuperAdmin, async (req, res) => {
                    al.ip_address, u.username, u.email, u.role,
                    o.name as org_name
             FROM audit_logs al
-            LEFT JOIN users u ON al.user_id = u.id
+            LEFT JOIN users u ON al.user_id = u.user_id
             LEFT JOIN organizations o ON u.org_id = o.id
             ${whereStr}
             ORDER BY al.created_at DESC
@@ -580,7 +595,7 @@ router.get('/org-analytics', requireSuperAdmin, async (req, res) => {
             FROM organizations o
             LEFT JOIN users u ON u.org_id = o.id
             LEFT JOIN documents d ON d.org_id = o.id
-            LEFT JOIN audit_logs al ON u.id = al.user_id
+            LEFT JOIN audit_logs al ON u.user_id = al.user_id
             GROUP BY o.id, o.name, o.type
             ORDER BY user_count DESC
         `);

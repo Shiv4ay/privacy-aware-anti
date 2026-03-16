@@ -108,8 +108,8 @@ class GoogleOAuthManager {
             if (userResult.rows.length > 0) {
                 // Update avatar if changed and always update last_login
                 const updateResult = await client.query(
-                    'UPDATE users SET last_login = NOW(), oauth_avatar_url = $1 WHERE id = $2 RETURNING *',
-                    [userInfo.picture, userResult.rows[0].id]
+                    'UPDATE users SET last_login = NOW(), oauth_avatar_url = $1 WHERE user_id = $2 RETURNING *',
+                    [userInfo.picture, userResult.rows[0].user_id]
                 );
                 await client.query('COMMIT');
                 return updateResult.rows[0];
@@ -126,8 +126,8 @@ class GoogleOAuthManager {
                 const updateResult = await client.query(
                     `UPDATE users 
                      SET oauth_provider = $1, oauth_id = $2, oauth_avatar_url = $3, last_login = NOW()
-                     WHERE id = $4 RETURNING *`,
-                    ['google', userInfo.googleId, userInfo.picture, userResult.rows[0].id]
+                     WHERE user_id = $4 RETURNING *`,
+                    ['google', userInfo.googleId, userInfo.picture, userResult.rows[0].user_id]
                 );
                 await client.query('COMMIT');
                 return updateResult.rows[0];

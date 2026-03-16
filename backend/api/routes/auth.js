@@ -45,7 +45,7 @@ async function logAudit(db, userId, action, success, details = {}, req = null) {
             action,
             ip,
             ua,
-            JSON.stringify(auditLogsDetails)
+            JSON.stringify(details)
         ]);
 
         // Real-time broadcast if setup
@@ -57,7 +57,7 @@ async function logAudit(db, userId, action, success, details = {}, req = null) {
                 action: action,
                 resource_type: 'auth',
                 success: success,
-                metadata: auditLogsDetails,
+                metadata: details,
                 created_at: auditRow.created_at,
                 username: details.username || 'System'
             };
@@ -136,16 +136,52 @@ router.post('/register', async (req, res) => {
         // For public registration, usually org is assigned or looked up.
         // Simplifying: if org_id is provided, use it, else null (or default).
 
+        // Check if user exists in dataset_users for auto-linking
+        console.log(`[DEBUG] Querying dataset_users for email: |${email}| (length: ${email.length})`);
+        const datasetCheck = await client.query('SELECT role, entity_id, department_id FROM dataset_users WHERE email = $1', [email]);
+        let datasetUser = datasetCheck.rows.length > 0 ? datasetCheck.rows[0] : null;
+
+        if (datasetUser) {
+            console.log(`[AUTH] FOUND dataset user: ${email} (entity_id: ${datasetUser.entity_id}, role: ${datasetUser.role})`);
+            // Override role if provided in dataset
+            role = datasetUser.role || role;
+            department = datasetUser.department_id || department;
+            
+            // AUTO-ORG ASSIGNMENT: If linked to dataset but no org provided, default to PES MCA (Org 4)
+            if (!org_id) {
+                org_id = 4; // PES University (MCA Dept)
+                console.log(`[AUTH] Auto-assigned org_id=4 for dataset user ${email}`);
+            }
+        } else {
+            console.log(`[AUTH] NO dataset user found for |${email}|`);
+            // Try a more lenient check just in case
+            const lenientCheck = await client.query('SELECT role, entity_id, department_id FROM dataset_users WHERE TRIM(email) ILIKE $1', [email]);
+            if (lenientCheck.rows.length > 0) {
+                 datasetUser = lenientCheck.rows[0];
+                 console.log(`[AUTH] FOUND dataset user (lenient): ${email} (entity_id: ${datasetUser.entity_id})`);
+                 role = datasetUser.role || role;
+                 department = datasetUser.department_id || department;
+                 if (!org_id) org_id = 4;
+            }
+        }
+
         // Check if user exists
-        const userCheck = await client.query('SELECT id FROM users WHERE email = $1', [email]);
+        const userCheck = await client.query('SELECT id, user_id FROM users WHERE email = $1', [email]);
         let user;
 
         if (userCheck.rows.length > 0) {
             user = userCheck.rows[0];
+            // Update user with dataset info if missing
+            if (datasetUser) {
+                await client.query(
+                    'UPDATE users SET entity_id = $1, role = $2, department = $3 WHERE user_id = $4',
+                    [datasetUser.entity_id, role, department, user.user_id]
+                );
+            }
             // Check if mapping already exists
-            const mappingCheck = await client.query('SELECT id FROM user_org_mapping WHERE user_id = $1 AND org_id = $2', [user.id, org_id]);
+            const mappingCheck = await client.query('SELECT id FROM user_org_mapping WHERE user_id = $1 AND org_id = $2', [user.user_id, org_id]);
             if (mappingCheck.rows.length > 0) {
-                await logAudit(client, null, 'register_attempt', false, { error: 'User already belongs to this organization', email, org_id }, req);
+                await logAudit(client, user.user_id, 'register_attempt', false, { error: 'User already belongs to this organization', email, org_id }, req);
                 await client.query('ROLLBACK');
                 return res.status(409).json({ error: 'User already belongs to this organization' });
             }
@@ -155,45 +191,56 @@ router.post('/register', async (req, res) => {
             const saltRounds = 12;
             const passwordHash = await bcrypt.hash(password, saltRounds);
             const insertUserQuery = `
-                INSERT INTO users (username, email, password_hash, role, department, org_id, is_active)
-                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
-                RETURNING id, username, email
+                INSERT INTO users (username, email, password_hash, role, department, org_id, is_active, entity_id, user_category)
+                VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8)
+                RETURNING id, user_id, username, email, entity_id, role
             `;
-            const newUser = await client.query(insertUserQuery, [username, email, passwordHash, role || 'user', department, org_id]);
+            const newUser = await client.query(insertUserQuery, [
+                username, 
+                email, 
+                passwordHash, 
+                role || 'user', 
+                department, 
+                org_id,
+                datasetUser ? datasetUser.entity_id : null,
+                datasetUser ? datasetUser.role : null // Mapping role to user_category for metadata use
+            ]);
             user = newUser.rows[0];
+            console.log('[DEBUG] Registered User Object:', JSON.stringify(user, null, 2));
 
             await client.query(
                 'INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)',
-                [user.id, passwordHash]
+                [user.user_id, passwordHash]
             );
         }
 
         // Create Mapping
-        const assignedRole = ['student', 'faculty', 'researcher', 'admin'].includes(role) ? role : 'user';
+        const allowedRoles = ['student', 'faculty', 'researcher', 'university_admin', 'super_admin', 'admin', 'user'];
+        const assignedRole = allowedRoles.includes(role) ? role : 'user';
         await client.query(`
             INSERT INTO user_org_mapping (user_id, org_id, role, department)
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (user_id, org_id) DO NOTHING
-        `, [user.id, org_id, assignedRole, department]);
+        `, [user.user_id, org_id, assignedRole, department]);
 
-        // Generate tokens (Use first org for now or let them re-login)
-        const tokens = jwtManager.generateTokenPair({ ...user, user_id: user.id, role: assignedRole, org_id });
+        // Generate tokens
+        const tokens = jwtManager.generateTokenPair({ ...user, role: assignedRole, org_id });
 
         // Create Session
         await client.query(`
             INSERT INTO auth_sessions 
             (user_id, refresh_token, expires_at, ip_address, user_agent, org_id)
             VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4, $5)
-        `, [user.id, tokens.refreshToken, req.ip, req.get('User-Agent'), org_id]);
+        `, [user.user_id, tokens.refreshToken, req.ip, req.get('User-Agent'), org_id]);
 
-        await logAudit(client, user.id, 'register', true, { role: assignedRole, org_id }, req);
+        await logAudit(client, user.user_id, 'register', true, { role: assignedRole, org_id }, req);
 
         await client.query('COMMIT');
 
         res.status(201).json({
             message: 'Registration successful',
             user: {
-                userId: user.id,
+                userId: user.user_id,
                 username: user.username,
                 email: user.email,
                 role: assignedRole,
@@ -227,7 +274,7 @@ router.post('/login', loginLimiter, async (req, res) => {
 
         // Fetch fundamental user record
         const userResult = await req.db.query(
-            `SELECT id, user_id, username, email, password_hash, is_active, is_mfa_enabled, failed_login_attempts 
+            `SELECT id, user_id, username, email, password_hash, is_active, is_mfa_enabled, failed_login_attempts, entity_id, user_category 
              FROM users 
              WHERE email = $1`,
             [email]
@@ -248,8 +295,35 @@ router.post('/login', loginLimiter, async (req, res) => {
         const isValid = await bcrypt.compare(password, user.password_hash);
         if (!isValid) {
             await req.db.query('UPDATE users SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1 WHERE id = $1', [user.id]);
-            await logAudit(req.db, user.user_id || user.id, 'login_failed', false, { error: 'Invalid password' }, req);
+            await logAudit(req.db, user.user_id, 'login_failed', false, { error: 'Invalid password' }, req);
             return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        console.log('[DEBUG] Login User Object:', JSON.stringify(user, null, 2));
+        // Success! Handle entity_id auto-linking for legacy users who haven't been linked yet
+        // OR users who were registered without an organization context (Auto-Recovery)
+        let entityId = user.entity_id;
+        let userCategory = user.user_category;
+
+        if (!entityId) {
+            const datasetCheck = await req.db.query('SELECT entity_id, role, department_id FROM dataset_users WHERE email = $1', [email]);
+            if (datasetCheck.rows.length > 0) {
+                const ds = datasetCheck.rows[0];
+                entityId = ds.entity_id;
+                userCategory = ds.role;
+                // Update the user record
+                await req.db.query(
+                    'UPDATE users SET entity_id = $1, user_category = $2, department = COALESCE(department, $3) WHERE id = $4',
+                    [entityId, userCategory, ds.department_id, user.id]
+                );
+                // Auto-create mapping to Org 4 (PES MCA) if missing
+                await req.db.query(`
+                    INSERT INTO user_org_mapping (user_id, org_id, role, department)
+                    VALUES ($1, 4, $2, $3)
+                    ON CONFLICT (user_id, org_id) DO NOTHING
+                `, [user.user_id, userCategory, ds.department_id]);
+                console.log(`[AUTH] User auto-linked and mapped to Org 4 on login: ${email} -> ${entityId}`);
+            }
         }
 
         // Get organizations for this user
@@ -258,7 +332,7 @@ router.post('/login', loginLimiter, async (req, res) => {
             FROM user_org_mapping m
             JOIN organizations o ON m.org_id = o.id
             WHERE m.user_id = $1
-        `, [user.id]);
+        `, [user.user_id]);
 
         const orgs = mappingResult.rows;
 
@@ -291,11 +365,13 @@ router.post('/login', loginLimiter, async (req, res) => {
         }
 
         // Reset failed attempts on success
-        await req.db.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE id = $1', [user.id]);
+        await req.db.query('UPDATE users SET failed_login_attempts = 0, last_login = NOW() WHERE user_id = $1', [user.user_id]);
+
+        // MFA check follows
 
         // Check if MFA is required
         if (user.is_mfa_enabled) {
-            const mfaToken = jwtManager.generateMFAToken({ user_id: user.user_id || user.id, org_id: selectedOrg.org_id });
+            const mfaToken = jwtManager.generateMFAToken({ user_id: user.user_id, org_id: selectedOrg.org_id });
             return res.status(200).json({
                 message: 'MFA required',
                 mfaRequired: true,
@@ -306,12 +382,14 @@ router.post('/login', loginLimiter, async (req, res) => {
         // Merge user with selected org data
         const fullUser = {
             ...user,
-            user_id: user.user_id || user.id,
+            userId: user.user_id, // Explicitly use UUID
             org_id: selectedOrg.org_id,
             role: selectedOrg.role,
             department: selectedOrg.department,
             organization_type: selectedOrg.organization_type,
-            organization_name: selectedOrg.organization_name
+            organization_name: selectedOrg.organization_name,
+            entityId: entityId,
+            userCategory: userCategory
         };
 
         // Generate Tokens
@@ -329,14 +407,16 @@ router.post('/login', loginLimiter, async (req, res) => {
         res.json({
             message: 'Login successful',
             user: {
-                userId: fullUser.id,
+                userId: fullUser.user_id, // Consistent UUID
                 username: fullUser.username,
                 email: fullUser.email,
                 role: fullUser.role,
                 org_id: fullUser.org_id,
                 organization_name: fullUser.organization_name,
                 organization_type: fullUser.organization_type,
-                department: fullUser.department
+                department: fullUser.department,
+                entityId: entityId,
+                userCategory: userCategory
             },
             ...tokens
         });
@@ -390,10 +470,10 @@ router.post('/refresh-token', async (req, res) => {
         // Get User
         // Note: We join with user_org_mapping to get the role/dept for this specific org in the session
         const userResult = await req.db.query(`
-            SELECT u.id, u.username, u.email, m.role, m.org_id, m.department 
+            SELECT u.id, u.user_id, u.username, u.email, m.role, m.org_id, m.department 
             FROM users u
-            JOIN user_org_mapping m ON u.id = m.user_id
-            WHERE u.id = $1 AND m.org_id = $2
+            JOIN user_org_mapping m ON u.user_id = m.user_id
+            WHERE u.user_id = $1 AND m.org_id = $2
         `, [session.user_id, session.org_id]);
         if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
         const user = userResult.rows[0];
@@ -401,7 +481,7 @@ router.post('/refresh-token', async (req, res) => {
         // Rotate Tokens (Security Best Practice)
         // 1. Invalidate old refresh token (delete or mark inactive, or just replace)
         // We will replace it in this session to keep the session ID stable but rotate the key.
-        const newTokens = jwtManager.generateTokenPair({ ...user, user_id: user.id });
+        const newTokens = jwtManager.generateTokenPair({ ...user, userId: user.user_id });
 
         await req.db.query(`
             UPDATE auth_sessions 
@@ -491,12 +571,12 @@ router.post('/request-password-reset', async (req, res) => {
         const { email } = req.body;
         if (!email) return res.status(400).json({ error: 'Email required' });
 
-        const userRes = await req.db.query('SELECT id FROM users WHERE email = $1', [email]);
+        const userRes = await req.db.query('SELECT user_id FROM users WHERE email = $1', [email]);
         if (userRes.rows.length === 0) {
             // Return success to prevent email enumeration
             return res.json({ message: 'If account exists, OTP has been sent.' });
         }
-        const userId = userRes.rows[0].id;
+        const userId = userRes.rows[0].user_id;
 
         // Generate OTP
         const otp = crypto.randomInt(100000, 999999).toString();
@@ -539,9 +619,9 @@ router.post('/reset-password', async (req, res) => {
 
         // Verify OTP
         const query = `
-            SELECT t.token_id, u.id as user_id
+            SELECT t.token_id, u.user_id
             FROM password_reset_tokens t
-            JOIN users u ON t.user_id = u.id
+            JOIN users u ON t.user_id = u.user_id
             WHERE u.email = $1 
             AND t.otp_code = $2 
             AND t.used = FALSE 
@@ -554,24 +634,24 @@ router.post('/reset-password', async (req, res) => {
             return res.status(400).json({ error: 'Invalid or expired OTP' });
         }
 
-        const { token_id, user_id } = result.rows[0];
+        const { token_id, user_id: user_uuid } = result.rows[0];
 
         // Hash new password
         const passwordHash = await bcrypt.hash(newPassword, 12);
 
         // Update User
-        await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, user_id]);
+        await client.query('UPDATE users SET password_hash = $1 WHERE user_id = $2', [passwordHash, user_id]);
 
         // Mark Token Used
         await client.query('UPDATE password_reset_tokens SET used = TRUE, used_at = NOW() WHERE token_id = $1', [token_id]);
 
         // Log to History
-        await client.query('INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)', [user_id, passwordHash]);
+        await client.query('INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)', [user_uuid, passwordHash]);
 
         // Revoke all existing sessions (Security Best Practice)
-        await client.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [user_id]);
+        await client.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [user_uuid]);
 
-        await logAudit(client, user_id, 'password_reset_success', true, {}, req);
+        await logAudit(client, user_uuid, 'password_reset_success', true, {}, req);
 
         await client.query('COMMIT');
         res.json({ message: 'Password reset successfully. Please login.' });
@@ -764,7 +844,7 @@ router.post('/mfa/authenticate', async (req, res) => {
                     m2.org_id as mapping_org_id
              FROM mfa_secrets m
              JOIN users u ON m.user_id = u.user_id
-             LEFT JOIN user_org_mapping m2 ON u.id = m2.user_id AND (m2.org_id = $2::int OR ($2::int IS NULL AND m2.org_id = u.org_id))
+             LEFT JOIN user_org_mapping m2 ON u.user_id = m2.user_id AND (m2.org_id = $2::int OR ($2::int IS NULL AND m2.org_id = u.org_id))
              LEFT JOIN organizations o ON o.id = COALESCE(m2.org_id, u.org_id)
              LEFT JOIN organizations sel_org ON sel_org.id = $2::int
              WHERE m.user_id = $1 AND m.enabled = TRUE`,
@@ -934,14 +1014,14 @@ router.post('/google/callback', async (req, res) => {
         // (handles cases where user was created before mapping table existed)
         const existingMapping = await client.query(
             'SELECT id FROM user_org_mapping WHERE user_id = $1',
-            [user.id]
+            [user.user_id]
         );
         if (existingMapping.rows.length === 0 && user.org_id) {
             await client.query(`
                 INSERT INTO user_org_mapping (user_id, org_id, role, department)
                 VALUES ($1, $2, $3, $4)
                 ON CONFLICT (user_id, org_id) DO NOTHING
-            `, [user.id, user.org_id, user.role, user.department]);
+            `, [user.user_id, user.org_id, user.role, user.department]);
         }
 
         // Query user_org_mapping for all organizations
@@ -950,7 +1030,7 @@ router.post('/google/callback', async (req, res) => {
             FROM user_org_mapping m
             JOIN organizations o ON m.org_id = o.id
             WHERE m.user_id = $1
-        `, [user.id]);
+        `, [user.user_id]);
 
         const orgs = mappingResult.rows;
 
@@ -967,7 +1047,7 @@ router.post('/google/callback', async (req, res) => {
                 })),
                 // Pass back user info so frontend can finalize login after selection
                 tempUser: {
-                    userId: user.user_id || user.id,
+                    userId: user.user_id,
                     email: user.email,
                     username: user.username,
                     avatarUrl: user.custom_avatar_url || user.oauth_avatar_url
@@ -994,7 +1074,7 @@ router.post('/google/callback', async (req, res) => {
         // Generate app tokens with the correct org context
         const appTokens = jwtManager.generateTokenPair({
             ...user,
-            user_id: user.user_id || user.id,
+            user_id: user.user_id,
             role: finalRole,
             org_id: finalOrgId
         });
@@ -1004,16 +1084,16 @@ router.post('/google/callback', async (req, res) => {
             INSERT INTO auth_sessions 
             (user_id, refresh_token, expires_at, ip_address, user_agent, org_id)
             VALUES ($1, $2, NOW() + INTERVAL '7 days', $3, $4, $5)
-        `, [user.user_id || user.id, appTokens.refreshToken, req.ip, req.get('User-Agent'), finalOrgId]);
+        `, [user.user_id, appTokens.refreshToken, req.ip, req.get('User-Agent'), finalOrgId]);
 
-        await logAudit(client, user.user_id || user.id, 'oauth_login', true, { provider: 'google', org_id: finalOrgId }, req);
+        await logAudit(client, user.user_id, 'oauth_login', true, { provider: 'google', org_id: finalOrgId }, req);
 
         await client.query('COMMIT');
 
         res.json({
             message: 'Google login successful',
             user: {
-                userId: user.user_id || user.id,
+                userId: user.user_id,
                 username: user.username,
                 email: user.email,
                 role: finalRole,

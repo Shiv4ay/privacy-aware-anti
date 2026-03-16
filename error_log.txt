@@ -1,0 +1,252 @@
+
+> api@1.0.0 start
+> node index.js
+
+✅ Auth System mounted at /api/auth
+✅ User Setup mounted at /api/user
+✅ Session Routes mounted at /api/session
+✅ Admin Routes mounted at /api/admin
+✅ Ingestion Routes mounted at /api/ingest
+✅ Documents Routes mounted at /api/documents
+✅ Organizations Routes mounted at /api/orgs
+✅ Profile Routes mounted at /api/profile
+✅ Audit Routes mounted at /api/audit
+✅ Notifications Routes mounted at /api/notifications
+✅ Chat & Search mounted at /api
+🚀 Real-time logic initialized
+🚀 Server running on port 3001
+✅ Real-time Gateway & Application endpoints ready
+[Realtime] Subscribed to 1 channels
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request OPTIONS /api/auth/google/callback started
+[DEBUG] Request POST /api/auth/google/callback started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Security Headers passed
+[DEBUG] Sanitizer passed
+[DEBUG] Entering Rate Limiter
+[DEBUG] Rate Limiter passed
+[DEBUG] Entering Auth Routes
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+
+> api@1.0.0 start
+> node index.js
+
+✅ Auth System mounted at /api/auth
+✅ User Setup mounted at /api/user
+✅ Session Routes mounted at /api/session
+✅ Admin Routes mounted at /api/admin
+✅ Ingestion Routes mounted at /api/ingest
+✅ Documents Routes mounted at /api/documents
+✅ Organizations Routes mounted at /api/orgs
+✅ Profile Routes mounted at /api/profile
+✅ Audit Routes mounted at /api/audit
+✅ Notifications Routes mounted at /api/notifications
+✅ Chat & Search mounted at /api
+🚀 Real-time logic initialized
+🚀 Server running on port 3001
+✅ Real-time Gateway & Application endpoints ready
+[Realtime] Subscribed to 1 channels
+✅ MinIO bucket 'privacy-documents' ready
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed
+[DEBUG] Request GET /healthz started
+[DEBUG] CORS passed
+[DEBUG] Body parser passed

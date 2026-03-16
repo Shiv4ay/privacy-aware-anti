@@ -10,20 +10,22 @@ const POLICY_CACHE_TTL = Number(process.env.ABAC_POLICY_CACHE_MS || 5000);
 let policyCache = { ts: 0, policies: [] };
 
 async function queryUserById(userId) {
-  const uid = Number(userId);
-  if (Number.isNaN(uid)) return null;
+  // If numeric, use id. If string/uuid, use user_id.
+  const isNumeric = !isNaN(Number(userId)) && !String(userId).includes('-');
+  const idCol = isNumeric ? 'u.id' : 'u.user_id';
+  const val = isNumeric ? Number(userId) : String(userId);
 
   // Try the full query first (application schema expected)
   const fullQuery = `
-    SELECT u.id, u.username, u.email, u.department, u.organization, u.user_category, u.role_id, u.org_id, u.role, r.name as role_name
+    SELECT u.id, u.user_id, u.username, u.email, u.department, u.organization, u.user_category, u.role_id, u.org_id, u.role, r.name as role_name
     FROM users u
     LEFT JOIN roles r ON u.role_id = r.id
-    WHERE u.id = $1
+    WHERE ${idCol} = $1
     LIMIT 1;
   `;
 
   try {
-    const res = await pool.query(fullQuery, [uid]);
+    const res = await pool.query(fullQuery, [val]);
     if (!res.rows.length) return null;
     const row = res.rows[0];
     // Use role column if available, fallback to role_name
@@ -32,6 +34,8 @@ async function queryUserById(userId) {
 
     return {
       id: row.id,
+      userId: row.user_id,
+      user_id: row.user_id,
       username: row.username,
       email: row.email,
       department: row.department,
@@ -46,12 +50,14 @@ async function queryUserById(userId) {
     // If schema differs (missing column/table), fallback to a minimal safe query.
     console.warn('queryUserById: full query failed, retrying minimal select. Error:', err && err.message ? err.message : err);
     try {
-      const safeQ = `SELECT id, username, email, role_id FROM users WHERE id = $1 LIMIT 1`;
-      const r2 = await pool.query(safeQ, [uid]);
+      const safeQ = `SELECT id, user_id, username, email, role_id FROM users WHERE ${idCol} = $1 LIMIT 1`;
+      const r2 = await pool.query(safeQ, [val]);
       if (!r2.rows.length) return null;
       const row = r2.rows[0];
       return {
         id: row.id,
+        userId: row.user_id,
+        user_id: row.user_id,
         username: row.username,
         email: row.email,
         department: null,
@@ -186,14 +192,14 @@ function abacMiddleware(requiredAction) {
         return res.status(401).json({ error: 'Invalid token' });
       }
 
-      // Accept numeric sub OR numeric id from payload
-      const numericSub = Number(payload.sub ?? payload.id);
-      if (!payload || Number.isNaN(numericSub)) {
-        console.error('Invalid token payload (missing or non-numeric sub/id). Payload:', payload);
-        return res.status(401).json({ error: 'Invalid token payload (missing numeric sub/id)' });
+      // Support userId (UUID) or legacy numeric sub/id
+      const identity = payload.userId || payload.sub || payload.id;
+      if (!identity) {
+        console.error('Invalid token payload (missing userId/sub/id). Payload:', payload);
+        return res.status(401).json({ error: 'Invalid token payload' });
       }
 
-      const user = await queryUserById(numericSub);
+      const user = await queryUserById(identity);
       if (!user) {
         console.warn(`User not found for sub=${numericSub}`);
         return res.status(403).json({ error: 'User not found' });
