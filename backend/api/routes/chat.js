@@ -70,6 +70,26 @@ async function logAndBroadcast(req, { action, success, details }) {
   }
 }
 
+// H4-fix: shared helpers to eliminate duplicate DB lookups across /chat and /chat/stream
+async function fetchOrgPrivacyLevel(db, org_id) {
+  try {
+    const res = await db.query('SELECT privacy_level FROM organizations WHERE id = $1', [org_id]);
+    return (res.rows.length > 0 && res.rows[0].privacy_level) ? res.rows[0].privacy_level : 'standard';
+  } catch {
+    return 'standard';
+  }
+}
+
+async function fetchUserPrivacyMode(db, userId) {
+  if (!userId) return 'normal';
+  try {
+    const res = await db.query('SELECT privacy_shield_enabled FROM users WHERE user_id = $1', [userId]);
+    return (res.rows.length > 0 && res.rows[0].privacy_shield_enabled) ? 'hidden' : 'normal';
+  } catch {
+    return 'normal';
+  }
+}
+
 /**
  * POST /chat (mounted at /api/chat)
  */
@@ -82,38 +102,83 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
 
     const org_id = req.user?.org_id || 1;
 
-    // Fetch the organization's configured privacy level from the database
-    let privacy_level = 'standard';
-    try {
-      const orgResult = await req.db.query('SELECT privacy_level FROM organizations WHERE id = $1', [org_id]);
-      if (orgResult.rows.length > 0 && orgResult.rows[0].privacy_level) {
-        privacy_level = orgResult.rows[0].privacy_level;
-      }
-    } catch (dbErr) {
-      console.error('[Chat API] Failed to fetch org privacy level:', dbErr);
-      // Default to 'standard' on error
-    }
+    // H4-fix: use shared helpers (no more duplicate inline DB lookups)
+    const privacy_level = await fetchOrgPrivacyLevel(req.db, org_id);
+    const privacy_mode  = await fetchUserPrivacyMode(req.db, req.user?.userId);
 
     const response = await axios.post(`${WORKER_URL}/chat`, {
       query: query.trim(),
       privacy_level,
+      privacy_mode,
       org_id,
       user_id: req.user?.userId || req.user?.user_id || req.user?.id,
       user_role: req.user?.role || 'student',
       department: req.user?.department || null,
       user_category: req.user?.user_category || req.user?.userCategory || null,
       entity_id: req.user?.entityId || req.user?.entity_id || null, // Zero-Trust ID
+      user_email: req.user?.email || null,  // Identity anchoring
+      username: req.user?.username || null,  // Identity anchoring
       conversation_history: req.body.conversation_history || [],
     }, { timeout: 300000 });
 
-    if (response.data?.status === 'blocked') {
+    // Universal security block detection: catch ANY status containing 'blocked'
+    // Covers: blocked, security_blocked, security_blocked_ai, security_blocked_output, privacy_blocked, and any future *_blocked variants
+    const workerStatus = response.data?.status || '';
+    const isSecurityBlock = workerStatus !== 'success' && workerStatus.includes('blocked');
+
+    if (isSecurityBlock && workerStatus === 'privacy_blocked') {
+      // Privacy violation — cross-student access attempt
+      await logAndBroadcast(req, {
+        action: 'privacy_violation',
+        success: false,
+        details: {
+          success: 'false',
+          threat_type: 'cross_student_access',
+          security_layer: workerStatus,
+          query_redacted: query.trim().substring(0, 200),
+          error_message: response.data?.response?.substring(0, 300) || 'Privacy Violation: Cross-student data access attempt blocked',
+          org_id
+        }
+      });
+      return res.json(response.data);
+    }
+
+    if (isSecurityBlock) {
+      // All other security blocks — jailbreak, prompt injection, output audit, AI judge
+      const threatType = workerStatus === 'security_blocked_ai' ? 'ai_intent_block'
+                       : workerStatus === 'security_blocked_output' ? 'output_leak_blocked'
+                       : 'jailbreak';
       await logAndBroadcast(req, {
         action: 'jailbreak_attempt',
         success: false,
         details: {
           success: 'false',
+          threat_type: threatType,
+          security_layer: workerStatus,
           query_redacted: query.trim().substring(0, 200),
           error_message: response.data?.response || 'Security Violation: Malicious Prompt Injection Detected',
+          org_id
+        }
+      });
+      return res.json(response.data);
+    }
+
+    // T10.2 Fallback: Check if the LLM response itself indicates a privacy refusal
+    // (catches edge cases where name-based detector misses but LLM follows system prompt)
+    const responseText = (response.data?.response || '').toLowerCase();
+    const isLLMPrivacyRefusal = responseText.includes('i can only show your own records') ||
+                                 responseText.includes('cannot retrieve or display another student') ||
+                                 responseText.includes('privacy protection active') ||
+                                 responseText.includes('cannot access another student');
+    if (isLLMPrivacyRefusal) {
+      await logAndBroadcast(req, {
+        action: 'privacy_violation',
+        success: false,
+        details: {
+          success: 'false',
+          threat_type: 'cross_student_access',
+          query_redacted: query.trim().substring(0, 200),
+          error_message: 'Privacy Violation: Cross-student query detected by LLM guardrail',
           org_id
         }
       });
@@ -143,6 +208,7 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
         success: false,
         details: {
           success: 'false',
+          threat_type: 'jailbreak',
           query_redacted: (req.body?.query || '').substring(0, 200),
           error_message: error.response?.data?.detail || 'Security Violation: Malicious Prompt Injection Detected'
         }
@@ -183,16 +249,9 @@ router.post('/chat/stream', authenticateJWT, aiLimiter, async (req, res) => {
 
     const org_id = req.user?.org_id || 1;
 
-    // Fetch org privacy level
-    let privacy_level = 'standard';
-    try {
-      const orgResult = await req.db.query('SELECT privacy_level FROM organizations WHERE id = $1', [org_id]);
-      if (orgResult.rows.length > 0 && orgResult.rows[0].privacy_level) {
-        privacy_level = orgResult.rows[0].privacy_level;
-      }
-    } catch (dbErr) {
-      console.error('[ChatStream API] Failed to fetch org privacy level:', dbErr);
-    }
+    // H4-fix: use shared helpers (no more duplicate inline DB lookups)
+    const privacy_level = await fetchOrgPrivacyLevel(req.db, org_id);
+    const privacy_mode  = await fetchUserPrivacyMode(req.db, req.user?.userId);
 
     // Set SSE headers
     res.writeHead(200, {
@@ -206,12 +265,15 @@ router.post('/chat/stream', authenticateJWT, aiLimiter, async (req, res) => {
     const workerRes = await axios.post(`${WORKER_URL}/chat/stream`, {
       query: query.trim(),
       privacy_level,
+      privacy_mode,
       org_id,
       user_id: req.user?.userId || req.user?.user_id || req.user?.id,
       user_role: req.user?.role || 'student',
       department: req.user?.department || null,
       user_category: req.user?.user_category || req.user?.userCategory || null,
       entity_id: req.user?.entityId || req.user?.entity_id || null, // Zero-Trust ID
+      user_email: req.user?.email || null,  // Identity anchoring
+      username: req.user?.username || null,  // Identity anchoring
       conversation_history: req.body.conversation_history || [],
     }, {
       responseType: 'stream',
@@ -295,16 +357,19 @@ router.post('/search', authenticateJWT, aiLimiter, async (req, res) => {
     console.error('Search error:', error.message);
 
     if (error.response?.status === 403) {
+      const detail = error.response?.data?.detail || '';
+      const isPrivacyBlock = detail.toLowerCase().includes('privacy');
       await logAndBroadcast(req, {
-        action: 'jailbreak_attempt',
+        action: isPrivacyBlock ? 'privacy_violation' : 'jailbreak_attempt',
         success: false,
         details: {
           success: 'false',
+          threat_type: isPrivacyBlock ? 'cross_student_access' : 'jailbreak',
           query_redacted: (req.body?.query || '').substring(0, 200),
-          error_message: error.response?.data?.detail || 'Security Violation: Malicious Prompt Injection Detected'
+          error_message: detail || 'Security Violation: Malicious Prompt Injection Detected'
         }
       });
-      return res.status(403).json({ error: error.response?.data?.detail || 'Forbidden' });
+      return res.status(403).json({ error: detail || 'Forbidden' });
     }
 
     await logAndBroadcast(req, {

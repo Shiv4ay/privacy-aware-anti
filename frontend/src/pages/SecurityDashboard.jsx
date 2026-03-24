@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Shield, Lock, AlertTriangle, Eye, RefreshCw, Activity, FileText } from 'lucide-react';
+import { Shield, ShieldAlert, Lock, AlertTriangle, Eye, RefreshCw, Activity, FileText, UserX } from 'lucide-react';
 import client from '../api/index';
 import toast from 'react-hot-toast';
 import { io } from 'socket.io-client';
@@ -127,6 +127,8 @@ export default function SecurityDashboard() {
 
     const allowed = Math.max(0, (stats?.totalQueries ?? 0) - (stats?.blockedQueries ?? 0));
     const blocked = stats?.blockedQueries ?? 0;
+    const jailbreaks = stats?.jailbreakAttempts ?? 0;
+    const privacyViolations = stats?.privacyViolations ?? 0;
     const piiCount = stats?.piiRedacted ?? 0;
     const score = stats?.privacyScore ?? 100;
 
@@ -149,10 +151,11 @@ export default function SecurityDashboard() {
             </div>
 
             {/* Stat Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-5 mb-8">
                 <StatCard title="Queries Allowed" value={allowed} subtext="processed successfully" icon={Activity} color="blue" flash={flashCards.allowed} onClick={() => toggleFilter({ status: 'allowed', pii: null })} isActive={filter.status === 'allowed'} />
-                <StatCard title="Queries Blocked" value={blocked} subtext="jailbreak attempts prevented" icon={AlertTriangle} color="red" flash={flashCards.blocked} onClick={() => toggleFilter({ status: 'blocked', pii: null })} isActive={filter.status === 'blocked'} />
-                <StatCard title="PII Redacted" value={piiCount} subtext="sensitive data points protected" icon={Eye} color="yellow" flash={flashCards.pii} onClick={() => toggleFilter({ status: null, pii: 'true' })} isActive={filter.pii === 'true'} />
+                <StatCard title="Jailbreak Attempts" value={jailbreaks} subtext="prompt injection blocked" icon={ShieldAlert} color="red" flash={flashCards.blocked} onClick={() => toggleFilter({ status: 'blocked', pii: null })} isActive={filter.status === 'blocked'} />
+                <StatCard title="Privacy Violations" value={privacyViolations} subtext="cross-student access blocked" icon={UserX} color="orange" flash={flashCards.blocked} onClick={() => toggleFilter({ status: 'privacy', pii: null })} isActive={filter.status === 'privacy'} />
+                <StatCard title="PII Redacted" value={piiCount} subtext="sensitive data protected" icon={Eye} color="yellow" flash={flashCards.pii} onClick={() => toggleFilter({ status: null, pii: 'true' })} isActive={filter.pii === 'true'} />
                 <StatCard title="Privacy Score" value={`${score}%`} subtext="Enterprise Compliance" icon={Shield} color="green" flash={flashCards.score} onClick={() => setFilter({ status: null, pii: null })} isActive={false} />
             </div>
 
@@ -174,7 +177,8 @@ export default function SecurityDashboard() {
                         </h2>
                         <span className="text-xs text-gray-500">
                             {filter.status === 'allowed' && 'Showing Allowed Queries'}
-                            {filter.status === 'blocked' && 'Showing Blocked Queries'}
+                            {filter.status === 'blocked' && 'Showing Blocked Queries (Jailbreak Attempts)'}
+                            {filter.status === 'privacy' && 'Showing Privacy Violations (Cross-Student Access)'}
                             {filter.pii === 'true' && 'Showing PII Redaction Events'}
                             {!filter.status && !filter.pii && 'Real-time privacy monitoring · auto-refreshes every 2s'}
                         </span>
@@ -203,35 +207,41 @@ export default function SecurityDashboard() {
                                         No audit log entries yet. Perform a search or chat to generate entries.
                                     </td>
                                 </tr>
-                            ) : logs.map((log) => (
-                                <tr key={log.id} className="hover:bg-white/5 transition-colors">
+                            ) : logs.map((log) => {
+                                const isThreat = log.action === 'jailbreak_attempt' || log.action === 'privacy_violation';
+                                const isJailbreak = log.action === 'jailbreak_attempt';
+                                const isPrivacyViolation = log.action === 'privacy_violation';
+                                return (
+                                <tr key={log.id} className={`transition-colors ${
+                                    isJailbreak ? 'bg-red-500/[0.08] hover:bg-red-500/[0.14] border-l-2 border-l-red-500'
+                                    : isPrivacyViolation ? 'bg-orange-500/[0.08] hover:bg-orange-500/[0.14] border-l-2 border-l-orange-500'
+                                    : 'hover:bg-white/5'
+                                }`}>
                                     <td className="px-4 py-4 whitespace-nowrap text-xs text-gray-400">
                                         {new Date(log.created_at).toLocaleString()}
                                     </td>
                                     <td className="px-4 py-4 whitespace-nowrap">
                                         <div className="flex items-center gap-2">
-                                            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-white/10 to-white/5 flex items-center justify-center text-xs font-bold border border-white/10 text-gray-300">
+                                            <div className={`w-7 h-7 rounded-full bg-gradient-to-br flex items-center justify-center text-xs font-bold border ${
+                                                isThreat ? 'from-red-500/20 to-red-600/10 border-red-500/30 text-red-300' : 'from-white/10 to-white/5 border-white/10 text-gray-300'
+                                            }`}>
                                                 {(log.username || 'S')[0].toUpperCase()}
                                             </div>
                                             <div className="flex flex-col">
-                                                <span className="text-xs font-bold text-white">{log.username || 'System Agent'}</span>
+                                                <span className={`text-xs font-bold ${isThreat ? 'text-red-300' : 'text-white'}`}>{log.username || 'System Agent'}</span>
                                                 {log.email && <span className="text-[10px] text-premium-gold font-mono opacity-80">{log.email}</span>}
                                             </div>
                                         </div>
                                     </td>
                                     <td className="px-4 py-4 whitespace-nowrap">
-                                        <span className={`px-2 py-1 text-xs rounded-full border font-semibold ${log.action === 'chat' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-                                            : log.action === 'search' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                                                : 'bg-gray-500/10 text-gray-400 border-gray-500/20'
-                                            }`}>
-                                            {log.action}
-                                        </span>
+                                        <ActionBadge action={log.action} />
                                     </td>
                                     <td className="px-4 py-4">
                                         <AuditDetails log={log} />
                                     </td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>
@@ -253,24 +263,55 @@ export default function SecurityDashboard() {
     );
 }
 
+// ── ActionBadge ───────────────────────────────────────────────────────────────
+function ActionBadge({ action }) {
+    const config = {
+        jailbreak_attempt: { label: 'JAILBREAK', bg: 'bg-red-500/15', text: 'text-red-400', border: 'border-red-500/30', dot: 'bg-red-500 animate-pulse' },
+        privacy_violation: { label: 'PRIVACY VIOLATION', bg: 'bg-orange-500/15', text: 'text-orange-400', border: 'border-orange-500/30', dot: 'bg-orange-500 animate-pulse' },
+        chat: { label: 'CHAT', bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20', dot: null },
+        search: { label: 'SEARCH', bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', dot: null },
+    };
+    const c = config[action] || { label: action, bg: 'bg-gray-500/10', text: 'text-gray-400', border: 'border-gray-500/20', dot: null };
+    return (
+        <span className={`inline-flex items-center gap-1.5 px-2 py-1 text-[10px] rounded-full border font-bold uppercase tracking-wider ${c.bg} ${c.text} ${c.border}`}>
+            {c.dot && <span className={`w-1.5 h-1.5 rounded-full ${c.dot} inline-block`} />}
+            {c.label}
+        </span>
+    );
+}
+
 // ── AuditDetails ──────────────────────────────────────────────────────────────
 function AuditDetails({ log }) {
     const m = log.metadata || {};
 
-    const success = log.success !== false && m.success !== 'false';
+    const isThreat = log.action === 'jailbreak_attempt' || log.action === 'privacy_violation';
+    const success = !isThreat && log.success !== false && m.success !== 'false';
     const piiDetected = m.pii_detected === 'true' || m.pii_detected === true;
     const piiTypes = Array.isArray(m.pii_types) ? m.pii_types
         : (typeof m.pii_types === 'string' && m.pii_types ? m.pii_types.split(',').map(s => s.trim()) : []);
     const query = m.query_redacted || '';
     const resultCount = m.results_count != null ? Number(m.results_count) : null;
-    const errorMsg = m.error || null;
+    const errorMsg = m.error_message || m.error || null;
+    const threatType = m.threat_type || null;
+    const securityLayer = m.security_layer || null;
     const isLogin = log.action === 'login' || log.action === 'oauth_login';
 
     return (
         <div className="flex flex-col gap-1.5">
-            {/* Row 1: Status + query */}
+            {/* Row 1: Status + threat info + query */}
             <div className="flex items-center gap-2 flex-wrap">
-                {success ? (
+                {isThreat ? (
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        log.action === 'jailbreak_attempt'
+                            ? 'bg-red-500/20 text-red-400 border-red-500/40'
+                            : 'bg-orange-500/20 text-orange-400 border-orange-500/40'
+                    }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full inline-block animate-pulse ${
+                            log.action === 'jailbreak_attempt' ? 'bg-red-500' : 'bg-orange-500'
+                        }`} />
+                        BLOCKED
+                    </span>
+                ) : success ? (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-500/15 text-green-400 border border-green-500/30">
                         <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" /> ALLOWED
                     </span>
@@ -280,28 +321,51 @@ function AuditDetails({ log }) {
                     </span>
                 )}
 
+                {(threatType || securityLayer) && (
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                        log.action === 'jailbreak_attempt' ? 'bg-red-500/10 text-red-300 border border-red-500/20'
+                        : 'bg-orange-500/10 text-orange-300 border border-orange-500/20'
+                    }`}>
+                        {threatType === 'cross_student_access' ? 'CROSS-STUDENT ACCESS'
+                         : threatType === 'ai_intent_block' ? 'AI INTENT BLOCK'
+                         : threatType === 'output_leak_blocked' ? 'OUTPUT LEAK BLOCKED'
+                         : securityLayer === 'security_blocked' ? 'PROMPT INJECTION'
+                         : securityLayer === 'security_blocked_ai' ? 'AI INTENT BLOCK'
+                         : securityLayer === 'security_blocked_output' ? 'OUTPUT LEAK BLOCKED'
+                         : threatType === 'jailbreak' ? 'PROMPT INJECTION'
+                         : threatType || 'SECURITY'}
+                    </span>
+                )}
+
                 {query && (
-                    <span className="text-gray-200 text-xs font-mono" style={{ maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }} title={query}>
+                    <span className={`text-xs font-mono ${isThreat ? 'text-red-200' : 'text-gray-200'}`} style={{ maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }} title={query}>
                         "{query}"
                     </span>
                 )}
 
                 {isLogin && !query && (
                     <span className="text-blue-400 text-xs font-semibold">
-                        🔐 Authenticated via {m.provider || 'Google OAuth'}
+                        Authenticated via {m.provider || 'Google OAuth'}
                     </span>
                 )}
-
-                {errorMsg && <span className="text-red-400 text-xs italic">{errorMsg}</span>}
             </div>
 
-            {/* Row 2: PII info + result count */}
-            {(piiDetected || resultCount != null) && (
+            {/* Row 2: Error message for threats */}
+            {isThreat && errorMsg && (
+                <div className={`text-[11px] italic px-2 py-1 rounded ${
+                    log.action === 'jailbreak_attempt' ? 'text-red-300 bg-red-500/10' : 'text-orange-300 bg-orange-500/10'
+                }`}>
+                    {errorMsg.length > 150 ? errorMsg.substring(0, 150) + '...' : errorMsg}
+                </div>
+            )}
+
+            {/* Row 3: PII info + result count (only for non-threat actions) */}
+            {!isThreat && (piiDetected || resultCount != null) && (
                 <div className="flex items-center gap-1.5 flex-wrap">
                     {piiDetected ? (
                         <>
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-500/15 text-yellow-400 border border-yellow-500/30">
-                                🔒 PII Redacted
+                                PII Redacted
                             </span>
                             {piiTypes.filter(Boolean).map(t => (
                                 <span key={t} className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-yellow-500/10 text-yellow-300 border border-yellow-500/20 uppercase tracking-wide">
@@ -311,7 +375,7 @@ function AuditDetails({ log }) {
                         </>
                     ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-500/10 text-green-500 border border-green-500/20">
-                            ✓ No PII detected
+                            No PII detected
                         </span>
                     )}
                     {resultCount != null && (
@@ -321,6 +385,9 @@ function AuditDetails({ log }) {
                     )}
                 </div>
             )}
+
+            {/* Non-threat error */}
+            {!isThreat && errorMsg && <span className="text-red-400 text-xs italic">{errorMsg}</span>}
         </div>
     );
 }
@@ -330,6 +397,7 @@ function StatCard({ title, value, subtext, icon: Icon, color, onClick, isActive,
     const colorMap = {
         blue: { bg: 'from-blue-500/20 to-blue-600/5', border: 'border-blue-500/30', text: 'text-blue-400' },
         red: { bg: 'from-red-500/20 to-red-600/5', border: 'border-red-500/30', text: 'text-red-400' },
+        orange: { bg: 'from-orange-500/20 to-orange-600/5', border: 'border-orange-500/30', text: 'text-orange-400' },
         yellow: { bg: 'from-yellow-500/20 to-yellow-600/5', border: 'border-yellow-500/30', text: 'text-yellow-400' },
         green: { bg: 'from-green-500/20 to-green-600/5', border: 'border-green-500/30', text: 'text-green-400' },
     };

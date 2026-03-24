@@ -295,6 +295,7 @@ class SearchRequest(BaseModel):
     user_category: Optional[str] = None
     user_role: Optional[str] = "student" # super_admin, admin, student, general
     user_id: Optional[Any] = None
+    entity_id: Optional[str] = None  # Zero-Trust: student SRN / entity ID for RLS
     model_preference: Optional[Dict[str, Any]] = None
     dp_enabled: Optional[bool] = DP_ENABLED
 
@@ -305,6 +306,9 @@ class ChatRequest(BaseModel):
     org_id: Optional[int] = None
     user_role: Optional[str] = "student"
     user_id: Optional[Any] = None
+    entity_id: Optional[str] = None  # Zero-Trust: student SRN / entity ID for RLS
+    user_email: Optional[str] = None  # For identity anchoring in chat
+    username: Optional[str] = None  # For identity anchoring in chat
     department: Optional[str] = None
     user_category: Optional[str] = None
     model_preference: Optional[Dict[str, Any]] = None
@@ -1337,15 +1341,18 @@ def search_documents(request: SearchRequest):
         logger.info(f"Target Collection: {org_collection.name} | Items: {org_collection.count()}")
         
         where_filter = {}
-        # Apply Metadata Filtering for RBAC
+        # Apply Metadata Filtering for RBAC (Row-Level Security)
         # Super Admin: Sees all in Global Collection
         # Org Admin: Sees all in Org Collection
-        # Student: Sees all in Org Collection (Privacy Sandwich handles individual PII)
+        # Student: ONLY sees records matching their entity_id (Zero-Trust RLS)
         # General User: Sees only their personal docs in General Collection
         
         if request.user_role == 'general' and request.user_id:
             where_filter["uploaded_by"] = int(request.user_id)
-        # Note: 'student' role now relies on org_collection separation + Gateway Redaction
+        elif request.user_role == 'student' and request.entity_id:
+            # ZERO-TRUST: Student can ONLY retrieve their own records
+            where_filter["student_id"] = request.entity_id.strip().upper()
+            logger.info(f"ZERO-TRUST RLS: Enforcing student_id filter = '{request.entity_id}'")
 
         fetch_k = request.top_k + 2 if (request.dp_enabled and DifferentialPrivacy) else request.top_k
         
@@ -1360,50 +1367,83 @@ def search_documents(request: SearchRequest):
         else:
             results = chromadb_query([query_embedding], fetch_k, collection=org_collection)
 
-        # HYBRID SEARCH: Keyword matching for Student IDs (STU, RES, INT)
+        # HYBRID SEARCH: Keyword matching for Student IDs (PES, STU, RES, INT)
+        # SECURITY: Hybrid search MUST also respect the where_filter (Zero-Trust RLS)
         try:
             potential_ids = []
-            # Find words like STUXXXX or RESXXXX or INTXXXX or literal uppercase words with digits
+            # Find words like PES1PG24CAXXX or STUXXXX or RESXXXX or INTXXXX
             words = re.findall(r'[A-Z0-9]+', request.query.upper())
             for word in words:
-                if any(p in word for p in ["STU", "RES", "INT"]) and any(c.isdigit() for c in word):
+                if any(p in word for p in ["PES", "STU", "RES", "INT"]) and any(c.isdigit() for c in word):
                     potential_ids.append(word)
             
             if potential_ids:
                 keyword = potential_ids[0]
-                logger.info(f"Hybrid Search: Found potential ID '{keyword}' - Querying Chroma...")
                 
-                # Use Chroma's internal where_document for literal string matching (more precise than embeddings for IDs)
-                kw_results = org_collection.get(
-                    where_document={"$contains": keyword},
-                    limit=10,
-                    include=["metadatas", "documents"]
-                )
-                
-                if kw_results and kw_results.get("ids") and len(kw_results["ids"]) > 0:
-                    logger.info(f"Hybrid Search: Found {len(kw_results['ids'])} EXACT matches for '{keyword}'")
-                    
-                    # Merge into main results
-                    if not results or not results.get("ids") or not results["ids"][0]:
-                        results = {
-                            "ids": [kw_results["ids"]],
-                            "documents": [kw_results["documents"]],
-                            "metadatas": [kw_results["metadatas"]],
-                            "distances": [[0.0] * len(kw_results["ids"])] # Virtual distance for exact match
-                        }
+                # ZERO-TRUST: If student, BLOCK hybrid search for IDs that don't match their own entity_id
+                if request.user_role == 'student' and request.entity_id:
+                    own_id = request.entity_id.strip().upper()
+                    if keyword != own_id:
+                        logger.warning(f"ZERO-TRUST BLOCK: Student '{own_id}' tried to hybrid-search for '{keyword}' — DENIED")
+                        # Do NOT perform hybrid search for other students' IDs
                     else:
-                        exist = set(results["ids"][0])
-                        # INSERT direct ID matches at the BEGINNING (index 0) to ensure LLM priority
-                        for i in range(len(kw_results["ids"])):
-                            rid = kw_results["ids"][i]
-                            if rid not in exist:
-                                results["ids"][0].insert(0, rid)
-                                results["documents"][0].insert(0, kw_results["documents"][i])
-                                results["distances"][0].insert(0, 0.0)
-                                if results.get("metadatas") and kw_results.get("metadatas"):
-                                    results["metadatas"][0].insert(0, kw_results["metadatas"][i])
+                        logger.info(f"Hybrid Search: Student searching for own ID '{keyword}' — ALLOWED")
+                        kw_results = org_collection.get(
+                            where_document={"$contains": keyword},
+                            where=where_filter if where_filter else None,
+                            limit=10,
+                            include=["metadatas", "documents"]
+                        )
+                        if kw_results and kw_results.get("ids") and len(kw_results["ids"]) > 0:
+                            logger.info(f"Hybrid Search: Found {len(kw_results['ids'])} EXACT matches for '{keyword}'")
+                            if not results or not results.get("ids") or not results["ids"][0]:
+                                results = {
+                                    "ids": [kw_results["ids"]],
+                                    "documents": [kw_results["documents"]],
+                                    "metadatas": [kw_results["metadatas"]],
+                                    "distances": [[0.0] * len(kw_results["ids"])]
+                                }
+                            else:
+                                exist = set(results["ids"][0])
+                                for i in range(len(kw_results["ids"])):
+                                    rid = kw_results["ids"][i]
+                                    if rid not in exist:
+                                        results["ids"][0].insert(0, rid)
+                                        results["documents"][0].insert(0, kw_results["documents"][i])
+                                        results["distances"][0].insert(0, 0.0)
+                                        if results.get("metadatas") and kw_results.get("metadatas"):
+                                            results["metadatas"][0].insert(0, kw_results["metadatas"][i])
                 else:
-                    logger.info(f"Hybrid Search: No exact matches found for ID '{keyword}' in documents.")
+                    # Admin / Super Admin: Allow unrestricted hybrid search
+                    logger.info(f"Hybrid Search: Found potential ID '{keyword}' - Querying Chroma (role={request.user_role})...")
+                    kw_kwargs = {
+                        "where_document": {"$contains": keyword},
+                        "limit": 10,
+                        "include": ["metadatas", "documents"]
+                    }
+                    kw_results = org_collection.get(**kw_kwargs)
+                    
+                    if kw_results and kw_results.get("ids") and len(kw_results["ids"]) > 0:
+                        logger.info(f"Hybrid Search: Found {len(kw_results['ids'])} EXACT matches for '{keyword}'")
+                        if not results or not results.get("ids") or not results["ids"][0]:
+                            results = {
+                                "ids": [kw_results["ids"]],
+                                "documents": [kw_results["documents"]],
+                                "metadatas": [kw_results["metadatas"]],
+                                "distances": [[0.0] * len(kw_results["ids"])]
+                            }
+                        else:
+                            exist = set(results["ids"][0])
+                            for i in range(len(kw_results["ids"])):
+                                rid = kw_results["ids"][i]
+                                if rid not in exist:
+                                    results["ids"][0].insert(0, rid)
+                                    results["documents"][0].insert(0, kw_results["documents"][i])
+                                    results["distances"][0].insert(0, 0.0)
+                                    if results.get("metadatas") and kw_results.get("metadatas"):
+                                        results["metadatas"][0].insert(0, kw_results["metadatas"][i])
+                    else:
+                        logger.info(f"Hybrid Search: No exact matches found for ID '{keyword}' in documents.")
         except Exception as e:
             logger.error(f"Hybrid Search Error: {e}")
 
@@ -1494,6 +1534,9 @@ async def chat_with_documents(req: Request):
         query = None
         org_id = None
         user_id = None
+        entity_id = None
+        user_email = None
+        username = None
         organization = "default"
         user_role = "student"
 
@@ -1502,6 +1545,9 @@ async def chat_with_documents(req: Request):
             context = body.get("context", None)
             org_id = body.get("org_id")
             user_id = body.get("user_id")
+            entity_id = body.get("entity_id")  # Zero-Trust ID (e.g. PES1PG24CA169)
+            user_email = body.get("user_email") or body.get("email")
+            username = body.get("username")
             organization = body.get("organization") or "default"
             user_role = body.get("user_role") or body.get("role", "student")
         else:
@@ -1525,6 +1571,13 @@ async def chat_with_documents(req: Request):
                     "status": "blocked"
                 }
 
+        # IDENTITY ANCHORING: If student asks "my details", inject their entity_id into the query
+        if user_role == 'student' and entity_id:
+            my_keywords = ['my ', 'mine', 'myself', 'my details', 'my record', 'my result', 'my info', 'about me']
+            if any(kw in query.lower() for kw in my_keywords):
+                logger.info(f"IDENTITY ANCHOR: Detected self-referential query from {entity_id}. Injecting ID.")
+                query = f"{query} (Student ID: {entity_id})"
+
         # Build context if not provided
         if not context:
             try:
@@ -1533,7 +1586,7 @@ async def chat_with_documents(req: Request):
                 is_admin = user_role in admin_roles
                 k_val = 12 if is_admin else 5
                 
-                logger.info(f"CHAT: building context for role={user_role}, using top_k={k_val}")
+                logger.info(f"CHAT: building context for role={user_role}, entity_id={entity_id}, using top_k={k_val}")
                 
                 sr = SearchRequest(
                     query=query, 
@@ -1541,7 +1594,8 @@ async def chat_with_documents(req: Request):
                     org_id=org_id, 
                     organization=organization,
                     user_role=user_role,
-                    user_id=user_id
+                    user_id=user_id,
+                    entity_id=entity_id  # Pass entity_id for Zero-Trust RLS filtering
                 )
                 search_results = search_documents(sr)
                 # Build context with clear record separators for better Reasoning
@@ -1878,11 +1932,20 @@ async def process_documents_batch(org_id: int, batch_size: int = 100, max_docume
                         total_failed += 1
                         continue
                     
+                    # PRIVACY: Extract student_id from metadata for Zero-Trust RLS filtering
+                    chunk_meta = {"org_id": org_id, "doc_id": doc_id, "filename": filename}
+                    # Look for student_id in metadata (covers students, results, placements, internships CSVs)
+                    raw_sid = metadata_dict.get('student_id') or metadata_dict.get('student_id   ') or ''
+                    if isinstance(raw_sid, str):
+                        raw_sid = raw_sid.strip().upper()
+                    if raw_sid:
+                        chunk_meta['student_id'] = raw_sid
+                    
                     chromadb_add(
                         ids=[f"doc_{org_id}_{doc_id}"],
                         documents=[text],
                         embeddings=[embedding],
-                        metadatas=[{"org_id": org_id, "doc_id": doc_id, "filename": filename}],
+                        metadatas=[chunk_meta],
                         collection=collection
                     )
                     

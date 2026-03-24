@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/index';
-import { User, Shield, Building, Server, LogOut, Lock, Activity, Save, X, CheckCircle, Smartphone } from 'lucide-react';
+import { User, Shield, ShieldOff, Building, Server, LogOut, Lock, Activity, Save, X, CheckCircle, Smartphone, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function Settings() {
@@ -13,6 +13,12 @@ export default function Settings() {
   const [mfaData, setMfaData] = useState({ qrCode: '', manualKey: '', otp: '', password: '' });
   const [mfaEnabled, setMfaEnabled] = useState(user?.is_mfa_enabled || false);
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
+
+  // T9.4: Privacy Shield state
+  const [shieldEnabled, setShieldEnabled] = useState(false);
+  const [shieldLoading, setShieldLoading] = useState(true);
+  const [showShieldDisable, setShowShieldDisable] = useState(false);
+  const [shieldPassword, setShieldPassword] = useState('');
 
   const [orgData, setOrgData] = useState({ name: '', domain: '', type: '', member_count: 0, created_at: '' });
   const [orgLoading, setOrgLoading] = useState(false);
@@ -36,6 +42,46 @@ export default function Settings() {
       fetchOrg();
     }
   }, [activeTab]);
+
+  // T9.4: Fetch current privacy shield state on mount
+  React.useEffect(() => {
+    const fetchShield = async () => {
+      try {
+        const res = await client.get('/user/privacy-shield');
+        setShieldEnabled(res.data.privacy_shield_enabled || false);
+      } catch (err) {
+        console.error("Failed to fetch privacy shield state", err);
+      } finally {
+        setShieldLoading(false);
+      }
+    };
+    fetchShield();
+  }, []);
+
+  const enableShield = async () => {
+    try {
+      await client.post('/user/privacy-shield/enable');
+      setShieldEnabled(true);
+      toast.success("Privacy Shield enabled");
+    } catch (err) {
+      toast.error("Failed to enable Privacy Shield");
+    }
+  };
+
+  const disableShield = async () => {
+    try {
+      const res = await client.post('/user/privacy-shield/disable', { password: shieldPassword });
+      if (res.data.success) {
+        setShieldEnabled(false);
+        setShowShieldDisable(false);
+        setShieldPassword('');
+        toast.success("Privacy Shield disabled");
+      }
+    } catch (err) {
+      const msg = err.response?.data?.error || "Failed to disable Privacy Shield";
+      toast.error(msg);
+    }
+  };
 
   const handleOrgUpdate = async () => {
     try {
@@ -251,6 +297,33 @@ export default function Settings() {
                   {mfaEnabled ? 'Disable' : 'Enable'}
                 </button>
               </div>
+
+              {/* T9.4: Privacy Shield card */}
+              <div className="p-6 bg-white/5 rounded-2xl border border-white/10 hover:border-premium-gold/30 transition-colors flex items-center justify-between group">
+                <div className="flex items-center gap-5">
+                  <div className={`p-4 rounded-xl transition-all duration-300 ${shieldEnabled ? 'bg-purple-500/10 text-purple-400' : 'bg-gray-500/10 text-gray-400'}`}>
+                    {shieldEnabled ? <EyeOff className="w-6 h-6" /> : <Eye className="w-6 h-6" />}
+                  </div>
+                  <div>
+                    <h4 className="text-lg text-white font-medium mb-1">Privacy Shield</h4>
+                    <p className="text-sm text-gray-400">
+                      {shieldEnabled
+                        ? 'Your data is anonymized in AI responses — real values are hidden.'
+                        : 'AI responses will show your real data. Enable to anonymize all PII.'}
+                    </p>
+                  </div>
+                </div>
+                {shieldLoading ? (
+                  <span className="px-5 py-2 text-sm text-gray-500">Loading…</span>
+                ) : (
+                  <button
+                    onClick={shieldEnabled ? () => setShowShieldDisable(true) : enableShield}
+                    className={`px-5 py-2 rounded-lg text-sm font-medium transition-colors ${shieldEnabled ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'btn-primary bg-purple-600 hover:bg-purple-700 text-white'}`}
+                  >
+                    {shieldEnabled ? 'Disable' : 'Enable'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -419,6 +492,35 @@ export default function Settings() {
 
                 <button onClick={verifyMfaSetup} className="w-full btn-primary py-3 rounded-xl font-bold shadow-lg shadow-premium-gold/20">
                   Verify & Activate
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* T9.4: Privacy Shield Disable Modal */}
+        {showShieldDisable && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="glass-panel w-full max-w-md rounded-2xl p-8 relative animate-scaleUp">
+              <button onClick={() => { setShowShieldDisable(false); setShieldPassword(''); }} className="absolute top-4 right-4 text-gray-400 hover:text-white"><X className="w-6 h-6" /></button>
+
+              <div className="text-center mb-6">
+                <ShieldOff className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                <h3 className="text-2xl font-bold text-white">Disable Privacy Shield</h3>
+                <p className="text-gray-400 text-sm">Re-enter your login password to confirm. Once disabled, AI responses will contain your real personal data.</p>
+              </div>
+
+              <div className="space-y-4">
+                <input
+                  type="password"
+                  className="glass-input w-full px-4 py-3 rounded-xl"
+                  placeholder="Your Account Password"
+                  value={shieldPassword}
+                  onChange={(e) => setShieldPassword(e.target.value)}
+                />
+
+                <button onClick={disableShield} className="w-full bg-red-500 hover:bg-red-600 text-white py-3 rounded-xl font-bold transition-colors">
+                  Disable Privacy Shield
                 </button>
               </div>
             </div>

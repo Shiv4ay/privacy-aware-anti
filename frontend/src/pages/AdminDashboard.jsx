@@ -15,6 +15,11 @@ import AmbientBackground from '../components/ui/AmbientBackground';
 import AnimatedCard from '../components/ui/AnimatedCard';
 import { motion } from 'framer-motion';
 import { staggeredContainerVariants, staggeredItemVariants } from '../components/ui/StaggeredList';
+import { 
+    ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+    PieChart, Pie, Cell 
+} from 'recharts';
+import SystemPulseChart from '../components/analytics/SystemPulseChart';
 
 export default function AdminDashboard() {
     const { user } = useAuth();
@@ -25,6 +30,7 @@ export default function AdminDashboard() {
     const [loading, setLoading] = useState(true);
     const [threats, setThreats] = useState([]);
     const [newUser, setNewUser] = useState({ name: '', email: '', password: '', department: '', user_category: 'employee' });
+    const [pulseSignal, setPulseSignal] = useState(0);
 
     React.useEffect(() => {
         fetchData();
@@ -43,7 +49,11 @@ export default function AdminDashboard() {
                 return updated;
             });
 
-            if (evt.action === 'jailbreak_attempt') {
+            setPulseSignal(prev => prev + 1);
+            // Decay signal
+            setTimeout(() => setPulseSignal(prev => Math.max(0, prev - 1)), 2000);
+
+            if (evt.action === 'jailbreak_attempt' || evt.action === 'privacy_violation') {
                 const newThreat = {
                     id: evt.id || Date.now(),
                     time: evt.created_at || new Date().toISOString(),
@@ -74,7 +84,7 @@ export default function AdminDashboard() {
             if (usersRes?.data?.success) setUsers(usersRes.data.users || []);
 
             // Merge profile org data into stats for privacy toggle
-            const orgData = profileRes?.data?.user?.organization || {};
+            const orgData = profileRes?.data?.profile?.organization || {};
             if (statsRes?.data?.success) {
                 setStats({
                     ...statsRes.data.stats,
@@ -214,6 +224,17 @@ export default function AdminDashboard() {
                             <ServiceCard name="Redis Stream" label="Cache & Queue" status={systemHealth?.redis} icon={Zap} />
                             <ServiceCard name="AI Sentinel" label="Vector Worker" status={systemHealth?.worker} icon={Cpu} />
                             <ServiceCard name="Vault (MinIO)" label="Object Storage" status={systemHealth?.minio} icon={HardDrive} />
+                        </div>
+
+                        {/* Real-time pulse overlay */}
+                        <div className="mt-6 pt-6 border-t border-white/5">
+                            <div className="flex items-center gap-2 mb-4">
+                                <Activity className="w-3.5 h-3.5 text-blue-400" />
+                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Activity Pulse</span>
+                            </div>
+                            <div className="h-24 -mx-4">
+                                <SystemPulseChart dataPoint={pulseSignal} color="#3b82f6" />
+                            </div>
                         </div>
                     </div>
 
@@ -436,12 +457,23 @@ export default function AdminDashboard() {
                                         if (typeof t.details === 'string') {
                                             try { parsedDetails = JSON.parse(t.details); } catch (e) { }
                                         }
+                                        const isJailbreak = t.action === 'jailbreak_attempt';
+                                        const threatType = parsedDetails?.threat_type || (isJailbreak ? 'jailbreak' : 'cross_student_access');
                                         return (
-                                            <div key={t.id || i} className="p-3 rounded-xl bg-red-950/30 border border-red-500/20 relative group">
+                                            <div key={t.id || i} className={`p-3 rounded-xl relative group border ${
+                                                isJailbreak ? 'bg-red-950/30 border-red-500/20' : 'bg-orange-950/30 border-orange-500/20'
+                                            }`}>
                                                 <div className="flex items-start justify-between">
                                                     <div className="flex items-center gap-2">
-                                                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                                                        <span className="text-xs font-bold text-red-400 uppercase tracking-wider">Jailbreak Attempt</span>
+                                                        <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${isJailbreak ? 'bg-red-500' : 'bg-orange-500'}`} />
+                                                        <span className={`text-xs font-bold uppercase tracking-wider ${isJailbreak ? 'text-red-400' : 'text-orange-400'}`}>
+                                                            {isJailbreak ? 'Jailbreak Attempt' : 'Privacy Violation'}
+                                                        </span>
+                                                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                                                            isJailbreak ? 'bg-red-500/15 text-red-300 border border-red-500/20' : 'bg-orange-500/15 text-orange-300 border border-orange-500/20'
+                                                        }`}>
+                                                            {threatType === 'cross_student_access' ? 'CROSS-STUDENT' : 'INJECTION'}
+                                                        </span>
                                                     </div>
                                                     <span className="text-[10px] text-gray-500 font-mono">
                                                         {new Date(t.time).toLocaleTimeString()}
@@ -455,6 +487,11 @@ export default function AdminDashboard() {
                                                         ? `Query: "${parsedDetails.query_redacted}"`
                                                         : (typeof t.details === 'string' ? t.details : JSON.stringify(t.details))}
                                                 </div>
+                                                {parsedDetails?.error_message && (
+                                                    <div className={`mt-1.5 text-[10px] italic ${isJailbreak ? 'text-red-400/70' : 'text-orange-400/70'}`}>
+                                                        {parsedDetails.error_message.length > 120 ? parsedDetails.error_message.substring(0, 120) + '...' : parsedDetails.error_message}
+                                                    </div>
+                                                )}
                                             </div>
                                         )
                                     })}

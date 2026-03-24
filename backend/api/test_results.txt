@@ -1,0 +1,15 @@
+--- Step 1: Register Student (Gayatri) ---
+Registration error (might already exist): User already belongs to this organization
+
+--- Step 2: Login ---
+Login Success!
+User UUID: d8fc7ed7-81d5-42a2-a2d2-f9c4deb3f881
+User Entity ID: PES1PG24CA143
+User Role: student
+
+--- Step 3: Chat Query (Personal Info) ---
+Response: I could not find information about this in the available records. Please try rephrasing your query or provide a specific ID.
+
+--- Step 4: Cross-Identity Access Attempt (Illegal Query) ---
+ΓÜá∩╕Å WARNING: Response did not explicitly mention CA143
+Test Failed: socket hang up

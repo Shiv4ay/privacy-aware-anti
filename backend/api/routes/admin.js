@@ -156,7 +156,7 @@ router.get('/threats', requireAdmin, async (req, res) => {
                 al.details->>'error_message' as error_message
             FROM audit_logs al
             LEFT JOIN users u ON al.user_id = u.user_id
-            WHERE al.action = 'jailbreak_attempt'
+            WHERE al.action IN ('jailbreak_attempt', 'privacy_violation')
         `;
         const params = [];
 
@@ -616,7 +616,7 @@ router.patch('/orgs/:id/privacy', async (req, res) => {
         }
 
         // Authorization check: User must be super_admin, OR an admin of this specific org
-        if (req.user.role !== 'super_admin' && (req.user.role !== 'admin' || req.user.org_id !== orgId)) {
+        if (req.user.role !== 'super_admin' && (req.user.role !== 'admin' || parseInt(req.user.org_id) !== orgId)) {
             return res.status(403).json({ error: 'Forbidden. You can only manage privacy settings for your own organization.' });
         }
 

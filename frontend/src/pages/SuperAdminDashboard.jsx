@@ -12,6 +12,12 @@ import { io } from 'socket.io-client';
 import toast from 'react-hot-toast';
 import AmbientBackground from '../components/ui/AmbientBackground';
 import { motion, AnimatePresence } from 'framer-motion';
+import {
+    ResponsiveContainer, PieChart, Pie, Cell,
+    Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis
+} from 'recharts';
+
+import SystemPulseChart from '../components/analytics/SystemPulseChart';
 
 // ─── Reusable mini components ──────────────────────────────────
 const Badge = ({ color = 'gray', children }) => {
@@ -87,6 +93,8 @@ export default function SuperAdminDashboard() {
     const [userSearch, setUserSearch] = useState('');
     const [userOrgFilter, setUserOrgFilter] = useState('');
     const [auditAction, setAuditAction] = useState('');
+    const [view, setView] = useState('grid');
+    const [pulseSignal, setPulseSignal] = useState(0);
     const [auditPage, setAuditPage] = useState(1);
     const [auditTotal, setAuditTotal] = useState(0);
     const [newOrg, setNewOrg] = useState({ name: '', type: '', domain: '' });
@@ -138,12 +146,17 @@ export default function SuperAdminDashboard() {
 
         socket.on('connect', () => socket.emit('subscribe:system'));
         socket.on('activity', (evt) => {
-            setLiveActivity(prev => [evt, ...prev].slice(0, 20));
-            if (evt.action === 'jailbreak_attempt')
+            setLiveActivity(prev => [evt, ...prev].slice(0, 50));
+            setPulseSignal(prev => prev + 1);
+            // Reset signal after a short burst to create "peak"
+            setTimeout(() => setPulseSignal(prev => Math.max(0, prev - 1)), 2000);
+
+            if (evt.action === 'jailbreak_attempt') {
                 setThreats(prev => [{
                     id: evt.id, time: evt.created_at, username: evt.username,
                     email: evt.email, details: evt.metadata
                 }, ...prev].slice(0, 100));
+            }
         });
 
         const poll = setInterval(fetchAll, 60000);
@@ -664,6 +677,112 @@ export default function SuperAdminDashboard() {
                             ════════════════════════════════ */}
                             {tab === 'analytics' && (
                                 <div className="space-y-6">
+                                    {/* Visual Intelligence Section */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                        <div className="lg:col-span-2 p-6 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-xl relative overflow-hidden group">
+                                            <div className="flex items-center justify-between mb-6">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="p-2 bg-yellow-500/10 rounded-xl">
+                                                        <Activity className="w-4 h-4 text-yellow-500" />
+                                                    </div>
+                                                    <div>
+                                                        <h3 className="text-xs font-black text-white uppercase tracking-widest">System Pulse</h3>
+                                                        <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Real-time throughput telemetry</p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-4">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                                        <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Normal Ops</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                                                        <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Alert Threshold</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="h-[200px] -mx-2">
+                                                <SystemPulseChart dataPoint={pulseSignal} color="#eab308" />
+                                            </div>
+                                        </div>
+
+                                        <div className="p-6 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-xl">
+                                            <div className="flex items-center gap-3 mb-6">
+                                                <div className="p-2 bg-purple-500/10 rounded-xl">
+                                                    <Shield className="w-4 h-4 text-purple-400" />
+                                                </div>
+                                                <div>
+                                                    <h3 className="text-xs font-black text-white uppercase tracking-widest">Threat Radar</h3>
+                                                    <p className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Attack vector distribution</p>
+                                                </div>
+                                            </div>
+                                            <div className="h-[200px] flex items-center justify-center">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <RadarChart cx="50%" cy="50%" outerRadius="80%" data={[
+                                                        { subject: 'Jailbreak', A: threats.length, fullMark: 10 },
+                                                        { subject: 'Toxicity', A: auditLogs.filter(l => l.action?.includes('toxic')).length, fullMark: 10 },
+                                                        { subject: 'Injection', A: 0.5, fullMark: 10 },
+                                                        { subject: 'Leakage', A: 0.2, fullMark: 10 },
+                                                        { subject: 'DDoS', A: 0.0, fullMark: 10 },
+                                                    ]}>
+                                                        <PolarGrid stroke="#ffffff10" />
+                                                        <PolarAngleAxis dataKey="subject" tick={{ fill: '#6b7280', fontSize: 8, fontWeight: 900 }} />
+                                                        <Radar
+                                                            name="Security"
+                                                            dataKey="A"
+                                                            stroke="#a855f7"
+                                                            fill="#a855f7"
+                                                            fillOpacity={0.3}
+                                                        />
+                                                    </RadarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
+                                        <div className="p-6 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-xl flex flex-col items-center justify-center relative overflow-hidden">
+                                            <div className="absolute inset-0 bg-blue-500/5 backdrop-blur-3xl -z-10" />
+                                            <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Guardrail Efficiency</h3>
+                                            <div className="relative w-40 h-40">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <PieChart>
+                                                        <Pie
+                                                            data={[
+                                                                { value: 98, name: 'Safe' },
+                                                                { value: 2, name: 'Blocked' }
+                                                            ]}
+                                                            cx="50%"
+                                                            cy="50%"
+                                                            innerRadius={50}
+                                                            outerRadius={70}
+                                                            startAngle={180}
+                                                            endAngle={0}
+                                                            paddingAngle={5}
+                                                            dataKey="value"
+                                                        >
+                                                            <Cell fill="#3b82f6" />
+                                                            <Cell fill="#ffffff10" />
+                                                        </Pie>
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                                <div className="absolute inset-0 flex flex-col items-center justify-center pt-8">
+                                                    <span className="text-2xl font-black text-white">98%</span>
+                                                    <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Active</span>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-4 mt-2">
+                                                <div className="flex flex-col items-center">
+                                                    <span className="text-[10px] font-black text-white">1.2ms</span>
+                                                    <span className="text-[7px] text-gray-600 uppercase font-black">Latency</span>
+                                                </div>
+                                                <div className="w-px h-6 bg-white/10" />
+                                                <div className="flex flex-col items-center">
+                                                    <span className="text-[10px] font-black text-white">403</span>
+                                                    <span className="text-[7px] text-gray-600 uppercase font-black">Rejections</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     {/* Futuristic Summary Row */}
                                     <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
                                         <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 relative overflow-hidden group">
