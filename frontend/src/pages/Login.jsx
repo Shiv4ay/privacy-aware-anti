@@ -40,8 +40,15 @@ export default function Login() {
   const passRef = useRef(null);
 
   useEffect(() => {
+    // Clear DOM refs immediately
     if (emailRef.current) emailRef.current.value = '';
     if (passRef.current) passRef.current.value = '';
+    // Delayed state reset to override browser autofill (Chrome fills after mount)
+    const timer = setTimeout(() => {
+      setEmail('');
+      setPassword('');
+    }, 100);
+    return () => clearTimeout(timer);
   }, []);
 
   const handleSubmit = async (e) => {
@@ -166,6 +173,7 @@ export default function Login() {
                     onChange={(e) => setEmail(e.target.value)}
                     className="glass-input w-full pl-10 pr-4 py-3 rounded-xl"
                     placeholder="name@company.com"
+                    autoComplete="off"
                     required
                   />
                 </div>
@@ -182,6 +190,7 @@ export default function Login() {
                     onChange={(e) => setPassword(e.target.value)}
                     className="glass-input w-full pl-10 pr-12 py-3 rounded-xl"
                     placeholder="••••••••"
+                    autoComplete="new-password"
                     required
                   />
                   <button

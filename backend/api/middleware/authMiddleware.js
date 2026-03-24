@@ -87,6 +87,7 @@ async function authenticateJWT(req, res, next) {
                             COALESCE(m.department, u.department) as department, 
                             COALESCE($2::int, m.org_id, u.org_id) as org_id,
                             u.is_active, u.is_mfa_enabled, u.oauth_avatar_url, u.custom_avatar_url,
+                            u.entity_id, u.user_category,
                             COALESCE(sel_o.name, o.name) as organization_name,
                             COALESCE(sel_o.type, o.type) as organization_type
                      FROM users u
@@ -124,6 +125,8 @@ async function authenticateJWT(req, res, next) {
                     organization_name: user.organization_name,
                     organization_type: user.organization_type,
                     is_mfa_enabled: user.is_mfa_enabled,
+                    entityId: user.entity_id,  // Zero-Trust: student SRN (e.g. PES1PG24CA169)
+                    userCategory: user.user_category,  // student, faculty, etc.
                     avatarUrl: user.custom_avatar_url || user.oauth_avatar_url
                 };
             } catch (dbError) {

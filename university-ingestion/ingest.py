@@ -103,50 +103,81 @@ def fetch_data(endpoint: str, max_records: int = 10000) -> List[Dict]:
     return all_data[:max_records]
 
 def transform_student(student: Dict) -> str:
-    """Transform student record to searchable text"""
+    """Transform student record to searchable text with all fields labeled."""
     return (
-        f"Student {student.get('student_id', 'N/A')}: "
-        f"{student.get('first_name', '')} {student.get('last_name', '')}, "
-        f"Department: {student.get('department_id', 'N/A')}, "
-        f"Year: {student.get('current_year', 'N/A')}, "
-        f"GPA: {student.get('gpa', 'N/A')}, "
-        f"Status: {student.get('status', 'N/A')}, "
-        f"Email: {student.get('email', 'N/A')}"
+        f"STUDENT RECORD\n"
+        f"SRN: {student.get('student_id', 'N/A')}\n"
+        f"First Name: {student.get('first_name', 'N/A')}\n"
+        f"Last Name: {student.get('last_name', 'N/A')}\n"
+        f"Email: {student.get('email', 'N/A')}\n"
+        f"Gender: {student.get('gender', 'N/A')}\n"
+        f"DOB: {student.get('date_of_birth', 'N/A')}\n"
+        f"Enrollment Date: {student.get('enrollment_date', 'N/A')}\n"
+        f"Department: {student.get('department_id', 'N/A')}\n"
+        f"Current Year: {student.get('current_year', 'N/A')}\n"
+        f"Current Semester: {student.get('current_semester', 'N/A')}\n"
+        f"Status: {student.get('status', 'N/A')}\n"
+        f"GPA: {student.get('gpa', 'N/A')}\n"
+        f"Phone: {student.get('phone', 'N/A')}\n"
+        f"Address: {student.get('address', 'N/A')}\n"
+        f"Blood Group: {student.get('blood_group', 'N/A')}\n"
+        f"Category: {student.get('category', 'N/A')}\n"
+        f"Home State: {student.get('home_state', 'N/A')}\n"
+        f"Hostel Status: {student.get('hostel_status', 'N/A')}\n"
+        f"Admission Quota: {student.get('admission_quota', 'N/A')}\n"
+        f"PESU ID: {student.get('pesu_id', 'N/A')}\n"
+        f"Batch: {student.get('batch', 'N/A')}\n"
+        f"Program: {student.get('program', 'N/A')}"
     )
 
 def transform_result(result: Dict) -> str:
-    """Transform result record to searchable text"""
+    """Transform result record to searchable text with labeled fields."""
     return (
-        f"Academic Result {result.get('result_id', 'N/A')} for "
-        f"Student {result.get('student_id', 'N/A')} in "
-        f"Course {result.get('course_id', 'N/A')}: "
-        f"Grade {result.get('grade', 'N/A')}, "
-        f"Score {result.get('score', 'N/A')}, "
-        f"Semester {result.get('semester', 'N/A')}, "
-        f"{result.get('remarks', '')}"
+        f"ACADEMIC RESULT\n"
+        f"Result ID: {result.get('result_id', 'N/A')}\n"
+        f"Student ID: {result.get('student_id', 'N/A')}\n"
+        f"Course ID: {result.get('course_id', 'N/A')}\n"
+        f"Semester: {result.get('semester', 'N/A')}\n"
+        f"Academic Year: {result.get('academic_year', 'N/A')}\n"
+        f"Grade: {result.get('grade', 'N/A')}\n"
+        f"Score: {result.get('score', 'N/A')}\n"
+        f"Credits: {result.get('credits', 'N/A')}\n"
+        f"Remarks: {result.get('remarks', 'N/A')}"
     )
 
-def transform_placement(placement: Dict) -> str:
-    """Transform placement record to searchable text"""
+def transform_placement(placement: Dict, company_map: Dict = None) -> str:
+    """Transform placement record to searchable text with company name resolved."""
+    company_id = placement.get('company_id', 'N/A')
+    company_name = (company_map or {}).get(company_id, company_id)
     return (
-        f"Placement {placement.get('placement_id', 'N/A')}: "
-        f"Student {placement.get('student_id', 'N/A')} placed at "
-        f"Company {placement.get('company_id', 'N/A')} as "
-        f"{placement.get('position', 'N/A')}, "
-        f"Salary: {placement.get('salary', 'N/A')}, "
-        f"Location: {placement.get('location', 'N/A')}, "
-        f"Status: {placement.get('status', 'N/A')}"
+        f"PLACEMENT RECORD\n"
+        f"Placement ID: {placement.get('placement_id', 'N/A')}\n"
+        f"Student ID: {placement.get('student_id', 'N/A')}\n"
+        f"Company: {company_name}\n"
+        f"Company ID: {company_id}\n"
+        f"Position: {placement.get('position', 'N/A')}\n"
+        f"Salary: {placement.get('salary', 'N/A')}\n"
+        f"Location: {placement.get('location', 'N/A')}\n"
+        f"Employment Type: {placement.get('employment_type', 'N/A')}\n"
+        f"Status: {placement.get('status', 'N/A')}\n"
+        f"Offer Date: {placement.get('offer_date', 'N/A')}"
     )
 
-def transform_internship(internship: Dict) -> str:
-    """Transform internship record to searchable text"""
+def transform_internship(internship: Dict, company_map: Dict = None) -> str:
+    """Transform internship record to searchable text with company name resolved."""
+    company_id = internship.get('company_id', 'N/A')
+    company_name = (company_map or {}).get(company_id, company_id)
     return (
-        f"Internship {internship.get('internship_id', 'N/A')}: "
-        f"Student {internship.get('student_id', 'N/A')} at "
-        f"Company {internship.get('company_id', 'N/A')} as "
-        f"{internship.get('position', 'N/A')}, "
-        f"Duration: {internship.get('start_date', 'N/A')} to {internship.get('end_date', 'N/A')}, "
-        f"Stipend: {internship.get('stipend', 'N/A')}, "
+        f"INTERNSHIP RECORD\n"
+        f"Internship ID: {internship.get('internship_id', 'N/A')}\n"
+        f"Student ID: {internship.get('student_id', 'N/A')}\n"
+        f"Company: {company_name}\n"
+        f"Company ID: {company_id}\n"
+        f"Position: {internship.get('position', 'N/A')}\n"
+        f"Start Date: {internship.get('start_date', 'N/A')}\n"
+        f"End Date: {internship.get('end_date', 'N/A')}\n"
+        f"Stipend: {internship.get('stipend', 'N/A')}\n"
+        f"Location: {internship.get('location', 'N/A')}\n"
         f"Status: {internship.get('status', 'N/A')}"
     )
 
@@ -246,23 +277,29 @@ def ingest_results():
     
     print(f"[OK] Ingested {len(documents)} results")
 
+def build_company_map() -> Dict:
+    """Build a company_id -> company_name lookup from the API."""
+    companies = fetch_data("companies")
+    return {c.get("company_id", ""): c.get("company_name", c.get("company_id", "")) for c in companies}
+
 def ingest_placements():
     """Ingest placement records"""
     print("\n[INFO] Ingesting placements...")
     placements = fetch_data("placements")
-    
+
     if not placements:
         print("[WARNING] No placements fetched")
         return
-    
+
+    company_map = build_company_map()
     collection = chroma_client.get_collection(COLLECTIONS["placements"])
-    
+
     documents = []
     metadatas = []
     ids = []
-    
+
     for placement in placements:
-        doc = transform_placement(placement)
+        doc = transform_placement(placement, company_map)
         documents.append(doc)
         
         metadata = {
@@ -290,19 +327,20 @@ def ingest_internships():
     """Ingest internship records"""
     print("\n[INFO] Ingesting internships...")
     internships = fetch_data("internships")
-    
+
     if not internships:
         print("[WARNING] No internships fetched")
         return
-    
+
+    company_map = build_company_map()
     collection = chroma_client.get_collection(COLLECTIONS["internships"])
-    
+
     documents = []
     metadatas = []
     ids = []
-    
+
     for internship in internships:
-        doc = transform_internship(internship)
+        doc = transform_internship(internship, company_map)
         documents.append(doc)
         
         metadata = {

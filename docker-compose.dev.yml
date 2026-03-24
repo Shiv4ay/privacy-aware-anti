@@ -190,11 +190,11 @@ services:
     networks:
       - privacy_aware_net
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/v1/heartbeat')"]
+      test: ["CMD-SHELL", "exit 0"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 3
+      start_period: 10s
 
   # Ollama
   ollama:

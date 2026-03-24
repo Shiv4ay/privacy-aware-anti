@@ -11,7 +11,7 @@ router.get('/stats', async (req, res) => {
         const isSuperAdmin = req.user.role === 'super_admin';
 
         let joinClause = '';
-        let whereClause = "WHERE a.action IN ('search', 'chat', 'jailbreak_attempt')";
+        let whereClause = "WHERE a.action IN ('search', 'chat', 'jailbreak_attempt', 'privacy_violation')";
         let piiWhereClause = "WHERE a.details->>'pii_detected' = 'true'";
         const params = [];
 
@@ -22,10 +22,12 @@ router.get('/stats', async (req, res) => {
             params.push(orgId);
         }
 
-        const [totalRes, blockedRes, piiRes] = await Promise.all([
+        const [totalRes, blockedRes, piiRes, jailbreakRes, privacyRes] = await Promise.all([
             db.query(`SELECT COUNT(*) FROM audit_logs a ${joinClause} ${whereClause}`, params),
             db.query(`SELECT COUNT(*) FROM audit_logs a ${joinClause} ${whereClause} AND a.details->>'success' = 'false'`, params),
             db.query(`SELECT COUNT(*) FROM audit_logs a ${joinClause} ${piiWhereClause}`, params),
+            db.query(`SELECT COUNT(*) FROM audit_logs a ${joinClause} ${whereClause} AND a.action = 'jailbreak_attempt'`, params),
+            db.query(`SELECT COUNT(*) FROM audit_logs a ${joinClause} ${whereClause} AND a.action = 'privacy_violation'`, params),
         ]);
 
         const total = parseInt(totalRes.rows[0].count) || 1;
@@ -36,6 +38,8 @@ router.get('/stats', async (req, res) => {
             stats: {
                 totalQueries: parseInt(totalRes.rows[0].count),
                 blockedQueries: parseInt(blockedRes.rows[0].count),
+                jailbreakAttempts: parseInt(jailbreakRes.rows[0].count),
+                privacyViolations: parseInt(privacyRes.rows[0].count),
                 piiRedacted: parseInt(piiRes.rows[0].count),
                 privacyScore: parseFloat(score)
             }
@@ -70,6 +74,7 @@ router.get('/logs', async (req, res) => {
 
         if (status === 'allowed') conditions.push(`(a.details->>'success' IS NULL OR a.details->>'success' != 'false')`);
         if (status === 'blocked') conditions.push(`a.details->>'success' = 'false'`);
+        if (status === 'privacy') conditions.push(`a.action = 'privacy_violation'`);
         if (pii === 'true') conditions.push(`a.details->>'pii_detected' = 'true'`);
 
         const whereClause = conditions.length > 0
@@ -113,6 +118,7 @@ router.get('/logs', async (req, res) => {
         }
         if (status === 'allowed') countConditions.push(`(a.details->>'success' IS NULL OR a.details->>'success' != 'false')`);
         if (status === 'blocked') countConditions.push(`a.details->>'success' = 'false'`);
+        if (status === 'privacy') countConditions.push(`a.action = 'privacy_violation'`);
         if (pii === 'true') countConditions.push(`a.details->>'pii_detected' = 'true'`);
 
         const countWhereClause = countConditions.length > 0 ? 'WHERE ' + countConditions.join(' AND ') : '';

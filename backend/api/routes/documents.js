@@ -53,16 +53,21 @@ async function parseCSV(buffer) {
  * Transform CSV row to searchable document
  */
 function transformCSVRow(row, recordType, rowIndex) {
-    // Create a readable text representation
-    const fields = Object.entries(row)
+    // Normalize keys: CSV headers often have trailing/leading whitespace (e.g. "student_id   ")
+    const normalizedRow = {};
+    for (const [k, v] of Object.entries(row)) {
+        normalizedRow[k.trim()] = v;
+    }
+    // Create a readable text representation with trimmed keys and values
+    const fields = Object.entries(normalizedRow)
         .filter(([key, value]) => value && value.toString().trim())
-        .map(([key, value]) => `${key}: ${value}`)
+        .map(([key, value]) => `${key}: ${value.toString().trim()}`)
         .join(', ');
 
     return {
         content: fields,
         metadata: {
-            ...row,
+            ...normalizedRow,   // spread normalized keys (no trailing whitespace)
             record_type: recordType,
             row_index: rowIndex,
             source: 'csv_upload'

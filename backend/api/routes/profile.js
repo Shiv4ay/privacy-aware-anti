@@ -47,7 +47,7 @@ router.get('/', async (req, res) => {
             `SELECT u.id, u.user_id, u.username, u.email, u.role, u.org_id, u.department,
                     u.bio, u.oauth_avatar_url, u.custom_avatar_url, u.preferences,
                     u.created_at, u.last_login, u.oauth_provider,
-                    o.name as organization_name, o.type as organization_type
+                    o.name as organization_name, o.type as organization_type, o.privacy_level as organization_privacy_level
              FROM users u
              LEFT JOIN organizations o ON u.org_id = o.id
              WHERE u.id = $1`,
@@ -74,7 +74,8 @@ router.get('/', async (req, res) => {
                 organization: user.org_id ? {
                     id: user.org_id,
                     name: user.organization_name,
-                    type: user.organization_type
+                    type: user.organization_type,
+                    privacy_level: user.organization_privacy_level || 'standard'
                 } : null,
                 department: user.department,
                 accountType: user.oauth_provider || 'email',

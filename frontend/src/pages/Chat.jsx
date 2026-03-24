@@ -6,7 +6,7 @@ import {
   Send, Bot, Loader2, Sparkles, AlertCircle,
   Copy, RefreshCw, Check, Shield, ChevronDown,
   GraduationCap, BookOpen, Users, BarChart2, Cpu,
-  Plus, Mic, Activity
+  Plus, Mic, Activity, EyeOff
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import PIIText from '../components/ui/PIIText';
@@ -63,6 +63,7 @@ function TypingIndicator() {
 function MessageBubble({ msg, user, onRegenerate }) {
   const isUser = msg.from === 'user';
   const isError = msg.from === 'error';
+  const isSecurity = msg.from === 'security';
   const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   // User avatar — initials from name, or profile image if available
@@ -84,9 +85,14 @@ function MessageBubble({ msg, user, onRegenerate }) {
           )}
         </div>
       ) : (
-        <div className={`w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center shadow-lg ${isError ? 'bg-red-500/20 border border-red-500/30' : 'bg-gradient-to-br from-premium-gold to-yellow-600 shadow-premium-gold/20'
+        <div className={`w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center shadow-lg ${
+          isError ? 'bg-red-500/20 border border-red-500/30'
+          : isSecurity ? 'bg-amber-500/20 border border-amber-500/30'
+          : 'bg-gradient-to-br from-premium-gold to-yellow-600 shadow-premium-gold/20'
           }`}>
-          {isError ? <AlertCircle className="w-4 h-4 text-red-400" /> : <Cpu className="w-4 h-4 text-black" />}
+          {isError ? <AlertCircle className="w-4 h-4 text-red-400" />
+          : isSecurity ? <Shield className="w-4 h-4 text-amber-400" />
+          : <Cpu className="w-4 h-4 text-black" />}
         </div>
       )}
 
@@ -94,7 +100,7 @@ function MessageBubble({ msg, user, onRegenerate }) {
       <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} max-w-[78%] gap-1`}>
         {/* Name tag */}
         <span className="text-[10px] font-bold uppercase tracking-widest px-1 text-gray-600">
-          {isUser ? (user?.name || user?.email?.split('@')[0] || 'You') : isError ? 'System' : 'PrivacyRAG AI'}
+          {isUser ? (user?.name || user?.email?.split('@')[0] || 'You') : isError ? 'System' : isSecurity ? 'Security Alert' : 'PrivacyRAG AI'}
         </span>
 
         {/* Message content */}
@@ -102,7 +108,9 @@ function MessageBubble({ msg, user, onRegenerate }) {
           ? 'bg-gradient-to-br from-blue-600/30 to-indigo-600/20 border border-blue-500/25 rounded-br-sm text-white'
           : isError
             ? 'bg-red-500/10 border border-red-500/20 rounded-bl-sm text-red-300'
-            : 'bg-white/[0.06] border border-white/[0.08] rounded-bl-sm text-gray-100'
+            : isSecurity
+              ? 'bg-amber-500/10 border border-amber-500/30 rounded-bl-sm text-amber-200'
+              : 'bg-white/[0.06] border border-white/[0.08] rounded-bl-sm text-gray-100'
           }`}>
           <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
             {msg.from === 'ai'
@@ -150,6 +158,8 @@ export default function Chat() {
   const [loading, setLoading] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [isListening, setIsListening] = useState(false);
+  // T9.4: Read-only shield status
+  const [shieldActive, setShieldActive] = useState(false);
 
   const messagesEndRef = useRef(null);
   const messagesAreaRef = useRef(null);
@@ -164,6 +174,13 @@ export default function Chat() {
   }, [atBottom]);
 
   useEffect(() => { scrollToBottom(true); }, [messages]);
+
+  // T9.4: Fetch privacy shield state (read-only, for header indicator)
+  useEffect(() => {
+    client.get('/user/privacy-shield')
+      .then(res => setShieldActive(res.data.privacy_shield_enabled || false))
+      .catch(() => {}); // fail silently — indicator is cosmetic
+  }, []);
 
   // Detect scroll position
   const handleScroll = () => {
@@ -197,10 +214,15 @@ export default function Chat() {
     setLoading(true);
 
     try {
-      const history = messages.slice(-12).map(m => ({
-        role: m.from === 'user' ? 'user' : 'assistant',
-        content: m.text
-      }));
+      // Exclude security alerts and error messages from history — the LLM should not
+      // see them as valid assistant responses; they would confuse context.
+      const history = messages
+        .filter(m => m.from !== 'security' && m.from !== 'error')
+        .slice(-12)
+        .map(m => ({
+          role: m.from === 'user' ? 'user' : 'assistant',
+          content: m.text
+        }));
 
       // Use the non-streaming /chat endpoint as primary
       // This returns pii_map for admin click-to-reveal and properly handles
@@ -210,10 +232,11 @@ export default function Chat() {
         conversation_history: history,
       });
 
+      const isSecurityBlock = ['security_blocked', 'security_blocked_ai', 'blocked'].includes(res.data?.status);
       setMessages(prev => [...prev, {
         id: Date.now() + 2,
         text: res.data?.response || res.data?.message || 'No response received.',
-        from: 'ai',
+        from: isSecurityBlock ? 'security' : 'ai',
         timestamp: new Date(),
         contextUsed: res.data?.context_used || false,
         piiMap: res.data?.pii_map || null
@@ -330,6 +353,11 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {shieldActive && (
+              <span className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/30 text-[11px] text-purple-400 font-bold">
+                <EyeOff className="w-3 h-3" /> Shield On
+              </span>
+            )}
             <span className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-premium-gold/10 border border-premium-gold/20 text-[11px] text-premium-gold font-bold">
               <Shield className="w-3 h-3" /> Privacy Enforced
             </span>
