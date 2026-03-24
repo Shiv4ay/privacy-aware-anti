@@ -1,0 +1,35 @@
+
+════════════════════════════════════════════════════════════
+SELF-QUERY REDACTION TESTS (Shield OFF)
+════════════════════════════════════════════════════════════
+  ❌ T11.1a FAILED: Response contains actual company name 'Tech Mahindra'
+     > Detail: Got: <table>
+  <tr>
+    <th>Category</th>
+    <th>Position</th>
+    <th>Organization</th>
+    <th>Duration/Status</th>
+    <th>Stipend/Salary</th>
+  </tr>
+  <tr>
+    <td>Internship</td>
+    <td>Machine Lea...
+  ❌ T11.1b FAILED: Response does NOT contain [COMPANY:idx token
+     > Detail: Got: <table>
+  <tr>
+    <th>Category</th>
+    <th>Position</th>
+    <th>Organization</th>
+    <th>Duration/Status</th>
+    <th>Stipend/Salary</th>
+  </tr>
+  <tr>
+    <td>Internship</td>
+    <td>Machine Lea...
+  ❌ T11.2a FAILED: Shield ON: Response contains [COMPANY:idx token
+     > Detail: Got: The records provided are for [USER_ID:idx_0], not the requested PES1PG24CA169. The exact record may not be indexed yet....
+  ✅ T11.2b: Shield ON: Response hides actual company name
+
+════════════════════════════════════════════════════════════
+RESULTS: 1/4 PASSED | 3 FAILED
+════════════════════════════════════════════════════════════
