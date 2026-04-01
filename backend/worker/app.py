@@ -1,5 +1,3 @@
-
-
 import os
 import sys
 import csv
@@ -21,6 +19,10 @@ import hashlib
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Configure logging early so logger is available for import error handlers below
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Security Guardrails
 from security.prompt_guard import scan_prompt
@@ -67,10 +69,6 @@ except ImportError:
 
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "365"))
 DP_ENABLED = os.getenv("DP_ENABLED", "TRUE").upper() == "TRUE"
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Phase 3: Guardrail Manager
 try:
@@ -1800,7 +1798,7 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
     if GuardrailManager and raw_response:
         guarded_response = GuardrailManager.post_process_response(raw_response)
         if guarded_response != raw_response:
-             logger.info("GuardrailManager: Response was modified by post-flight guardrails.")
+            logger.info("GuardrailManager: Response was modified by post-flight guardrails.")
         final_output = guarded_response
     else:
         # Final safety pass — catch any PII the LLM may have reconstructed or hallucinated
