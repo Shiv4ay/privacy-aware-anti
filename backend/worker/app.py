@@ -568,6 +568,29 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
         for m in PHONE_PATTERN.finditer(segment):
             custom_results.append(RecognizerResult("PHONE_NUMBER", m.start(), m.end(), 1.0))
 
+        # ── INDIAN NATIONAL ID PATTERNS (DPDP Act 2023 — Sensitive Personal Data) ──
+        # Aadhar: 12 digits in groups of 4 (1234 5678 9012 or 1234-5678-9012)
+        AADHAR_PATTERN = re.compile(r'\b\d{4}[\s\-]\d{4}[\s\-]\d{4}\b')
+        for m in AADHAR_PATTERN.finditer(segment):
+            # Guard: must not already be covered by another custom result
+            overlap = any(not (m.end() <= c.start or m.start() >= c.end) for c in custom_results)
+            if not overlap:
+                custom_results.append(RecognizerResult("SYSTEM_ID", m.start(), m.end(), 1.0))
+
+        # PAN: [A-Z]{5}[0-9]{4}[A-Z] (e.g. ABCDE1234F)
+        PAN_PATTERN = re.compile(r'\b[A-Z]{5}[0-9]{4}[A-Z]\b')
+        for m in PAN_PATTERN.finditer(segment):
+            overlap = any(not (m.end() <= c.start or m.start() >= c.end) for c in custom_results)
+            if not overlap:
+                custom_results.append(RecognizerResult("SYSTEM_ID", m.start(), m.end(), 1.0))
+
+        # IFSC: [A-Z]{4}0[A-Z0-9]{6} (e.g. SBIN0001234)
+        IFSC_PATTERN = re.compile(r'\b[A-Z]{4}0[A-Z0-9]{6}\b')
+        for m in IFSC_PATTERN.finditer(segment):
+            overlap = any(not (m.end() <= c.start or m.start() >= c.end) for c in custom_results)
+            if not overlap:
+                custom_results.append(RecognizerResult("SYSTEM_ID", m.start(), m.end(), 1.0))
+
         # NAME FIELD DETECTOR: Catch name values from labeled fields that Presidio's
         # NER model (en_core_web_md) misses for uncommon names (e.g., Indian names like
         # "Siba", "Sundar"). Without this, first/middle names appear in plain text while
@@ -1672,7 +1695,7 @@ def _merge_split_name_fields(context: str) -> str:
     """
     return context
 
-def generate_chat_response(query: str, context: str, user_role: str = "student", conversation_history: list = None, privacy_level: str = "standard", entity_id: Optional[str] = None, protected_values: Optional[set] = None, privacy_mode: str = "normal"):
+def generate_chat_response(query: str, context: str, user_role: str = "student", conversation_history: list = None, privacy_level: str = "standard", entity_id: Optional[str] = None, protected_values: Optional[set] = None, privacy_mode: str = "normal", is_aggregate_context: bool = False):
     """
     Generate answer using either OpenAI or Ollama with Strict RAG Guardrails.
     
@@ -1713,8 +1736,10 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
     # AGGREGATE CONTEXT BYPASS: Admin SQL aggregate responses (counts, rates, salary stats)
     # contain ZERO individual PII — only aggregate numbers and structural labels.
     # Running Presidio on them causes false positives (e.g. "INTERNSHIP STATISTICS"
-    # classified as ORGANIZATION). Skip redaction to avoid corrupting aggregate context.
-    _is_aggregate_ctx = normalized_context.lstrip().startswith("ADMIN STATISTICS RECORD:")
+    # classified as ORGANIZATION). Skip redaction when caller explicitly marks the context
+    # as aggregate (is_aggregate_context=True), set only by _try_admin_aggregate_query().
+    # The old magic-string check is kept as belt-and-suspenders but is no longer the primary gate.
+    _is_aggregate_ctx = is_aggregate_context or normalized_context.lstrip().startswith("ADMIN STATISTICS RECORD:")
 
     if _is_aggregate_ctx:
         redacted_context = normalized_context
@@ -4553,16 +4578,19 @@ async def chat_with_documents(req: Request):
         # query PostgreSQL directly instead of vector search.  ChromaDB can only return
         # individual chunks — it cannot aggregate across all records.
         # T9.5b: Faculty gets anonymized aggregate queries too.
+        _context_is_aggregate = False  # True when context came from SQL aggregate (no individual PII)
         if user_role in ('admin', 'super_admin') and not context:
             _agg_context = _try_admin_aggregate_query(query, org_id)
             if _agg_context:
                 logger.info(f"[ADMIN AGGREGATE] SQL shortcut answered query, len={len(_agg_context)}")
                 context = _agg_context
+                _context_is_aggregate = True
         elif user_role == 'faculty' and not context:
             _agg_context = _try_faculty_aggregate_query(query, org_id, entity_id, user_role=user_role)
             if _agg_context:
                 logger.info(f"[FACULTY AGGREGATE] SQL shortcut answered query, len={len(_agg_context)}")
                 context = _agg_context
+                _context_is_aggregate = True
 
         # Build context if not provided
         search_query = None  # Will be set inside the block; fallback to query at LLM call
@@ -4877,7 +4905,8 @@ async def chat_with_documents(req: Request):
             privacy_level=privacy_level,
             entity_id=entity_id,
             protected_values=_protected_terms,
-            privacy_mode=privacy_mode
+            privacy_mode=privacy_mode,
+            is_aggregate_context=_context_is_aggregate
         )
 
         # --- LAYER 4: AUTOMATED OUTPUT LEAK AUDIT ---
@@ -5110,15 +5139,18 @@ async def chat_stream(req: Request):
         # HIGH-1: Admin/Faculty aggregate SQL shortcut — mirrors /chat endpoint behavior.
         # If vector search returned nothing, try structured DB query for counts/rankings.
         # T9.5b: Faculty gets anonymized aggregate queries too.
+        _stream_ctx_is_aggregate = False
         if is_admin and not context:
             _agg_context = _try_admin_aggregate_query(query, org_id)
             if _agg_context:
                 context = _agg_context
+                _stream_ctx_is_aggregate = True
                 logger.info(f"[STREAM ADMIN AGGREGATE] SQL shortcut returned context len={len(context)}")
         elif user_role == 'faculty' and not context:
             _agg_context = _try_faculty_aggregate_query(query, org_id, entity_id, user_role=user_role)
             if _agg_context:
                 context = _agg_context
+                _stream_ctx_is_aggregate = True
                 logger.info(f"[STREAM FACULTY AGGREGATE] SQL shortcut returned context len={len(context)}")
 
     except Exception as e:
@@ -5169,7 +5201,8 @@ async def chat_stream(req: Request):
         # can apply the self-access de-anonymization guard correctly.
         response_text = generate_chat_response(redacted_query, redacted_context or "", user_role=user_role,
                                                 conversation_history=conversation_history, privacy_level=privacy_level,
-                                                entity_id=entity_id, privacy_mode=privacy_mode)
+                                                entity_id=entity_id, privacy_mode=privacy_mode,
+                                                is_aggregate_context=_stream_ctx_is_aggregate)
         async def fallback_gen():
             yield f'data: {json.dumps({"token": response_text})}\n\n'
             yield 'data: [DONE]\n\n'
