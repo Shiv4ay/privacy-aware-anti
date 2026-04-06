@@ -1,7 +1,22 @@
-# Environment variables
+# Environment variables & Secrets
 .env
 .env.local
 .env.*.local
+!.env.example
+.env.bak
+.env.backup
+.env.*.bak
+.env.development
+.env.production
+.env.test
+backend/api/.env
+!backend/api/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+credentials.json
+*.key
+*.pem
 
 # Python
 __pycache__/
