@@ -68,3 +68,4 @@ logs/
 # Temporary files
 *.tmp
 push_output.txt
+.worktrees
