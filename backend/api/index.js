@@ -202,6 +202,11 @@ app.use('/api/user', verifyCsrf, authenticateJWT, (req, res, next) => {
 }, userSetupRoutes);
 console.log('✅ User Setup mounted at /api/user');
 
+// Privacy / DPDP Consent Routes (Task 1 — DPDP Act 2023 §6)
+const privacyRoutes = require('./routes/privacy');
+app.use('/api/user/privacy', verifyCsrf, authenticateJWT, privacyRoutes);
+console.log('✅ Privacy (DPDP) Routes mounted at /api/user/privacy');
+
 // Session Routes (Phase 16)
 app.use('/api/session', require('./routes/session'));
 console.log('✅ Session Routes mounted at /api/session');

@@ -1,0 +1,115 @@
+"""
+DPDP Act 2023 compliance tests.
+Run from host: python -m pytest tests/compliance/test_dpdp.py -v
+API is accessible via docker exec since port 3001 is internal.
+"""
+import os
+import subprocess
+import requests
+import pytest
+
+API = os.getenv("API_BASE", "http://localhost:3001")
+DEV_HEADERS = {
+    "x-dev-auth": os.getenv("DEV_AUTH_KEY", "super-secret-dev-key"),
+    "Content-Type": "application/json",
+}
+
+def _get_csrf():
+    """Fetch __csrf cookie from API healthz endpoint."""
+    try:
+        r = requests.get(f"{API}/healthz", timeout=5)
+        return r.cookies.get("__csrf", "")
+    except Exception:
+        return ""
+
+def _run_in_api(js_code):
+    """Run JS inside the api container to bypass internal-only port."""
+    result = subprocess.run(
+        ["docker", "exec", "privacy-aware-api", "node", "-e", js_code],
+        capture_output=True, text=True, timeout=15
+    )
+    return result
+
+# ── Consent tests ─────────────────────────────────────────────────────────────
+
+def test_record_consent():
+    """POST /api/user/privacy/consent records consent for a purpose."""
+    js = """
+const http = require('http');
+const body = JSON.stringify({purpose: 'ai_query_processing', granted: true});
+const req = http.request({
+  hostname: 'localhost', port: 3001, path: '/api/user/privacy/consent',
+  method: 'POST',
+  headers: {'Content-Type':'application/json','Content-Length':body.length,
+            'x-dev-auth':'super-secret-dev-key','x-csrf-token':'bypass'}
+}, res => {
+  let d=''; res.on('data',c=>d+=c); res.on('end',()=>{
+    const j=JSON.parse(d);
+    if(res.statusCode!==200) { console.error('STATUS',res.statusCode,d); process.exit(1); }
+    if(j.purpose!=='ai_query_processing') { console.error('BAD PURPOSE',d); process.exit(1); }
+    if(j.granted!==true) { console.error('BAD GRANTED',d); process.exit(1); }
+    console.log('PASS');
+  });
+}); req.on('error',e=>{console.error(e.message);process.exit(1)}); req.write(body); req.end();
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_record_consent failed: {r.stdout} {r.stderr}"
+
+def test_withdraw_consent():
+    """POST with granted=false withdraws consent."""
+    js = """
+const http = require('http');
+function post(granted, cb) {
+  const body = JSON.stringify({purpose: 'ai_query_processing', granted});
+  const req = http.request({
+    hostname:'localhost',port:3001,path:'/api/user/privacy/consent',method:'POST',
+    headers:{'Content-Type':'application/json','Content-Length':body.length,
+             'x-dev-auth':'super-secret-dev-key','x-csrf-token':'bypass'}
+  }, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>cb(res.statusCode,JSON.parse(d))); });
+  req.write(body); req.end();
+}
+post(true, ()=> post(false, (status,j)=> {
+  if(status!==200||j.granted!==false){console.error('FAIL',status,JSON.stringify(j));process.exit(1);}
+  console.log('PASS');
+}));
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_withdraw_consent failed: {r.stdout} {r.stderr}"
+
+def test_get_consent_status():
+    """GET /api/user/privacy/consent returns list."""
+    js = """
+const http = require('http');
+http.get({
+  hostname:'localhost',port:3001,path:'/api/user/privacy/consent',
+  headers:{'x-dev-auth':'super-secret-dev-key'}
+}, res => {
+  let d=''; res.on('data',c=>d+=c); res.on('end',()=>{
+    if(res.statusCode!==200){console.error('STATUS',res.statusCode,d);process.exit(1);}
+    const j=JSON.parse(d);
+    if(!Array.isArray(j)){console.error('NOT ARRAY',d);process.exit(1);}
+    console.log('PASS');
+  });
+}).on('error',e=>{console.error(e.message);process.exit(1)});
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_get_consent_status failed: {r.stdout} {r.stderr}"
+
+def test_consent_invalid_purpose_rejected():
+    """POST with unknown purpose must return 400."""
+    js = """
+const http = require('http');
+const body = JSON.stringify({purpose: 'INVALID_XYZ', granted: true});
+const req = http.request({
+  hostname:'localhost',port:3001,path:'/api/user/privacy/consent',method:'POST',
+  headers:{'Content-Type':'application/json','Content-Length':body.length,
+           'x-dev-auth':'super-secret-dev-key','x-csrf-token':'bypass'}
+}, res => {
+  let d=''; res.on('data',c=>d+=c); res.on('end',()=>{
+    if(res.statusCode!==400){console.error('EXPECTED 400 got',res.statusCode,d);process.exit(1);}
+    console.log('PASS');
+  });
+}); req.write(body); req.end();
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_invalid_purpose failed: {r.stdout} {r.stderr}"
