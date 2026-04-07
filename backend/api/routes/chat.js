@@ -4,8 +4,18 @@ const router = express.Router();
 
 const { authenticateJWT } = require('../middleware/authMiddleware');
 const { aiLimiter } = require('../middleware/rateLimiter');
+const { makeWorkerCircuit, workerFallback } = require('../middleware/circuitBreaker');
 
 const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
+
+// Circuit breaker — one instance per process, wraps the worker chat call
+const _workerAxios = require('axios');
+const workerChatCircuit = makeWorkerCircuit(
+    async (payload) => _workerAxios.post(`${WORKER_URL}/chat`, payload, {
+        timeout: 300000,
+        responseType: 'json',
+    })
+);
 
 /**
  * Helper: Write audit log to audit_logs + broadcast via Redis for real-time UI
@@ -106,7 +116,7 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
     const privacy_level = await fetchOrgPrivacyLevel(req.db, org_id);
     const privacy_mode  = await fetchUserPrivacyMode(req.db, req.user?.userId);
 
-    const response = await axios.post(`${WORKER_URL}/chat`, {
+    const workerPayload = {
       query: query.trim(),
       privacy_level,
       privacy_mode,
@@ -119,7 +129,14 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
       user_email: req.user?.email || null,  // Identity anchoring
       username: req.user?.username || null,  // Identity anchoring
       conversation_history: req.body.conversation_history || [],
-    }, { timeout: 300000 });
+    };
+
+    const circuitResult = await workerChatCircuit.fire(workerPayload);
+    // If circuit is open, fire() returns the fallback value
+    if (circuitResult && circuitResult.status === 503 && circuitResult.error) {
+      return res.status(503).json({ error: circuitResult.error });
+    }
+    const response = circuitResult;
 
     // Universal security block detection: catch ANY status containing 'blocked'
     // Covers: blocked, security_blocked, security_blocked_ai, security_blocked_output, privacy_blocked, and any future *_blocked variants
