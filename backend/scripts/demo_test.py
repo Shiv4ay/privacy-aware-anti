@@ -35,7 +35,11 @@ except ImportError:
     sys.exit(1)
 
 WORKER_URL = os.getenv("WORKER_URL", "http://localhost:8001")
-DB_URL = os.getenv("DATABASE_URL", "").replace("@postgres:", "@localhost:")
+# When running from host, map docker service name → localhost.
+# When running inside Docker (WORKER_URL points to internal service), keep as-is.
+_raw_db = os.getenv("DATABASE_URL", "")
+_inside_docker = "localhost" not in os.getenv("WORKER_URL", "http://localhost:8001")
+DB_URL = _raw_db if _inside_docker else _raw_db.replace("@postgres:", "@localhost:")
 ORG_ID = 4
 PASS = 0
 FAIL = 0
