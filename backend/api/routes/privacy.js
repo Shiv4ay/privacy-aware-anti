@@ -229,4 +229,123 @@ router.post('/erasure', async (req, res) => {
     }
 });
 
+// GET /export — Right to Access (DPDP Act 2023 §11)
+router.get('/export', async (req, res) => {
+    const userId = req.user?.userId || req.user?.user_id;
+
+    // Resolve DB integer id for FK-typed columns
+    let dbIntId = null;
+    try {
+        const uRow = await req.db.query(
+            `SELECT id FROM users WHERE user_id::text = $1 OR username = $2 LIMIT 1`,
+            [userId, req.user?.username || '']
+        );
+        if (uRow.rows.length > 0) {
+            dbIntId = uRow.rows[0].id;
+        }
+    } catch (lookupErr) {
+        console.warn('[Privacy] /export user lookup warning:', lookupErr.message);
+    }
+
+    // Fetch profile — 404 if user not found (unless dev-bypass user)
+    let profile = null;
+    try {
+        const pRow = await req.db.query(
+            `SELECT id, username, email, role, created_at, is_active
+             FROM users WHERE user_id::text = $1 OR username = $2 LIMIT 1`,
+            [userId, req.user?.username || '']
+        );
+        if (pRow.rows.length === 0) {
+            // Dev auth bypass: user exists in JWT but not in DB — return synthetic profile
+            if (req.user?.isDev) {
+                profile = {
+                    id: null,
+                    username: req.user.username || userId,
+                    email: req.user.email || null,
+                    role: req.user.role || null,
+                    created_at: null,
+                    is_active: true,
+                };
+            } else {
+                return res.status(404).json({ error: 'User not found' });
+            }
+        } else {
+            profile = pRow.rows[0];
+        }
+    } catch (profileErr) {
+        console.error('[Privacy] /export profile error:', profileErr.message);
+        return res.status(404).json({ error: 'User not found' });
+    }
+
+    // consent_records — varchar FK, use userId directly
+    let consent_records = [];
+    try {
+        const cr = await req.db.query(
+            `SELECT purpose, granted, granted_at, withdrawn_at, updated_at
+             FROM consent_records WHERE user_id = $1 ORDER BY purpose`,
+            [userId]
+        );
+        consent_records = cr.rows;
+    } catch (err) {
+        console.warn('[Privacy] /export consent_records error:', err.message);
+    }
+
+    // search_queries — integer FK
+    let search_queries = [];
+    try {
+        if (dbIntId !== null) {
+            const sq = await req.db.query(
+                `SELECT query_text, created_at, response_time_ms
+                 FROM search_queries WHERE user_id = $1
+                 ORDER BY created_at DESC LIMIT 100`,
+                [dbIntId]
+            );
+            search_queries = sq.rows;
+        }
+    } catch (err) {
+        console.warn('[Privacy] /export search_queries error:', err.message);
+    }
+
+    // audit_logs — integer FK
+    let audit_logs = [];
+    try {
+        if (dbIntId !== null) {
+            const al = await req.db.query(
+                `SELECT action, resource_type, details, created_at, ip_address
+                 FROM audit_logs WHERE user_id = $1
+                 ORDER BY created_at DESC LIMIT 100`,
+                [dbIntId]
+            );
+            audit_logs = al.rows;
+        }
+    } catch (err) {
+        console.warn('[Privacy] /export audit_logs error:', err.message);
+    }
+
+    // documents — integer FK via uploaded_by
+    let documents = [];
+    try {
+        if (dbIntId !== null) {
+            const docs = await req.db.query(
+                `SELECT filename, status, created_at, file_size
+                 FROM documents WHERE uploaded_by = $1
+                 ORDER BY created_at DESC`,
+                [dbIntId]
+            );
+            documents = docs.rows;
+        }
+    } catch (err) {
+        console.warn('[Privacy] /export documents error:', err.message);
+    }
+
+    res.json({
+        exported_at: new Date().toISOString(),
+        profile,
+        consent_records,
+        search_queries,
+        audit_logs,
+        documents,
+    });
+});
+
 module.exports = router;

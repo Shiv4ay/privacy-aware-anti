@@ -158,3 +158,48 @@ const req = http.request({
 """
     r = _run_in_api(js)
     assert r.returncode == 0 and "PASS" in r.stdout, f"test_erasure_without_confirm_rejected failed: {r.stdout} {r.stderr}"
+
+# ── Right to Access (export) tests ────────────────────────────────────────────
+
+def test_export_returns_all_sections():
+    """GET /api/user/privacy/export returns 200 with all required top-level keys."""
+    js = """
+const http = require('http');
+http.get({
+  hostname:'localhost',port:3001,path:'/api/user/privacy/export',
+  headers:{'x-dev-auth':'super-secret-dev-key'}
+}, res => {
+  let d=''; res.on('data',c=>d+=c); res.on('end',()=>{
+    if(res.statusCode!==200){console.error('STATUS',res.statusCode,d);process.exit(1);}
+    let j;
+    try { j=JSON.parse(d); } catch(e){console.error('PARSE ERROR',d);process.exit(1);}
+    const required=['exported_at','profile','consent_records','search_queries','audit_logs','documents'];
+    const missing=required.filter(k=>!(k in j));
+    if(missing.length>0){console.error('MISSING KEYS',missing.join(','),d);process.exit(1);}
+    console.log('PASS');
+  });
+}).on('error',e=>{console.error(e.message);process.exit(1)});
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_export_returns_all_sections failed: {r.stdout} {r.stderr}"
+
+def test_export_profile_no_password_hash():
+    """GET /api/user/privacy/export profile must NOT contain password_hash."""
+    js = """
+const http = require('http');
+http.get({
+  hostname:'localhost',port:3001,path:'/api/user/privacy/export',
+  headers:{'x-dev-auth':'super-secret-dev-key'}
+}, res => {
+  let d=''; res.on('data',c=>d+=c); res.on('end',()=>{
+    if(res.statusCode!==200){console.error('STATUS',res.statusCode,d);process.exit(1);}
+    let j;
+    try { j=JSON.parse(d); } catch(e){console.error('PARSE ERROR',d);process.exit(1);}
+    if(!j.profile){console.error('NO PROFILE',d);process.exit(1);}
+    if('password_hash' in j.profile){console.error('LEAK: password_hash present',d);process.exit(1);}
+    console.log('PASS');
+  });
+}).on('error',e=>{console.error(e.message);process.exit(1)});
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_export_profile_no_password_hash failed: {r.stdout} {r.stderr}"
