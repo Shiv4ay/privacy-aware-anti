@@ -17,8 +17,8 @@ INTERNAL_PORTS = [
 ]
 
 PUBLIC_PORTS = [
-    ("localhost", 3001, "api-gateway"),
-    ("localhost", 3000, "frontend"),
+    ("localhost", 443, "nginx-https"),
+    ("localhost", 80, "nginx-http"),
 ]
 
 def _is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
@@ -70,3 +70,25 @@ def test_no_default_placeholder_secrets():
         assert val, f"Secret {var} is not set in .env or environment"
         assert "CHANGE_ME" not in val, f"Secret {var} still has placeholder value"
         assert len(val) >= 16, f"Secret {var} is too short (min 16 chars)"
+
+def test_https_endpoint_reachable():
+    """Nginx must serve HTTPS on port 443."""
+    import requests
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    try:
+        r = requests.get("https://localhost/healthz", verify=False, timeout=5)
+        assert r.status_code == 200, f"Expected 200, got {r.status_code}"
+    except requests.exceptions.ConnectionError:
+        pytest.fail("HTTPS port 443 not reachable — Nginx not running")
+
+def test_http_redirects_to_https():
+    """HTTP on port 80 must redirect to HTTPS."""
+    import requests
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    r = requests.get("http://localhost/", allow_redirects=False, timeout=5)
+    assert r.status_code in (301, 302, 308), (
+        f"Expected redirect, got {r.status_code}. HTTP should redirect to HTTPS."
+    )
+    assert "https" in r.headers.get("Location", "").lower()
