@@ -1,0 +1,67 @@
+# =============================================================
+# Production .dockerignore for privacy-aware-rag worker
+# Excludes debug, diagnostic, and one-off scripts from the image
+# =============================================================
+
+# Debug and diagnostic scripts
+debug_*.py
+check_*.py
+verify_*.py
+inspect_*.py
+peek_*.py
+audit_*.py
+diagnostic_*.py
+recover*.py
+requeue*.py
+fresh_start*.py
+clone_recovery.py
+exhaustive_scan.py
+script_*.py
+script.py
+
+# Reproduce / reset / restore / retry one-off scripts
+reproduce_*.py
+reset_*.py
+restore_*.py
+retry_*.py
+reindex_*.py
+
+# Named one-off scripts
+apply_chat_fix.py
+extract_code.py
+fix_chat_query.py
+real_encryption_check.py
+global_ale_search.py
+demo_ale_upload.py
+search_encrypted_stu.py
+search_chroma_stu_global.py
+search_target.py
+targeted_search.py
+system_health_check.py
+list_all_minio.py
+list_collections.py
+app_from_container.py
+deep_inspect_privacy.py
+recovery_ingest.py
+
+# Diagnostic log and output files
+diag_logs*.txt
+container_logs*.txt
+worker_logs*.txt
+diagnostic_output.txt
+
+# Backup files
+*.backup
+app.py.backup
+
+# Test files (not needed at runtime)
+test_*.py
+
+# ChromaDB local data directory (use Docker volume)
+chroma_db/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
