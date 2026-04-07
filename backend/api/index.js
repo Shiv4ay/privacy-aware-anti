@@ -26,6 +26,10 @@ const { authenticateJWT } = require('./middleware/authMiddleware');
 const { anomalyDetectionMiddleware } = require('./security/anomalyDetector');
 const { encryptEnvelope } = require('./security/cryptoManager');
 
+// CSRF Protection (Task 4)
+const cookieParser = require('cookie-parser');
+const { setCsrfCookie, verifyCsrf } = require('./middleware/csrf');
+
 // Application Logic
 const { attachUserId } = require('./middleware/attachUserId');
 const { abacMiddleware } = require('./middleware/abacMiddleware');
@@ -131,6 +135,10 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 app.use((req, res, next) => { console.log('[DEBUG] Body parser passed'); next(); });
 
+// CSRF: parse cookies, then set __csrf cookie on all responses
+app.use(cookieParser());
+app.use(setCsrfCookie);
+
 // 0. Public Health Check (Root level - for Docker & Frontend)
 app.get(['/healthz', '/api/health'], async (req, res) => {
     try {
@@ -188,7 +196,7 @@ console.log('✅ Auth System mounted at /api/auth');
 
 // User Setup Routes
 const userSetupRoutes = require('./routes/userSetup');
-app.use('/api/user', authenticateJWT, (req, res, next) => {
+app.use('/api/user', verifyCsrf, authenticateJWT, (req, res, next) => {
     console.log(`[DEBUG] Handling User Route: ${req.url}`);
     next();
 }, userSetupRoutes);
@@ -200,7 +208,7 @@ console.log('✅ Session Routes mounted at /api/session');
 
 // Admin Routes (for user management)
 const adminRoutes = require('./routes/admin');
-app.use('/api/admin', authenticateJWT, adminRoutes);
+app.use('/api/admin', verifyCsrf, authenticateJWT, adminRoutes);
 console.log('✅ Admin Routes mounted at /api/admin');
 
 // Dev Routes (for testing/token generation)
@@ -211,7 +219,7 @@ app.use('/api', devAuthRoutes);
 const ingestRoutes = require('./routes/ingest');
 // Make DB pool available to ingest routes
 app.set('pool', pool);
-app.use('/api/ingest', authenticateJWT, (req, res, next) => {
+app.use('/api/ingest', verifyCsrf, authenticateJWT, (req, res, next) => {
     console.log(`[DEBUG] Handling Ingest Route: ${req.url}`);
     next();
 }, ingestRoutes);
@@ -219,7 +227,7 @@ console.log('✅ Ingestion Routes mounted at /api/ingest');
 
 // Documents Upload Routes (University Dataset Integration)
 const documentsRoutes = require('./routes/documents');
-app.use('/api/documents', authenticateJWT, documentsRoutes);
+app.use('/api/documents', verifyCsrf, authenticateJWT, documentsRoutes);
 console.log('✅ Documents Routes mounted at /api/documents');
 
 // Organizations Routes (Super Admin)
@@ -244,7 +252,7 @@ console.log('✅ Notifications Routes mounted at /api/notifications');
 
 // Chat & Search Routes
 const chatRoutes = require('./routes/chat');
-app.use('/api', chatRoutes);
+app.use('/api', verifyCsrf, chatRoutes);
 console.log('✅ Chat & Search mounted at /api');
 
 // try {

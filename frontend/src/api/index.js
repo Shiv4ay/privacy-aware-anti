@@ -62,6 +62,12 @@ const parseJwt = (token) => {
 /**
  * Interceptor: attach authentication headers
  */
+// Helper: read a cookie by name (used for CSRF token)
+function getCookieValue(name) {
+  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  return match ? decodeURIComponent(match[2]) : '';
+}
+
 client.interceptors.request.use(
   (cfg) => {
     try {
@@ -91,6 +97,13 @@ client.interceptors.request.use(
             cfg.headers['X-Organization'] = activeOrg;
           }
         }
+      }
+
+      // CSRF: attach __csrf cookie value as X-CSRF-Token header on all requests
+      cfg.headers = cfg.headers || {};
+      const csrfToken = getCookieValue('__csrf');
+      if (csrfToken) {
+        cfg.headers['X-CSRF-Token'] = csrfToken;
       }
     } catch (err) {
       console.error('Auth header error:', err);

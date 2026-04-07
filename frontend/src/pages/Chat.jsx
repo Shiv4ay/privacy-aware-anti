@@ -11,6 +11,12 @@ import {
 import toast from 'react-hot-toast';
 import PIIText from '../components/ui/PIIText';
 
+// ── CSRF helper ─────────────────────────────────────────────────────────────
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  return match ? decodeURIComponent(match[2]) : '';
+}
+
 // ── Suggestion chips ────────────────────────────────────────────────────────
 const SUGGESTIONS = [
   { icon: GraduationCap, label: 'Student GPAs', prompt: 'What are the GPAs of top performing students?' },
@@ -230,6 +236,10 @@ export default function Chat() {
       const res = await client.post('/chat', {
         query: text,
         conversation_history: history,
+      }, {
+        headers: {
+          'X-CSRF-Token': getCookie('__csrf'),
+        },
       });
 
       const isSecurityBlock = ['security_blocked', 'security_blocked_ai', 'blocked'].includes(res.data?.status);
