@@ -3,6 +3,8 @@
 'use strict';
 
 const express = require('express');
+const axios   = require('axios');
+
 const router = express.Router();
 
 const VALID_PURPOSES = [
@@ -88,10 +90,23 @@ router.post('/erasure', async (req, res) => {
         });
     }
 
+    // Fix 4: safe org_id — guard against falsy coercion when org_id === 0
+    const rawOrgId = Number(req.user?.org_id ?? req.user?.organizationId);
+    const orgId = Number.isInteger(rawOrgId) && rawOrgId > 0 ? rawOrgId : null;
+    if (!orgId) {
+        return res.status(400).json({ error: 'Could not determine org_id from session' });
+    }
+
+    // Fix 2: validate WORKER_INTERNAL_KEY before proceeding
+    const internalKey = process.env.WORKER_INTERNAL_KEY;
+    if (!internalKey) {
+        console.error('[Privacy] WORKER_INTERNAL_KEY is not configured');
+        return res.status(500).json({ error: 'Erasure service misconfigured: WORKER_INTERNAL_KEY not set' });
+    }
+
     // userId from JWT may be a UUID string or a legacy string like 'dev-user-1'
     const userId   = req.user?.userId || req.user?.user_id;
     const entityId = req.user?.entityId || req.user?.entity_id;
-    const orgId    = Number(req.user?.org_id) || 1;
     const erased   = {};
 
     try {
@@ -114,40 +129,73 @@ router.post('/erasure', async (req, res) => {
             console.warn('[Privacy] User lookup warning:', lookupErr.message);
         }
 
-        // 1. Delete search queries (integer FK)
-        if (dbIntId !== null) {
-            const sqResult = await req.db.query(
-                'DELETE FROM search_queries WHERE user_id = $1 RETURNING id', [dbIntId]
+        // Fix 3: wrap all 4 DB steps + audit entry in a transaction
+        const client = await req.db.connect();
+        try {
+            await client.query('BEGIN');
+
+            // 1. Delete search queries (integer FK)
+            if (dbIntId !== null) {
+                const sqResult = await client.query(
+                    'DELETE FROM search_queries WHERE user_id = $1 RETURNING id', [dbIntId]
+                );
+                erased.search_queries = sqResult.rowCount;
+            } else {
+                erased.search_queries = 0;
+            }
+
+            // 2. Anonymise audit logs (uuid FK — preserve record structure, remove PII detail)
+            if (dbUuidId !== null) {
+                const alResult = await client.query(
+                    `UPDATE audit_logs SET details = '{"erased":true}'::jsonb
+                     WHERE user_id = $1 RETURNING id`, [dbUuidId]
+                );
+                erased.audit_logs = alResult.rowCount;
+            } else {
+                erased.audit_logs = 0;
+            }
+
+            // 3. Delete consent records (varchar FK — userId works directly)
+            const crResult = await client.query(
+                'DELETE FROM consent_records WHERE user_id = $1 RETURNING id', [userId]
             );
-            erased.search_queries = sqResult.rowCount;
-        } else {
-            erased.search_queries = 0;
+            erased.consent_records = crResult.rowCount;
+
+            // 4. Deactivate account, clear PII fields (uuid FK)
+            if (dbUuidId !== null) {
+                await client.query(
+                    `UPDATE users SET
+                        is_active     = FALSE,
+                        email         = NULL,
+                        username      = 'erased_' || id::text,
+                        password_hash = NULL
+                     WHERE user_id = $1`, [dbUuidId]
+                );
+                erased.account = 'deactivated';
+            } else {
+                erased.account = 'not_found';
+            }
+
+            // 6. Audit entry (no user_id since account is deactivated) — inside transaction
+            const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null;
+            await client.query(
+                `INSERT INTO audit_logs (action, resource_type, details, ip_address)
+                 VALUES ('erasure_completed', 'user', $1, $2)`,
+                [JSON.stringify({ org_id: orgId, erased_keys: Object.keys(erased) }), ip]
+            );
+
+            await client.query('COMMIT');
+        } catch (txErr) {
+            await client.query('ROLLBACK');
+            throw txErr;
+        } finally {
+            client.release();
         }
 
-        // 2. Anonymise audit logs (uuid FK — preserve record structure, remove PII detail)
-        if (dbUuidId !== null) {
-            const alResult = await req.db.query(
-                `UPDATE audit_logs SET details = '{"erased":true}'::jsonb
-                 WHERE user_id = $1 RETURNING id`, [dbUuidId]
-            );
-            erased.audit_logs = alResult.rowCount;
-        } else {
-            erased.audit_logs = 0;
-        }
-
-        // 3. Delete consent records (varchar FK — userId works directly)
-        const crResult = await req.db.query(
-            'DELETE FROM consent_records WHERE user_id = $1 RETURNING id', [userId]
-        );
-        erased.consent_records = crResult.rowCount;
-
-        // 4. Purge ChromaDB vectors via worker
-        erased.chromadb_vectors = 0;
+        // Fix 5: ChromaDB purge stays OUTSIDE the transaction (network I/O, not SQL)
         if (entityId) {
-            const workerUrl    = process.env.WORKER_URL || 'http://worker:8001';
-            const internalKey  = process.env.WORKER_INTERNAL_KEY || '';
+            const workerUrl = process.env.WORKER_URL || 'http://worker:8001';
             try {
-                const axios = require('axios');
                 const purgeRes = await axios.delete(
                     `${workerUrl}/admin/purge/${encodeURIComponent(entityId)}`,
                     {
@@ -162,36 +210,19 @@ router.post('/erasure', async (req, res) => {
             } catch (purgeErr) {
                 console.warn('[Privacy] ChromaDB purge warning:', purgeErr.message);
                 erased.chromadb_vectors = 'purge_unavailable';
+                erased.partial = true;
             }
-        }
-
-        // 5. Deactivate account, clear PII fields (uuid FK)
-        if (dbUuidId !== null) {
-            await req.db.query(
-                `UPDATE users SET
-                    is_active     = FALSE,
-                    email         = NULL,
-                    username      = 'erased_' || id::text,
-                    password_hash = NULL
-                 WHERE user_id = $1`, [dbUuidId]
-            );
-            erased.account = 'deactivated';
         } else {
-            erased.account = 'not_found';
+            erased.chromadb_vectors = 'skipped_no_entity_id';
         }
 
-        // 6. Audit entry (no user_id since account is deactivated)
-        const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null;
-        await req.db.query(
-            `INSERT INTO audit_logs (action, resource_type, details, ip_address)
-             VALUES ('erasure_completed', 'user', $1, $2)`,
-            [JSON.stringify({ org_id: orgId, erased_keys: Object.keys(erased) }), ip]
-        );
-
-        res.json({ message: 'Erasure complete', erased });
+        // Fix 5: use 207 if partial (ChromaDB purge failed), 200 otherwise
+        const statusCode = erased.partial ? 207 : 200;
+        res.status(statusCode).json({ message: 'Erasure complete', erased });
     } catch (err) {
         console.error('[Privacy] POST /erasure error:', err.message);
-        res.status(500).json({ error: 'Erasure failed', detail: err.message });
+        // Fix 6: don't leak err.message to client
+        res.status(500).json({ error: 'Erasure failed' });
     }
 });
 
