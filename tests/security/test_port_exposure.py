@@ -17,8 +17,8 @@ INTERNAL_PORTS = [
 ]
 
 PUBLIC_PORTS = [
-    ("localhost", 443, "nginx-https"),
-    ("localhost", 80, "nginx-http"),
+    ("localhost", 3001, "api-gateway"),
+    ("localhost", 3000, "frontend"),
 ]
 
 def _is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
@@ -54,8 +54,19 @@ REQUIRED_SECRETS = [
 
 def test_no_default_placeholder_secrets():
     """All required secrets must be set and not contain placeholder text."""
+    # Load .env from project root (same pattern as demo_test.py)
+    import pathlib
+    env_file = pathlib.Path(__file__).parent.parent.parent / ".env"
+    if env_file.exists():
+        with open(env_file, encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    os.environ.setdefault(k.strip(), v.strip())
+
     for var in REQUIRED_SECRETS:
         val = os.environ.get(var, "")
-        assert val, f"Secret {var} is not set"
+        assert val, f"Secret {var} is not set in .env or environment"
         assert "CHANGE_ME" not in val, f"Secret {var} still has placeholder value"
         assert len(val) >= 16, f"Secret {var} is too short (min 16 chars)"
