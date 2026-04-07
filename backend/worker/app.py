@@ -435,6 +435,25 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
         "usn", "gpa", "cgpa", "sgpa", "internship", "placement",
         "semester", "batch", "department", "faculty", "admission",
         "enrollment", "hostel", "campus", "quota", "lateral",
+        # Aggregate-statistics words used in admin/faculty SQL summary responses.
+        # Presidio spaCy NER or Presidio pattern recognizers misclassify these
+        # all-caps words (e.g. "STUDENTS") as SYSTEM_ID / ORGANIZATION when they
+        # appear in "TOTAL ENROLLED STUDENTS: 3" style aggregate records.
+        "students", "student", "enrolled", "total", "count", "statistics",
+        "record", "organization", "placements", "internships", "documents",
+        "admin", "users", "companies", "company", "position", "salary",
+        "department", "batch", "location", "status", "type",
+        "completed", "pending", "failed", "processed", "active", "inactive",
+        "hired", "placed", "rate", "average", "minimum", "maximum", "highest",
+        "lowest", "extremes", "ranking", "ranked", "distribution", "overview",
+        "summary", "report", "analytics", "insights", "breakdown",
+        # Admin SQL report section headers (Presidio spaCy NER misclassifies these as ORG)
+        "internship statistics", "placement statistics", "salary statistics",
+        "salary extremes", "top companies by placement count", "admin statistics",
+        "admin statistics record", "placement statistics:", "internship statistics:",
+        "recent audit log entries", "faculty members", "failed documents",
+        "document processing status", "role distribution", "enrolled students",
+        "processed student records", "placement rate", "audit log",
     }
     # Indian states & address terms that Presidio NER misclassifies as ORGANIZATION.
     # Without this guard, "Rajasthan" or "5th Cross" steal COMPANY token slots
@@ -548,6 +567,29 @@ def redact_text(text: str, return_map: bool = False, strictness: str = None, **k
         PHONE_PATTERN = re.compile(r'(?:\+?91[\-\s]?)?(?:0?[6-9]\d{4}[\-\s]?\d{5})\b')
         for m in PHONE_PATTERN.finditer(segment):
             custom_results.append(RecognizerResult("PHONE_NUMBER", m.start(), m.end(), 1.0))
+
+        # ── INDIAN NATIONAL ID PATTERNS (DPDP Act 2023 — Sensitive Personal Data) ──
+        # Aadhar: 12 digits in groups of 4 (1234 5678 9012 or 1234-5678-9012)
+        AADHAR_PATTERN = re.compile(r'\b\d{4}[\s\-]\d{4}[\s\-]\d{4}\b')
+        for m in AADHAR_PATTERN.finditer(segment):
+            # Guard: must not already be covered by another custom result
+            overlap = any(not (m.end() <= c.start or m.start() >= c.end) for c in custom_results)
+            if not overlap:
+                custom_results.append(RecognizerResult("SYSTEM_ID", m.start(), m.end(), 1.0))
+
+        # PAN: [A-Z]{5}[0-9]{4}[A-Z] (e.g. ABCDE1234F)
+        PAN_PATTERN = re.compile(r'\b[A-Z]{5}[0-9]{4}[A-Z]\b')
+        for m in PAN_PATTERN.finditer(segment):
+            overlap = any(not (m.end() <= c.start or m.start() >= c.end) for c in custom_results)
+            if not overlap:
+                custom_results.append(RecognizerResult("SYSTEM_ID", m.start(), m.end(), 1.0))
+
+        # IFSC: [A-Z]{4}0[A-Z0-9]{6} (e.g. SBIN0001234)
+        IFSC_PATTERN = re.compile(r'\b[A-Z]{4}0[A-Z0-9]{6}\b')
+        for m in IFSC_PATTERN.finditer(segment):
+            overlap = any(not (m.end() <= c.start or m.start() >= c.end) for c in custom_results)
+            if not overlap:
+                custom_results.append(RecognizerResult("SYSTEM_ID", m.start(), m.end(), 1.0))
 
         # NAME FIELD DETECTOR: Catch name values from labeled fields that Presidio's
         # NER model (en_core_web_md) misses for uncommon names (e.g., Indian names like
@@ -1653,7 +1695,7 @@ def _merge_split_name_fields(context: str) -> str:
     """
     return context
 
-def generate_chat_response(query: str, context: str, user_role: str = "student", conversation_history: list = None, privacy_level: str = "standard", entity_id: Optional[str] = None, protected_values: Optional[set] = None, privacy_mode: str = "normal"):
+def generate_chat_response(query: str, context: str, user_role: str = "student", conversation_history: list = None, privacy_level: str = "standard", entity_id: Optional[str] = None, protected_values: Optional[set] = None, privacy_mode: str = "normal", is_aggregate_context: bool = False):
     """
     Generate answer using either OpenAI or Ollama with Strict RAG Guardrails.
     
@@ -1691,15 +1733,28 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
     # as raw text in the LLM response — the core promise of Privacy-Aware RAG.
     is_self_query = bool(entity_id) and user_role in ('student', 'faculty')
 
-    redacted_context, context_pii_map = redact_text(
-        normalized_context,
-        return_map=True,
-        pii_map=pii_session_map,
-        counters=pii_session_counters,
-        strictness=privacy_level,
-        protected_values=protected_values
-    )
-    logger.info(f"RAG SESSION: PII redaction applied for role={user_role}. Mapped {len(context_pii_map)} entities. Context len={len(redacted_context)}")
+    # AGGREGATE CONTEXT BYPASS: Admin SQL aggregate responses (counts, rates, salary stats)
+    # contain ZERO individual PII — only aggregate numbers and structural labels.
+    # Running Presidio on them causes false positives (e.g. "INTERNSHIP STATISTICS"
+    # classified as ORGANIZATION). Skip redaction when caller explicitly marks the context
+    # as aggregate (is_aggregate_context=True), set only by _try_admin_aggregate_query().
+    # The old magic-string check is kept as belt-and-suspenders but is no longer the primary gate.
+    _is_aggregate_ctx = is_aggregate_context or normalized_context.lstrip().startswith("ADMIN STATISTICS RECORD:")
+
+    if _is_aggregate_ctx:
+        redacted_context = normalized_context
+        context_pii_map = {}
+        logger.info(f"RAG SESSION: Aggregate SQL context — skipping PII redaction (no individual PII present). Context len={len(redacted_context)}")
+    else:
+        redacted_context, context_pii_map = redact_text(
+            normalized_context,
+            return_map=True,
+            pii_map=pii_session_map,
+            counters=pii_session_counters,
+            strictness=privacy_level,
+            protected_values=protected_values
+        )
+        logger.info(f"RAG SESSION: PII redaction applied for role={user_role}. Mapped {len(context_pii_map)} entities. Context len={len(redacted_context)}")
 
     system_msg = get_system_prompt(user_role, bool(context))
 
@@ -2520,6 +2575,37 @@ def health_check():
         checks["minio"] = True
     except Exception:
         checks["minio"] = False
+
+    return {"status": "ok", "checks": checks}
+
+@app.delete("/admin/purge/{entity_id}")
+async def purge_entity_data(entity_id: str, request: Request):
+    """
+    DPDP Act §13 right-to-erasure: delete all ChromaDB vectors for an entity.
+    Protected by internal_key_guard middleware (already applied globally).
+    """
+    org_id_header = request.headers.get("X-Org-Id")
+    if not org_id_header:
+        raise HTTPException(status_code=400, detail="X-Org-Id header required")
+    try:
+        org_id = int(org_id_header)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="X-Org-Id must be an integer")
+
+    collection_name = f"privacy_documents_{org_id}"
+    deleted = 0
+    try:
+        col = chroma_client.get_collection(name=collection_name)
+        results = col.get(where={"source_id": entity_id}, include=[])
+        ids = results.get("ids", [])
+        if ids:
+            col.delete(ids=ids)
+            deleted = len(ids)
+        logger.info(f"[ERASURE] Purged {deleted} vectors for entity {entity_id} in org {org_id}")
+    except Exception as e:
+        logger.warning(f"[ERASURE] ChromaDB purge warning for {entity_id}: {e}")
+
+    return {"entity_id": entity_id, "org_id": org_id, "deleted_vectors": deleted}
 
 @app.post("/redact")
 def redact_api_endpoint(request: RedactionRequest):
@@ -3928,13 +4014,22 @@ def _try_admin_aggregate_query(query: str, org_id) -> str:
     q = query.lower().strip()
 
     # ── pattern matchers ───────────────────────────────────────────────────
-    is_count_students   = any(p in q for p in ["how many student", "total student", "student count", "number of student", "enrolled student"])
+    # "how many students did internships?" must not match student count — exclude intern-related queries
+    is_count_students   = (any(p in q for p in ["how many student", "total student", "student count", "number of student", "enrolled student"])
+                           and not any(p in q for p in ["intern", "placed", "placement"]))
     is_placement_rank   = any(p in q for p in ["which compan", "top compan", "most student", "hired most", "placement rank", "company hire"])
     is_avg_salary       = any(p in q for p in ["average salary", "avg salary", "average ctc", "avg ctc", "average package", "mean salary"])
     is_failed_docs      = any(p in q for p in ["failed document", "failed ingestion", "ingestion fail", "status fail", "document fail"])
     is_all_faculty      = any(p in q for p in ["all faculty", "list faculty", "faculty member", "show faculty"])
     is_doc_summary      = any(p in q for p in ["document summary", "how many document", "total document", "document count", "document status"])
-    is_placement_rate   = any(p in q for p in ["placement rate", "placement percent", "how many placed", "placed student", "got placement"])
+    is_placement_rate   = any(p in q for p in ["placement rate", "placement percent", "how many placed", "placed student", "got placement",
+                                                  "students are placed", "students got placed", "students placed", "how many students placed",
+                                                  "how many student placed", "students have been placed", "total placed"])
+    is_max_salary       = any(p in q for p in ["highest ctc", "highest salary", "highest package", "maximum salary", "max ctc",
+                                                  "maximum ctc", "top salary", "highest lpa", "best package", "highest pay"])
+    is_internship_count = any(p in q for p in ["how many intern", "internship count", "total intern", "number of intern",
+                                                  "students did internship", "students did intern", "intern count",
+                                                  "students interned", "students completed internship"])
     is_audit_summary    = any(p in q for p in ["audit log", "recent log", "security log", "query log"])
     # T9.5: 9 new patterns
     is_role_distribution = any(p in q for p in ["role distribution", "user role", "how many admin", "how many user", "role breakdown", "role count", "user breakdown"])
@@ -3957,7 +4052,8 @@ def _try_admin_aggregate_query(query: str, org_id) -> str:
                 is_role_distribution, is_pending_docs, is_audit_by_user, is_jailbreak_count,
                 is_system_health, is_active_users, is_org_overview, is_processing_jobs,
                 is_super_admin_mutation, is_dept_gpa, is_students_at_company,
-                is_faculty_course_map, is_batch_placement]):
+                is_faculty_course_map, is_batch_placement,
+                is_max_salary, is_internship_count]):
         return ""  # Not an aggregate query — fall through to ChromaDB
 
     conn = None
@@ -3988,13 +4084,22 @@ def _try_admin_aggregate_query(query: str, org_id) -> str:
         # ── (b) company placement ranking — scoped to org ──────────────────
         if is_placement_rank:
             try:
-                qargs = (org_id,) if org_id else ()
-                cur.execute(
-                    "SELECT company_name, COUNT(*) AS hire_count FROM placements" +
-                    (" WHERE org_id = %s" if org_id else "") +
-                    " GROUP BY company_name ORDER BY hire_count DESC LIMIT 10",
-                    qargs
-                )
+                if org_id:
+                    cur.execute(
+                        "SELECT COALESCE(c.company_name, p.company_id) AS company, COUNT(*) AS hire_count"
+                        " FROM placements p"
+                        " LEFT JOIN companies c ON p.company_id = c.company_id AND c.org_id = p.org_id"
+                        " WHERE p.org_id = %s"
+                        " GROUP BY company ORDER BY hire_count DESC LIMIT 10",
+                        (org_id,)
+                    )
+                else:
+                    cur.execute(
+                        "SELECT COALESCE(c.company_name, p.company_id) AS company, COUNT(*) AS hire_count"
+                        " FROM placements p"
+                        " LEFT JOIN companies c ON p.company_id = c.company_id"
+                        " GROUP BY company ORDER BY hire_count DESC LIMIT 10"
+                    )
                 results = cur.fetchall()
                 if results:
                     rows_text.append("TOP COMPANIES BY PLACEMENT COUNT:")
@@ -4026,6 +4131,45 @@ def _try_admin_aggregate_query(query: str, org_id) -> str:
                     rows_text.append("No salary data available.")
             except Exception as e:
                 rows_text.append(f"Salary data unavailable: {e}")
+
+        # ── (c2) max / highest salary / CTC ──────────────────────────────────
+        if is_max_salary:
+            try:
+                qargs = (org_id,) if org_id else ()
+                cur.execute(
+                    "SELECT MAX(salary), MIN(salary) FROM placements WHERE salary > 0" +
+                    (" AND org_id = %s" if org_id else ""),
+                    qargs
+                )
+                r = cur.fetchone()
+                if r and r[0]:
+                    rows_text.append(
+                        f"SALARY EXTREMES (all placements):\n"
+                        f"  Highest CTC: ₹{r[0]:,.0f} (₹{r[0]/100000:.1f} Lakhs)\n"
+                        f"  Lowest CTC: ₹{r[1]:,.0f} (₹{r[1]/100000:.1f} Lakhs)"
+                    )
+                else:
+                    rows_text.append("No salary data available.")
+            except Exception as e:
+                rows_text.append(f"Salary data unavailable: {e}")
+
+        # ── (c3) internship count ─────────────────────────────────────────
+        if is_internship_count:
+            try:
+                qargs = (org_id,) if org_id else ()
+                cur.execute(
+                    "SELECT COUNT(*) FROM internships" +
+                    (" WHERE org_id = %s" if org_id else ""),
+                    qargs
+                )
+                cnt = (cur.fetchone() or (0,))[0]
+                rows_text.append(
+                    f"INTERNSHIP STATISTICS:\n"
+                    f"  Total students who did internships: {cnt}\n"
+                    f"  Total internship records in system: {cnt}"
+                )
+            except Exception as e:
+                rows_text.append(f"Internship data unavailable: {e}")
 
         # ── (d) failed documents ───────────────────────────────────────────
         if is_failed_docs:
@@ -4463,16 +4607,19 @@ async def chat_with_documents(req: Request):
         # query PostgreSQL directly instead of vector search.  ChromaDB can only return
         # individual chunks — it cannot aggregate across all records.
         # T9.5b: Faculty gets anonymized aggregate queries too.
+        _context_is_aggregate = False  # True when context came from SQL aggregate (no individual PII)
         if user_role in ('admin', 'super_admin') and not context:
             _agg_context = _try_admin_aggregate_query(query, org_id)
             if _agg_context:
                 logger.info(f"[ADMIN AGGREGATE] SQL shortcut answered query, len={len(_agg_context)}")
                 context = _agg_context
+                _context_is_aggregate = True
         elif user_role == 'faculty' and not context:
             _agg_context = _try_faculty_aggregate_query(query, org_id, entity_id, user_role=user_role)
             if _agg_context:
                 logger.info(f"[FACULTY AGGREGATE] SQL shortcut answered query, len={len(_agg_context)}")
                 context = _agg_context
+                _context_is_aggregate = True
 
         # Build context if not provided
         search_query = None  # Will be set inside the block; fallback to query at LLM call
@@ -4787,7 +4934,8 @@ async def chat_with_documents(req: Request):
             privacy_level=privacy_level,
             entity_id=entity_id,
             protected_values=_protected_terms,
-            privacy_mode=privacy_mode
+            privacy_mode=privacy_mode,
+            is_aggregate_context=_context_is_aggregate
         )
 
         # --- LAYER 4: AUTOMATED OUTPUT LEAK AUDIT ---
@@ -5020,15 +5168,18 @@ async def chat_stream(req: Request):
         # HIGH-1: Admin/Faculty aggregate SQL shortcut — mirrors /chat endpoint behavior.
         # If vector search returned nothing, try structured DB query for counts/rankings.
         # T9.5b: Faculty gets anonymized aggregate queries too.
+        _stream_ctx_is_aggregate = False
         if is_admin and not context:
             _agg_context = _try_admin_aggregate_query(query, org_id)
             if _agg_context:
                 context = _agg_context
+                _stream_ctx_is_aggregate = True
                 logger.info(f"[STREAM ADMIN AGGREGATE] SQL shortcut returned context len={len(context)}")
         elif user_role == 'faculty' and not context:
             _agg_context = _try_faculty_aggregate_query(query, org_id, entity_id, user_role=user_role)
             if _agg_context:
                 context = _agg_context
+                _stream_ctx_is_aggregate = True
                 logger.info(f"[STREAM FACULTY AGGREGATE] SQL shortcut returned context len={len(context)}")
 
     except Exception as e:
@@ -5079,7 +5230,8 @@ async def chat_stream(req: Request):
         # can apply the self-access de-anonymization guard correctly.
         response_text = generate_chat_response(redacted_query, redacted_context or "", user_role=user_role,
                                                 conversation_history=conversation_history, privacy_level=privacy_level,
-                                                entity_id=entity_id, privacy_mode=privacy_mode)
+                                                entity_id=entity_id, privacy_mode=privacy_mode,
+                                                is_aggregate_context=_stream_ctx_is_aggregate)
         async def fallback_gen():
             yield f'data: {json.dumps({"token": response_text})}\n\n'
             yield 'data: [DONE]\n\n'

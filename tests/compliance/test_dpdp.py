@@ -113,3 +113,48 @@ const req = http.request({
 """
     r = _run_in_api(js)
     assert r.returncode == 0 and "PASS" in r.stdout, f"test_invalid_purpose failed: {r.stdout} {r.stderr}"
+
+def test_erasure_request_returns_summary():
+    """POST /api/user/privacy/erasure returns a deletion summary."""
+    js = """
+const http = require('http');
+const body = JSON.stringify({confirm: true});
+const req = http.request({
+  hostname: 'localhost', port: 3001, path: '/api/user/privacy/erasure',
+  method: 'POST',
+  headers: {'Content-Type':'application/json','Content-Length':body.length,
+            'x-dev-auth':'super-secret-dev-key','x-csrf-token':'bypass'}
+}, res => {
+  let d=''; res.on('data',c=>d+=c); res.on('end',()=>{
+    if(res.statusCode!==200){console.error('STATUS',res.statusCode,d);process.exit(1);}
+    const j=JSON.parse(d);
+    if(!j.erased){console.error('NO erased KEY',d);process.exit(1);}
+    if(!('search_queries' in j.erased)){console.error('NO search_queries',d);process.exit(1);}
+    if(!('audit_logs' in j.erased)){console.error('NO audit_logs',d);process.exit(1);}
+    if(!('chromadb_vectors' in j.erased)){console.error('NO chromadb_vectors',d);process.exit(1);}
+    console.log('PASS');
+  });
+}); req.on('error',e=>{console.error(e.message);process.exit(1)}); req.write(body); req.end();
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_erasure_request_returns_summary failed: {r.stdout} {r.stderr}"
+
+def test_erasure_without_confirm_rejected():
+    """POST /api/user/privacy/erasure without confirm=true returns 400."""
+    js = """
+const http = require('http');
+const body = JSON.stringify({confirm: false});
+const req = http.request({
+  hostname: 'localhost', port: 3001, path: '/api/user/privacy/erasure',
+  method: 'POST',
+  headers: {'Content-Type':'application/json','Content-Length':body.length,
+            'x-dev-auth':'super-secret-dev-key','x-csrf-token':'bypass'}
+}, res => {
+  let d=''; res.on('data',c=>d+=c); res.on('end',()=>{
+    if(res.statusCode!==400){console.error('EXPECTED 400 got',res.statusCode,d);process.exit(1);}
+    console.log('PASS');
+  });
+}); req.on('error',e=>{console.error(e.message);process.exit(1)}); req.write(body); req.end();
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_erasure_without_confirm_rejected failed: {r.stdout} {r.stderr}"
