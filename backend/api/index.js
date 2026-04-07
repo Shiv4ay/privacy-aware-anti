@@ -31,6 +31,9 @@ const { encryptEnvelope } = require('./security/cryptoManager');
 const cookieParser = require('cookie-parser');
 const { setCsrfCookie, verifyCsrf } = require('./middleware/csrf');
 
+// Structured Logging (Task 1 — Reliability & Observability)
+const { logger, requestIdMiddleware } = require('./middleware/logger');
+
 // Application Logic
 const { attachUserId } = require('./middleware/attachUserId');
 const { abacMiddleware } = require('./middleware/abacMiddleware');
@@ -55,7 +58,7 @@ const redis = new Redis(process.env.REDIS_URL || 'redis://redis:6379/0', {
     retryStrategy: (times) => Math.min(times * 50, 2000),
     maxRetriesPerRequest: 3
 });
-redis.on('error', (err) => console.warn('Redis warning:', err.message));
+redis.on('error', (err) => logger.warn('Redis connection warning', { error: err.message }));
 
 // Worker Service URL
 const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
@@ -142,6 +145,9 @@ app.use((req, res, next) => { console.log('[DEBUG] Body parser passed'); next();
 // CSRF: parse cookies, then set __csrf cookie on all responses
 app.use(cookieParser());
 app.use(setCsrfCookie);
+
+// Attach unique request ID to every request
+app.use(requestIdMiddleware);
 
 // 0. Public Health Check (Root level - for Docker & Frontend)
 app.get(['/healthz', '/api/health'], async (req, res) => {
