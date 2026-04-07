@@ -37,7 +37,7 @@ from pypdf import PdfReader
 from threading import Thread
 import chromadb
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Depends, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
@@ -2578,11 +2578,18 @@ def health_check():
 
     return {"status": "ok", "checks": checks}
 
+async def verify_internal_key(x_internal_key: str = Header(None)):
+    """FastAPI dependency that enforces WORKER_INTERNAL_KEY header validation."""
+    expected = os.getenv("WORKER_INTERNAL_KEY", "")
+    if not expected or x_internal_key != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
 @app.delete("/admin/purge/{entity_id}")
-async def purge_entity_data(entity_id: str, request: Request):
+async def purge_entity_data(entity_id: str, request: Request, _: None = Depends(verify_internal_key)):
     """
     DPDP Act §13 right-to-erasure: delete all ChromaDB vectors for an entity.
-    Protected by internal_key_guard middleware (already applied globally).
+    Protected by verify_internal_key dependency (enforces X-Internal-Key header).
     """
     org_id_header = request.headers.get("X-Org-Id")
     if not org_id_header:
