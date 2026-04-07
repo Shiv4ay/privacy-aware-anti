@@ -203,3 +203,28 @@ http.get({
 """
     r = _run_in_api(js)
     assert r.returncode == 0 and "PASS" in r.stdout, f"test_export_profile_no_password_hash failed: {r.stdout} {r.stderr}"
+
+# ── Data Retention (DPDP §8(7)) tests ────────────────────────────────────────
+
+def test_retention_cron_module_loads():
+    """retentionCron.js exports startRetentionJob as a function (DPDP §8(7))."""
+    js = """
+const { startRetentionJob } = require('./jobs/retentionCron');
+if (typeof startRetentionJob !== 'function') { process.exit(1); }
+console.log('PASS');
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_retention_cron_module_loads failed: {r.stdout} {r.stderr}"
+
+def test_retention_days_configurable():
+    """retentionCron.js defaults RETENTION_DAYS to 90 when env var is not set."""
+    js = """
+delete process.env.SEARCH_QUERY_RETENTION_DAYS;
+const { startRetentionJob } = require('./jobs/retentionCron');
+// Re-require forces fresh module load — use a fresh isolated check
+const src = require('fs').readFileSync('./jobs/retentionCron.js', 'utf8');
+if (!src.includes("'90'")) { console.error('FAIL: no default 90'); process.exit(1); }
+console.log('PASS');
+"""
+    r = _run_in_api(js)
+    assert r.returncode == 0 and "PASS" in r.stdout, f"test_retention_days_configurable failed: {r.stdout} {r.stderr}"

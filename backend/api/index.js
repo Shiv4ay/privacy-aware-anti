@@ -14,6 +14,7 @@ const jwt = require('jsonwebtoken');
 const url = require('url'); // For MinIO parsing
 const http = require('http'); // Required for Socket.io
 const RealtimeService = require('./realtime');
+const { startRetentionJob } = require('./jobs/retentionCron');
 
 // ==========================================
 // Middleware Imports
@@ -45,6 +46,9 @@ const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
+
+// DPDP §8(7) — Automated data retention cron job
+startRetentionJob(pool);
 
 // Redis
 const redis = new Redis(process.env.REDIS_URL || 'redis://redis:6379/0', {
