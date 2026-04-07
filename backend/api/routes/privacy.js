@@ -235,6 +235,7 @@ router.get('/export', async (req, res) => {
 
     // Resolve DB integer id for FK-typed columns
     let dbIntId = null;
+    let dbLookupFailed = false;
     try {
         const uRow = await req.db.query(
             `SELECT id FROM users WHERE user_id::text = $1 OR username = $2 LIMIT 1`,
@@ -245,6 +246,7 @@ router.get('/export', async (req, res) => {
         }
     } catch (lookupErr) {
         console.warn('[Privacy] /export user lookup warning:', lookupErr.message);
+        dbLookupFailed = true;
     }
 
     // Fetch profile — 404 if user not found (unless dev-bypass user)
@@ -274,7 +276,7 @@ router.get('/export', async (req, res) => {
         }
     } catch (profileErr) {
         console.error('[Privacy] /export profile error:', profileErr.message);
-        return res.status(404).json({ error: 'User not found' });
+        return res.status(500).json({ error: 'Failed to retrieve user profile' });
     }
 
     // consent_records — varchar FK, use userId directly
@@ -307,6 +309,7 @@ router.get('/export', async (req, res) => {
     }
 
     // audit_logs — integer FK
+    // audit_logs.user_id is INTEGER FK (users.id) per init.sql schema
     let audit_logs = [];
     try {
         if (dbIntId !== null) {
@@ -329,7 +332,7 @@ router.get('/export', async (req, res) => {
             const docs = await req.db.query(
                 `SELECT filename, status, created_at, file_size
                  FROM documents WHERE uploaded_by = $1
-                 ORDER BY created_at DESC`,
+                 ORDER BY created_at DESC LIMIT 500`,
                 [dbIntId]
             );
             documents = docs.rows;
@@ -338,6 +341,8 @@ router.get('/export', async (req, res) => {
         console.warn('[Privacy] /export documents error:', err.message);
     }
 
+    const documentsTruncated = documents.length === 500;
+
     res.json({
         exported_at: new Date().toISOString(),
         profile,
@@ -345,6 +350,8 @@ router.get('/export', async (req, res) => {
         search_queries,
         audit_logs,
         documents,
+        ...(dbLookupFailed ? { data_warning: 'Partial export — database error during user resolution' } : {}),
+        ...(documentsTruncated ? { documents_truncated: true } : {}),
     });
 });
 
