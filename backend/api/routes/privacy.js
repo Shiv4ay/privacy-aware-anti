@@ -43,8 +43,11 @@ router.post('/consent', async (req, res) => {
             return res.status(400).json({ error: '"granted" must be a boolean' });
         }
         const userId = req.user?.userId || req.user?.user_id;
-        const rawOrgId = req.user?.org_id || req.user?.organizationId || 1;
-        const orgId = Number.isInteger(Number(rawOrgId)) && !isNaN(Number(rawOrgId)) ? Number(rawOrgId) : 1;
+        const rawOrgId = Number(req.user?.org_id ?? req.user?.organizationId);
+        const orgId = Number.isInteger(rawOrgId) && rawOrgId > 0 ? rawOrgId : null;
+        if (!orgId) {
+            return res.status(400).json({ error: 'Could not determine org_id from session' });
+        }
         const ip     = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || null;
         const now    = new Date();
 
