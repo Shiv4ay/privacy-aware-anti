@@ -32,7 +32,10 @@ def test_ready_returns_json_with_checks():
 def test_ready_checks_include_required_deps():
     """/ready checks must include chromadb, postgres, ollama."""
     status, body = _curl_worker('/ready')
-    data = json.loads(body)
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        assert False, f"Response is not JSON: {body}"
     checks = data.get('checks', {})
     for dep in ('chromadb', 'postgres', 'ollama'):
         assert dep in checks, f"Missing '{dep}' in checks: {checks}"
@@ -41,7 +44,7 @@ def test_ready_status_code_matches_checks():
     """/ready must return 200 when all checks pass, 503 when any fail."""
     status, body = _curl_worker('/ready')
     data = json.loads(body)
-    all_up = all(v is True for v in data.get('checks', {}).values())
+    all_up = all(data.get('checks', {}).values())
     if all_up:
         assert status == 200, f"Expected 200 when all checks pass, got {status}"
     else:

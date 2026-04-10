@@ -286,6 +286,9 @@ chroma_client = chromadb.HttpClient(
 )
 chroma_collection = chroma_client.get_or_create_collection(name="privacy_documents_1")
 
+# Module-level Redis client — shared by readiness probe and other callers
+redis_client = redis.from_url(REDIS_URL)
+
 # -----------------------------
 # Pydantic models
 # -----------------------------
@@ -2589,9 +2592,21 @@ def readiness_probe():
 
     # ChromaDB
     try:
-        chroma_client.heartbeat()
-        checks["chromadb"] = True
-    except Exception:
+        # heartbeat() has no built-in timeout — run with a 5s deadline via threading
+        import threading
+        result = [False]
+        def _hb():
+            try:
+                chroma_client.heartbeat()
+                result[0] = True
+            except Exception:
+                result[0] = False
+        t = threading.Thread(target=_hb, daemon=True)
+        t.start()
+        t.join(timeout=5)
+        checks["chromadb"] = result[0]
+    except Exception as e:
+        logger.warning("Readiness check failed for chromadb: %s", e)
         checks["chromadb"] = False
 
     # PostgreSQL — use pooled connection (same as health check)
@@ -2600,26 +2615,30 @@ def readiness_probe():
         try:
             conn = get_conn()
             checks["postgres"] = True
-        except Exception:
+        except Exception as e:
+            logger.warning("Readiness check failed for postgres: %s", e)
             checks["postgres"] = False
         finally:
             if conn:
                 put_conn(conn)
-    except Exception:
+    except Exception as e:
+        logger.warning("Readiness check failed for postgres: %s", e)
         checks["postgres"] = False
 
     # Ollama — lightweight /api/tags probe
     try:
         resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         checks["ollama"] = resp.status_code == 200
-    except Exception:
+    except Exception as e:
+        logger.warning("Readiness check failed for ollama: %s", e)
         checks["ollama"] = False
 
-    # Redis
+    # Redis — reuse the module-level redis client (avoid creating a new connection per probe)
     try:
-        _r = redis.from_url(REDIS_URL)
-        checks["redis"] = bool(_r.ping())
-    except Exception:
+        redis_client.ping()
+        checks["redis"] = True
+    except Exception as e:
+        logger.warning("Readiness check failed for redis: %s", e)
         checks["redis"] = False
 
     all_ready = all(checks.values())
