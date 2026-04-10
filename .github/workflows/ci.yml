@@ -23,43 +23,52 @@ jobs:
           cache: pip
 
       - name: Install Python test dependencies
-        run: pip install pytest requests locust
+        run: pip install pytest requests
 
       - name: Create .env from example
         run: |
           cp .env.example .env
-          sed -i 's/CHANGE_ME_POSTGRES_PASSWORD/ci_postgres_pass_123/g' .env
+          sed -i 's/CHANGE_ME_POSTGRES_PASSWORD/ci_postgres_pass_1234567890/g' .env
           sed -i 's/CHANGE_ME_JWT_SECRET/ci_jwt_secret_abcdefghijklmnop/g' .env
           sed -i 's/CHANGE_ME_WORKER_INTERNAL_KEY/ci_worker_key_abcdefghijklmnop/g' .env
-          sed -i 's/CHANGE_ME_OPENAI_API_KEY/sk-dummy-ci-key/g' .env
-          sed -i 's/CHANGE_ME_MINIO_SECRET_KEY/ci_minio_secret_123/g' .env
+          sed -i 's/CHANGE_ME_OPENAI_API_KEY/sk-dummy-ci-key-xxxxxxxx/g' .env
+          sed -i 's/CHANGE_ME_MINIO_SECRET_KEY/ci_minio_secret_1234567890/g' .env
           sed -i 's/CHANGE_ME_AES_MASTER_KEY/ci_aes_master_key_abcdefghijklm/g' .env
           sed -i 's/CHANGE_ME_QUERY_HASH_SALT/ci_query_hash_salt_12345678/g' .env
-          sed -i 's/CHANGE_ME_minio_password_min_20_chars/ci_minio_password_123/g' .env
-          sed -i 's/CHANGE_ME_access_key/ci_minio_access_key/g' .env
+          sed -i 's/CHANGE_ME_minio_password_min_20_chars/ci_minio_password_1234567890/g' .env
+          sed -i 's/CHANGE_ME_access_key/ci_minio_access_key1/g' .env
           sed -i 's/CHANGE_ME_different_from_JWT_SECRET_64_chars/ci_jwt_refresh_abcdefghijklmnop/g' .env
+          sed -i 's/CHANGE_ME_google_client_id/ci-google-client-id.apps.googleusercontent.com/g' .env
+          sed -i 's/CHANGE_ME_google_client_secret/ci_google_secret_xxxxxxxxxx/g' .env
+          sed -i 's/CHANGE_ME_dev_key/ci_dev_auth_key_xxxxxxxxxx/g' .env
 
       - name: Start stack
-        run: docker compose up -d --wait
+        run: docker compose up -d
         timeout-minutes: 5
 
       - name: Wait for API to be ready
         run: |
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3001/healthz > /dev/null 2>&1; then
-              echo "API ready"; break
+              echo "API ready after $((i * 3))s"; exit 0
             fi
             echo "Waiting for API... ($i/30)"; sleep 3
           done
+          echo "ERROR: API did not become ready after 90s"
+          docker compose logs api --tail=30
+          exit 1
 
       - name: Wait for worker to be ready
         run: |
           for i in $(seq 1 40); do
             if docker exec privacy-aware-worker curl -sf http://localhost:8001/ready > /dev/null 2>&1; then
-              echo "Worker ready"; break
+              echo "Worker ready after $((i * 5))s"; exit 0
             fi
             echo "Waiting for worker... ($i/40)"; sleep 5
           done
+          echo "ERROR: Worker did not become ready after 200s"
+          docker compose logs worker --tail=30
+          exit 1
 
       - name: Run compliance tests
         run: python -m pytest tests/compliance/ -v --tb=short
