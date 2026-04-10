@@ -4,6 +4,9 @@
 # Exit 0 on all-pass, exit 1 on any failure.
 set -euo pipefail
 
+# Require curl — fail early with a clear message rather than cryptic errors
+command -v curl >/dev/null 2>&1 || { echo "ERROR: curl not found — install it before running smoke tests"; exit 1; }
+
 API_HOST="${1:-http://localhost:3001}"
 WORKER_HOST="${2:-http://localhost:8001}"
 DEV_AUTH="${DEV_AUTH_KEY:-super-secret-dev-key}"

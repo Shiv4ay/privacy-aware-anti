@@ -70,6 +70,8 @@ class RAGUser(HttpUser):
             name="/api/chat",
             timeout=120,
         ) as resp:
+            # 401/403 expected in load tests — no real JWT is configured.
+            # These are auth-layer responses, not system failures.
             if resp.status_code not in (200, 401, 403):
                 resp.failure(f"Unexpected status {resp.status_code}: {resp.text[:100]}")
             else:

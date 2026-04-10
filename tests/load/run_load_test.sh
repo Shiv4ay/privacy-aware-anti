@@ -10,6 +10,7 @@ CSV_PREFIX="${RESULTS_DIR}/load"
 echo "=== Load Test: ${HOST} ==="
 echo "Users: 20 | Spawn rate: 2/s | Duration: 60s"
 
+LOCUST_EXIT=0
 locust \
   -f "$(dirname "$0")/locustfile.py" \
   --host "${HOST}" \
@@ -18,9 +19,15 @@ locust \
   --spawn-rate 2 \
   --run-time 60s \
   --csv "${CSV_PREFIX}" \
-  --loglevel WARNING
+  --loglevel WARNING || LOCUST_EXIT=$?
 
 STATS_FILE="${CSV_PREFIX}_stats.csv"
+
+if [ ! -f "${STATS_FILE}" ]; then
+  echo "ERROR: Load test did not produce results (locust exit code ${LOCUST_EXIT})"
+  echo "       Check that the target host '${HOST}' is reachable."
+  exit 1
+fi
 
 echo ""
 echo "=== Results ==="
