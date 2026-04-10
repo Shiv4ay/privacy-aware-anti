@@ -157,8 +157,13 @@ app.use(metricsMiddleware);
 
 // Metrics endpoint — public (nginx blocks external access; Prometheus scraper needs no auth)
 app.get('/metrics', async (req, res) => {
-    res.set('Content-Type', register.contentType);
-    res.end(await register.metrics());
+    try {
+        res.set('Content-Type', register.contentType);
+        res.end(await register.metrics());
+    } catch (err) {
+        logger.error('Failed to collect Prometheus metrics', { error: err.message });
+        res.status(500).end();
+    }
 });
 
 // 0. Public Health Check (Root level - for Docker & Frontend)

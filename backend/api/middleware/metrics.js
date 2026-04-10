@@ -28,13 +28,17 @@ const httpRequestsTotal = new client.Counter({
 
 /**
  * Express middleware: record request duration and count on response finish.
+ * Skips self-recording for the /metrics scrape route.
  */
 function metricsMiddleware(req, res, next) {
+    if (req.path === '/metrics') return next();
     const end = httpRequestDuration.startTimer();
     res.on('finish', () => {
         const labels = {
             method: req.method,
-            route: req.route?.path || req.path,
+            // Use route template (e.g. /api/user/:id) to avoid cardinality explosion.
+            // Fall back to 'unmatched' for 404s — never raw req.path.
+            route: req.route?.path || 'unmatched',
             status_code: res.statusCode,
         };
         end(labels);
