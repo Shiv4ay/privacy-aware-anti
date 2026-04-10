@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, rag-fix-stable]
+  pull_request:
+    branches: [main, rag-fix-stable]
+
+jobs:
+  test:
+    name: Run test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python test dependencies
+        run: pip install pytest requests locust
+
+      - name: Create .env from example
+        run: |
+          cp .env.example .env
+          sed -i 's/CHANGE_ME_POSTGRES_PASSWORD/ci_postgres_pass_123/g' .env
+          sed -i 's/CHANGE_ME_JWT_SECRET/ci_jwt_secret_abcdefghijklmnop/g' .env
+          sed -i 's/CHANGE_ME_WORKER_INTERNAL_KEY/ci_worker_key_abcdefghijklmnop/g' .env
+          sed -i 's/CHANGE_ME_OPENAI_API_KEY/sk-dummy-ci-key/g' .env
+          sed -i 's/CHANGE_ME_MINIO_SECRET_KEY/ci_minio_secret_123/g' .env
+          sed -i 's/CHANGE_ME_AES_MASTER_KEY/ci_aes_master_key_abcdefghijklm/g' .env
+          sed -i 's/CHANGE_ME_QUERY_HASH_SALT/ci_query_hash_salt_12345678/g' .env
+          sed -i 's/CHANGE_ME_minio_password_min_20_chars/ci_minio_password_123/g' .env
+          sed -i 's/CHANGE_ME_access_key/ci_minio_access_key/g' .env
+          sed -i 's/CHANGE_ME_different_from_JWT_SECRET_64_chars/ci_jwt_refresh_abcdefghijklmnop/g' .env
+
+      - name: Start stack
+        run: docker compose up -d --wait
+        timeout-minutes: 5
+
+      - name: Wait for API to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3001/healthz > /dev/null 2>&1; then
+              echo "API ready"; break
+            fi
+            echo "Waiting for API... ($i/30)"; sleep 3
+          done
+
+      - name: Wait for worker to be ready
+        run: |
+          for i in $(seq 1 40); do
+            if docker exec privacy-aware-worker curl -sf http://localhost:8001/ready > /dev/null 2>&1; then
+              echo "Worker ready"; break
+            fi
+            echo "Waiting for worker... ($i/40)"; sleep 5
+          done
+
+      - name: Run compliance tests
+        run: python -m pytest tests/compliance/ -v --tb=short
+
+      - name: Run security tests
+        run: python -m pytest tests/security/ -v --tb=short
+
+      - name: Run observability tests
+        run: python -m pytest tests/observability/ -v --tb=short
+
+      - name: Run reliability tests
+        run: python -m pytest tests/reliability/ -v --tb=short
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          docker compose logs api --tail=50
+          docker compose logs worker --tail=50
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v
