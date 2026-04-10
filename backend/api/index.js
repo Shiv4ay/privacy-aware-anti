@@ -34,6 +34,9 @@ const { setCsrfCookie, verifyCsrf } = require('./middleware/csrf');
 // Structured Logging (Task 1 — Reliability & Observability)
 const { logger, requestIdMiddleware } = require('./middleware/logger');
 
+// Prometheus Metrics (Task 3 — Observability)
+const { register, metricsMiddleware } = require('./middleware/metrics');
+
 // Application Logic
 const { attachUserId } = require('./middleware/attachUserId');
 const { abacMiddleware } = require('./middleware/abacMiddleware');
@@ -148,6 +151,15 @@ app.use(setCsrfCookie);
 
 // Attach unique request ID to every request
 app.use(requestIdMiddleware);
+
+// Prometheus metrics middleware — records duration and count for every request
+app.use(metricsMiddleware);
+
+// Metrics endpoint — public (nginx blocks external access; Prometheus scraper needs no auth)
+app.get('/metrics', async (req, res) => {
+    res.set('Content-Type', register.contentType);
+    res.end(await register.metrics());
+});
 
 // 0. Public Health Check (Root level - for Docker & Frontend)
 app.get(['/healthz', '/api/health'], async (req, res) => {
