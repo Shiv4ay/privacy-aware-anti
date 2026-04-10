@@ -38,7 +38,7 @@ from threading import Thread
 import chromadb
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Depends, Header
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
 import openai
@@ -2577,6 +2577,57 @@ def health_check():
         checks["minio"] = False
 
     return {"status": "ok", "checks": checks}
+
+
+@app.get("/ready")
+def readiness_probe():
+    """
+    Readiness probe: returns 200 only when all dependencies are contactable.
+    Returns 503 with failing deps listed when any dependency is down.
+    """
+    checks = {}
+
+    # ChromaDB
+    try:
+        chroma_client.heartbeat()
+        checks["chromadb"] = True
+    except Exception:
+        checks["chromadb"] = False
+
+    # PostgreSQL — use pooled connection (same as health check)
+    try:
+        conn = None
+        try:
+            conn = get_conn()
+            checks["postgres"] = True
+        except Exception:
+            checks["postgres"] = False
+        finally:
+            if conn:
+                put_conn(conn)
+    except Exception:
+        checks["postgres"] = False
+
+    # Ollama — lightweight /api/tags probe
+    try:
+        resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        checks["ollama"] = resp.status_code == 200
+    except Exception:
+        checks["ollama"] = False
+
+    # Redis
+    try:
+        _r = redis.from_url(REDIS_URL)
+        checks["redis"] = bool(_r.ping())
+    except Exception:
+        checks["redis"] = False
+
+    all_ready = all(checks.values())
+    return JSONResponse(
+        content={"ready": all_ready, "checks": checks},
+        status_code=200 if all_ready else 503,
+    )
+
 
 async def verify_internal_key(x_internal_key: str = Header(None)):
     """FastAPI dependency that enforces WORKER_INTERNAL_KEY header validation."""
