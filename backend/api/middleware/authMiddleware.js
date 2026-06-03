@@ -148,21 +148,23 @@ async function authenticateJWT(req, res, next) {
         }
 
         // PHASE 11: Context Propagation (Header Override)
-        // Allow client to specify active context (verified against user permissions in real app, implicit here)
+        // SECURITY: Only super_admin may switch org context via header.
+        // All other roles ignore this header — using it would bypass all tenant isolation.
         const contextOrg = req.get('X-Organization') || req.get('x-organization');
-        if (contextOrg) {
-            console.log(`[Auth] Context switched to: ${contextOrg}`);
-            req.user.org_id = contextOrg;
-            req.user.organizationId = contextOrg;
+        if (contextOrg && req.user.role === 'super_admin') {
+            const parsedOrg = parseInt(contextOrg, 10);
+            if (!isNaN(parsedOrg) && parsedOrg > 0) {
+                req.user.org_id = parsedOrg;
+                req.user.organizationId = parsedOrg;
+            }
         }
 
         next();
     } catch (error) {
         console.error('[Auth] Authentication Critical Error:', error);
-        // RETURN DETAILED ERROR TO CLIENT FOR DEBUGGING
         return res.status(500).json({
             error: 'Authentication middleware failed',
-            details: error.message,
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined,
             stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
@@ -206,10 +208,11 @@ function requireRole(...roles) {
 }
 
 /**
- * Require admin role (university_admin or super_admin)
+ * Require admin role — covers all admin-level role strings used in the system.
+ * 'admin' (standard), 'university_admin' (institutional), 'super_admin' (cross-tenant).
  */
 function requireAdmin(req, res, next) {
-    return requireRole('university_admin', 'super_admin')(req, res, next);
+    return requireRole('admin', 'university_admin', 'super_admin')(req, res, next);
 }
 
 /**

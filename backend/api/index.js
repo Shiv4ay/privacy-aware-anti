@@ -131,19 +131,13 @@ const app = express();
 
 
 // 1. Basic Middleware
-app.use((req, res, next) => { console.log(`[DEBUG] Request ${req.method} ${req.url} started`); next(); });
-
 app.use(cors({
     origin: function (origin, callback) { return callback(null, true); },
     credentials: true
 }));
 
-app.use((req, res, next) => { console.log('[DEBUG] CORS passed'); next(); });
-
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-app.use((req, res, next) => { console.log('[DEBUG] Body parser passed'); next(); });
 
 // CSRF: parse cookies, then set __csrf cookie on all responses
 app.use(cookieParser());
@@ -192,17 +186,11 @@ app.get(['/healthz', '/api/health'], async (req, res) => {
 // 2. Security Headers (Phase 4)
 configureSecurityHeaders(app);
 
-app.use((req, res, next) => { console.log('[DEBUG] Security Headers passed'); next(); });
-
 // 3. Input Sanitization (Phase 4)
 app.use(sanitizeBody);
 
-app.use((req, res, next) => { console.log('[DEBUG] Sanitizer passed'); next(); });
-
 // 4. Rate Limiting (Phase 4)
-app.use('/api', (req, res, next) => { console.log('[DEBUG] Entering Rate Limiter'); next(); }, apiLimiter);
-
-app.use((req, res, next) => { console.log('[DEBUG] Rate Limiter passed'); next(); });
+app.use('/api', apiLimiter);
 
 // 5. Database Context (Phase 4)
 app.use((req, res, next) => {
@@ -218,15 +206,12 @@ app.use((req, res, next) => {
 
 // Standard Auth System
 const authRoutes = require('./routes/auth');
-app.use('/api/auth', (req, res, next) => { console.log('[DEBUG] Entering Auth Routes'); next(); }, authRoutes);
+app.use('/api/auth', authRoutes);
 console.log('✅ Auth System mounted at /api/auth');
 
 // User Setup Routes
 const userSetupRoutes = require('./routes/userSetup');
-app.use('/api/user', verifyCsrf, authenticateJWT, (req, res, next) => {
-    console.log(`[DEBUG] Handling User Route: ${req.url}`);
-    next();
-}, userSetupRoutes);
+app.use('/api/user', verifyCsrf, authenticateJWT, userSetupRoutes);
 console.log('✅ User Setup mounted at /api/user');
 
 // Privacy / DPDP Consent Routes (Task 1 — DPDP Act 2023 §6)
@@ -251,10 +236,7 @@ app.use('/api', devAuthRoutes);
 const ingestRoutes = require('./routes/ingest');
 // Make DB pool available to ingest routes
 app.set('pool', pool);
-app.use('/api/ingest', verifyCsrf, authenticateJWT, (req, res, next) => {
-    console.log(`[DEBUG] Handling Ingest Route: ${req.url}`);
-    next();
-}, ingestRoutes);
+app.use('/api/ingest', verifyCsrf, authenticateJWT, ingestRoutes);
 console.log('✅ Ingestion Routes mounted at /api/ingest');
 
 // Documents Upload Routes (University Dataset Integration)
@@ -266,6 +248,10 @@ console.log('✅ Documents Routes mounted at /api/documents');
 const orgsRoutes = require('./routes/orgs');
 app.use('/api/orgs', authenticateJWT, orgsRoutes);
 console.log('✅ Organizations Routes mounted at /api/orgs');
+
+// Avatar serve — public, no JWT required (browsers load avatar images directly)
+const { serveAvatar } = require('./routes/profile');
+app.get('/api/profile/avatar/serve/:filename', serveAvatar);
 
 // Profile Routes (All authenticated users)
 const profileRoutes = require('./routes/profile');
@@ -287,9 +273,15 @@ const chatRoutes = require('./routes/chat');
 app.use('/api', verifyCsrf, chatRoutes);
 console.log('✅ Chat & Search mounted at /api');
 
+// Feedback Routes (Plan 5 — Data Quality)
+const feedbackRoutes = require('./routes/feedback');
+app.use('/api/feedback', authenticateJWT, verifyCsrf, feedbackRoutes);
+app.use('/api/admin/feedback', authenticateJWT, feedbackRoutes);
+console.log('✅ Feedback Routes mounted at /api/feedback and /api/admin/feedback');
+
 // try {
 //     const authRoutes = require('./routes/auth');
-//     app.use('/api/auth', (req, res, next) => { console.log('[DEBUG] Entering Auth Routes'); next(); }, authRoutes);
+//     app.use('/api/auth', authRoutes);
 //     console.log('✅ Phase 4 Auth Routes mounted at /api/auth');
 // } catch (error) {
 //     console.error('❌ Failed to mount auth routes:', error.message);
@@ -333,7 +325,7 @@ app.post('/api/upload', authenticateJWT, anomalyDetectionMiddleware, async (req,
                         uploaded_at: new Date().toISOString()
                     };
                     await redis.lpush('document_jobs', JSON.stringify(jobData));
-                    fs.unlinkSync(filePath);
+                    fs.unlinkSync(req.file.path);
 
                     res.json({
                         success: true,
@@ -341,7 +333,7 @@ app.post('/api/upload', authenticateJWT, anomalyDetectionMiddleware, async (req,
                         document: result.rows[0]
                     });
                 } catch (error) {
-                    try { fs.unlinkSync(filePath); } catch (e) { }
+                    try { fs.unlinkSync(req.file.path); } catch (e) { }
                     throw error;
                 }
             });

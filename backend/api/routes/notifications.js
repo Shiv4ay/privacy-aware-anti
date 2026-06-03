@@ -1,65 +1,76 @@
+'use strict';
 const express = require('express');
-const router = express.Router();
-const { authenticateJWT } = require('../middleware/authMiddleware');
+const router  = express.Router();
 
 /**
- * GET /api/notifications
- * Fetch recent priority notifications derived from audit logs
+ * GET /api/notifications/security
+ * Returns recent jailbreak_attempt + privacy_violation events from audit_logs.
+ * Admin/super_admin → all events for their org.
+ * Others          → only their own events.
  */
-router.get('/', authenticateJWT, async (req, res) => {
+router.get('/security', async (req, res) => {
+    const { userId, role, org_id } = req.user || {};
+    const isAdmin = role === 'admin' || role === 'super_admin';
+
     try {
-        const { userId, role } = req.user;
+        const db = req.app.locals.db || req.db;
+        if (!db) return res.status(503).json({ error: 'DB unavailable' });
 
-        // Fetch recent priority logs (blocks or PII detections)
-        // If super_admin, show system alerts. If user, show personal alerts.
-        let query = `
-            SELECT id, action, resource_type, created_at, success, metadata
-            FROM audit_log
-            WHERE (success = FALSE OR metadata->>'pii_detected' = 'true')
-        `;
-
-        let params = [];
-        if (role !== 'super_admin') {
-            query += " AND user_id = $1";
-            params.push(userId);
+        let query, params;
+        if (isAdmin) {
+            query = `
+                SELECT a.id, a.action, a.created_at, a.details,
+                       u.email, u.role as user_role
+                FROM   audit_logs a
+                LEFT JOIN users u ON u.user_id = a.user_id
+                WHERE  a.action IN ('jailbreak_attempt','privacy_violation')
+                  AND  ($1::int IS NULL OR u.org_id = $1)
+                ORDER  BY a.created_at DESC
+                LIMIT  50
+            `;
+            params = [org_id || null];
+        } else {
+            query = `
+                SELECT a.id, a.action, a.created_at, a.details,
+                       u.email, u.role as user_role
+                FROM   audit_logs a
+                LEFT JOIN users u ON u.user_id = a.user_id
+                WHERE  a.action IN ('jailbreak_attempt','privacy_violation')
+                  AND  a.user_id = $1
+                ORDER  BY a.created_at DESC
+                LIMIT  20
+            `;
+            params = [userId];
         }
 
-        query += " ORDER BY created_at DESC LIMIT 10";
+        const result = await db.query(query, params);
 
-        const result = await req.db.query(query, params);
+        const events = result.rows.map(row => ({
+            id:        row.id,
+            type:      row.action === 'jailbreak_attempt' ? 'jailbreak' : 'privacy',
+            severity:  row.action === 'jailbreak_attempt' ? 'high' : 'medium',
+            email:     row.email || 'unknown',
+            user_role: row.user_role || 'unknown',
+            detail:    (row.details?.query_redacted || row.details?.query || row.details?.reason || '').slice(0, 120),
+            timestamp: row.created_at,
+        }));
 
-        // Format into user-friendly notifications
-        const notifications = result.rows.map(log => {
-            let message = '';
-            let type = 'info';
+        // Unread = events in last 24 hours
+        const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const unread = events.filter(e => new Date(e.timestamp) > cutoff).length;
 
-            if (log.success === false) {
-                message = `Blocked ${log.action} attempt on ${log.resource_type}`;
-                type = 'warning';
-            } else if (log.metadata?.pii_detected === 'true') {
-                message = `PII redacted during ${log.action}`;
-                type = 'security';
-            } else {
-                message = `Security event: ${log.action}`;
-            }
-
-            return {
-                id: log.id,
-                message,
-                type,
-                timestamp: log.created_at,
-                is_read: false // In a real app, you'd track this in a separate table
-            };
-        });
-
-        res.json({
-            success: true,
-            notifications
-        });
-    } catch (error) {
-        console.error('Notifications Error:', error);
-        res.status(500).json({ error: 'Failed to fetch notifications' });
+        res.json({ events, unread });
+    } catch (err) {
+        console.error('[Notifications] Error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch security alerts' });
     }
+});
+
+/**
+ * GET /api/notifications (legacy — redirect to /security for compatibility)
+ */
+router.get('/', async (req, res) => {
+    res.redirect('/api/notifications/security');
 });
 
 module.exports = router;

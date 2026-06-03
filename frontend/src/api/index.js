@@ -17,8 +17,11 @@ const getBaseURL = () => {
     return '/api';
   }
 
-  // Use provided URL or fallback to localhost
-  let url = envUrl || 'http://localhost:3001';
+  // Use provided URL; if not set at build time, use relative path so the
+  // frontend nginx proxy (/api/ → http://api:3001/api/) handles routing.
+  if (!envUrl) return '/api';
+
+  let url = envUrl;
 
   // Normalize URL to not end with slash before appending /api
   if (url.endsWith('/')) {

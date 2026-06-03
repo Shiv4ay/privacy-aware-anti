@@ -61,6 +61,14 @@ JAILBREAK_SIGNATURES = [
     # Research / thesis excuse — requesting raw PII under academic pretext
     r"(?i)\b(for\s+(my\s+)?(thesis|research|paper|study|dissertation|academic\s+work))\b.{0,80}(raw|unredact|full|real|actual)\s+(pii|data|record|information|name|phone|email)\b",
     r"(?i)\b(research\s+purpose|academic\s+purpose|educational\s+purpose)\b.{0,80}(show|give|provide|expose|reveal)\b.{0,40}(pii|personal|private|sensitive|student)\b",
+    # Encoding bypass — base64 or long encoded strings passed as instructions
+    r"(?i)\b(?:execute|run|eval|decode)\s*[:\-]?\s*[A-Za-z0-9+/]{20,}={0,2}\b",
+    # Emotional pretext — distress framing to access another student's records
+    r"(?i)\b(?:failing|desperate|struggling|failing\s+exam|bad\s+grade)\b.{0,80}\b(?:classmate|friend|peer|colleague)\b.{0,60}\b(?:record|data|mark|grade|detail|info)\b",
+    # Bulk PII export / data extraction as file
+    r"(?i)\b(export|download|extract|dump|save)\b.{0,60}\b(all\s+student|student\s+pii|pii|personal\s+data|sensitive\s+data|student\s+data)\b.{0,40}\b(csv|excel|json|file|spreadsheet|format)\b",
+    r"(?i)\b(export|download|extract|dump)\b.{0,40}\b(student|user|pii|personal)\b.{0,30}\b(as\s+a?\s*)?(csv|excel|json|file)\b",
+    r"(?i)\ball\s+student\s+(pii|personal\s+data|data|records?)\s+(as|in|to)\s+a?\s*(csv|excel|json|file)\b",
 ]
 
 def scan_prompt(query: str, user_role: str = "student") -> bool:

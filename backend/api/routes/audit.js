@@ -138,4 +138,128 @@ router.get('/logs', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/audit/timeline
+ * 7-day hourly query volume for charts
+ */
+router.get('/timeline', async (req, res) => {
+    try {
+        const db = req.db;
+        const isSuperAdmin = req.user.role === 'super_admin';
+        const orgId = req.user.org_id;
+        const days = Math.min(30, parseInt(req.query.days) || 7);
+
+        let joinClause = 'LEFT JOIN users u ON a.user_id = u.user_id LEFT JOIN user_org_mapping m ON u.user_id = m.user_id';
+        let whereClause = `WHERE a.created_at >= NOW() - INTERVAL '${days} days'`;
+        const params = [];
+
+        if (!isSuperAdmin) {
+            whereClause += ` AND m.org_id = $1`;
+            params.push(orgId);
+        }
+
+        const [queryVol, actionDist] = await Promise.all([
+            db.query(`
+                SELECT
+                    date_trunc('day', a.created_at) AS day,
+                    COUNT(*) FILTER (WHERE a.action IN ('chat','search')) AS queries,
+                    COUNT(*) FILTER (WHERE a.details->>'success' = 'false') AS blocked,
+                    COUNT(*) FILTER (WHERE a.action = 'jailbreak_attempt') AS jailbreaks
+                FROM audit_logs a
+                ${joinClause}
+                ${whereClause}
+                GROUP BY day
+                ORDER BY day ASC
+            `, params),
+            db.query(`
+                SELECT a.action, COUNT(*)::int AS count
+                FROM audit_logs a
+                ${joinClause}
+                ${whereClause}
+                GROUP BY a.action
+                ORDER BY count DESC
+                LIMIT 10
+            `, params),
+        ]);
+
+        res.json({
+            timeline: queryVol.rows.map(r => ({
+                day: r.day,
+                queries: parseInt(r.queries) || 0,
+                blocked: parseInt(r.blocked) || 0,
+                jailbreaks: parseInt(r.jailbreaks) || 0,
+            })),
+            actionDistribution: actionDist.rows,
+        });
+    } catch (err) {
+        console.error('Audit Timeline Error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch timeline', details: err.message });
+    }
+});
+
+/**
+ * GET /api/audit/export
+ * Download audit logs as CSV
+ */
+router.get('/export', async (req, res) => {
+    try {
+        const db = req.db;
+        const isSuperAdmin = req.user.role === 'super_admin';
+        const orgId = req.user.org_id;
+        const { status, action, days = 7 } = req.query;
+
+        const conditions = [`a.created_at >= NOW() - INTERVAL '${Math.min(90, parseInt(days))} days'`];
+        const params = [];
+        let pIdx = 1;
+
+        if (!isSuperAdmin) {
+            conditions.push(`m.org_id = $${pIdx++}`);
+            params.push(orgId);
+        }
+        if (status === 'blocked') conditions.push(`a.details->>'success' = 'false'`);
+        if (action) { conditions.push(`a.action = $${pIdx++}`); params.push(action); }
+
+        const whereClause = 'WHERE ' + conditions.join(' AND ');
+
+        const result = await db.query(`
+            SELECT
+                a.created_at,
+                COALESCE(u.username, a.user_id, 'system') AS user,
+                u.email,
+                a.action,
+                a.resource_type,
+                a.ip_address,
+                CASE WHEN a.details->>'success' = 'false' THEN 'BLOCKED' ELSE 'ALLOWED' END AS status,
+                a.details->>'pii_detected' AS pii_detected
+            FROM audit_logs a
+            LEFT JOIN users u ON a.user_id = u.user_id
+            LEFT JOIN user_org_mapping m ON u.user_id = m.user_id
+            ${whereClause}
+            ORDER BY a.created_at DESC
+            LIMIT 5000
+        `, params);
+
+        const header = ['timestamp', 'user', 'email', 'action', 'resource', 'ip', 'status', 'pii_detected'];
+        const rows = result.rows.map(r => [
+            new Date(r.created_at).toISOString(),
+            r.user || '',
+            r.email || '',
+            r.action || '',
+            r.resource_type || '',
+            r.ip_address || '',
+            r.status || '',
+            r.pii_detected || 'false',
+        ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+
+        const csv = [header.join(','), ...rows].join('\n');
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="audit-${Date.now()}.csv"`);
+        res.send(csv);
+    } catch (err) {
+        console.error('Audit Export Error:', err.message);
+        res.status(500).json({ error: 'Failed to export audit logs', details: err.message });
+    }
+});
+
 module.exports = router;

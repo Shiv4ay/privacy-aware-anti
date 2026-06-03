@@ -11,6 +11,16 @@ const crypto = require('crypto');
 const jwtManager = require('../auth/jwtManager');
 const { authenticateJWT } = require('../middleware/authMiddleware');
 const { loginLimiter } = require('../middleware/rateLimiter');
+
+// Rewrite internal MinIO avatar URLs to the public API proxy path
+const MINIO_BUCKET = process.env.MINIO_BUCKET || 'privacy-documents';
+function publicAvatarUrl(stored) {
+    if (!stored) return null;
+    const internalPattern = /^https?:\/\/(minio|localhost)(:\d+)?\/[^/]+\/(avatars\/.+)$/;
+    const m = stored.match(internalPattern);
+    if (m) return `/api/profile/avatar/serve/${m[3].replace(/^avatars\//, '')}`;
+    return stored;
+}
 const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
 
@@ -550,11 +560,11 @@ router.get('/me', authenticateJWT, async (req, res) => {
                 email: req.user.email,
                 role: req.user.role,
                 department: req.user.department,
-                org_id: req.user.organizationId || req.user.org_id,
+                org_id: req.user.org_id || req.user.organizationId,
                 organization_name: req.user.organization_name,
                 organization_type: req.user.organization_type,
                 is_mfa_enabled: req.user.is_mfa_enabled,
-                avatarUrl: req.user.avatarUrl
+                avatarUrl: publicAvatarUrl(req.user.avatarUrl)
             }
         });
     } catch (error) {
@@ -1050,7 +1060,7 @@ router.post('/google/callback', async (req, res) => {
                     userId: user.user_id,
                     email: user.email,
                     username: user.username,
-                    avatarUrl: user.custom_avatar_url || user.oauth_avatar_url
+                    avatarUrl: publicAvatarUrl(user.custom_avatar_url || user.oauth_avatar_url)
                 },
                 // Return the google tokens so the frontend can call back with org_id
                 googleAccessToken: tokens.access_token

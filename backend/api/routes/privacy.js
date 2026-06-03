@@ -308,16 +308,17 @@ router.get('/export', async (req, res) => {
         console.warn('[Privacy] /export search_queries error:', err.message);
     }
 
-    // audit_logs — integer FK
-    // audit_logs.user_id is INTEGER FK (users.id) per init.sql schema
+    // audit_logs — UUID FK
+    // audit_logs.user_id is UUID FK (users.user_id) — confirmed by authMiddleware.js and admin.js.
+    // Previous comment was wrong (said INTEGER); using dbIntId returned 0 rows for every user.
     let audit_logs = [];
     try {
-        if (dbIntId !== null) {
+        if (dbUuidId !== null) {
             const al = await req.db.query(
                 `SELECT action, resource_type, details, created_at, ip_address
                  FROM audit_logs WHERE user_id = $1
                  ORDER BY created_at DESC LIMIT 100`,
-                [dbIntId]
+                [dbUuidId]
             );
             audit_logs = al.rows;
         }

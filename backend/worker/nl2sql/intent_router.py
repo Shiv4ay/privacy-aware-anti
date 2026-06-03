@@ -48,15 +48,23 @@ _AGG_PATTERNS = re.compile(
     \b(got\s+jobs?|got\s+placed|got\s+hired|got\s+offers?)\b
     |
     # List / enumerate all students (admin overview queries)
-    \ball\s+students?\b                  # "all students in Bangalore"
-    | \blist\s+\S{0,30}\s*students?\b    # "list students placed at Oracle" (bounded to prevent ReDoS)
-    | \bstudents?\s+in\b                 # "students in Hyderabad"
-    | \bstudents?\s+at\b                 # "students at Oracle"
-    | \bstudents?\s+placed\b             # "students placed this year"
-    | \bwho\s+(are|is|were)\s+placed\b  # "who are placed at Swiggy"
-    | \bplaced\s+(at|in|with)\b         # "placed at Google"
-    | \bwhich\s+students?\b             # "which students interned"
-    | \bshow\s+(me\s+)?all\b            # "show all / show me all"
+    \ball\s+students?\b                       # "all students in Bangalore"
+    | \blist\s+(?:.{0,40}\s)?students?\b      # "list students", "list top 5 placed students", "list the top placed students"
+    | \bstudents?\s+in\b                      # "students in Hyderabad"
+    | \bstudents?\s+at\b                      # "students at Oracle"
+    | \bstudents?\s+placed\b                  # "students placed this year"
+    | \bplaced\s+students?\b                  # "placed students" / "top placed students"
+    | \bwho\s+(are|is|were)\s+placed\b        # "who are placed at Swiggy"
+    | \bplaced\s+(at|in|with)\b              # "placed at Google"
+    | \bwhich\s+students?\b                   # "which students interned"
+    | \bshow\s+(me\s+)?all\b                  # "show all / show me all"
+    | \bshow\s+(?:me\s+)?(?:the\s+)?(?:top|all|placed|interned)\b  # "show top / show the placed"
+    | \b(?:top|best)\s+\d+\s+\w+\b           # "top 5 students", "best 10 placements"
+    |
+    # Admin SRN-specific placement/internship lookup
+    # e.g. "PES1PG24CA169 where is he placed?", "placement of PES1PG24CA006"
+    PES\w+.{0,60}?(plac|intern|compan|hired|job|salary|ctc|package)
+    | (plac|intern|compan|hired|job|salary|ctc|package).{0,60}?PES\w+
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -75,7 +83,6 @@ _PERSONAL_PATTERNS = re.compile(
     | \bshow\s+me\s+my\b
     | \btell\s+me\s+(about\s+my|my)\b
     | \bmy\s+profile\b
-    | \bPES\d\b          # specific SRN
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -133,7 +140,7 @@ def route_query(
 
     logger.info(f"[INTENT_ROUTER] Routing to NL2SQL: role={user_role} org={org_id} query={query!r}")
     try:
-        result = run_analytics_query(query, org_id=int(org_id), db_url=db_url)
+        result = run_analytics_query(query, org_id=org_id, db_url=db_url)
         if result and "failed" not in result.lower()[:30]:
             return result
         # If agent failed, fall through to ChromaDB

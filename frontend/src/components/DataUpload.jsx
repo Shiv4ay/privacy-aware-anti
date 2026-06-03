@@ -34,7 +34,7 @@ export default function DataUpload({ onUploadComplete }) {
         setUploading(true);
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('organization_id', user.organization);
+        formData.append('organization_id', user.org_id || user.organization);
 
         try {
             const res = await client.post('/documents/upload', formData, {

@@ -157,21 +157,16 @@ function PIIBadge({ token, userRole, piiMap }) {
             const reconstructed = `[${type}:idx_${index}]`;
             originalValue = piiMap[reconstructed] ?? null;
         }
-        // Strategy 3: first value for the same type
-        if (!originalValue) {
-            const typePrefix = `[${type}:idx_`;
-            for (const [k, v] of Object.entries(piiMap)) {
-                if (k.startsWith(typePrefix)) {
-                    originalValue = v;
-                    break;
-                }
-            }
-        }
+        // Strategy 3 REMOVED — it showed the wrong person's name by returning
+        // the first value for the same type regardless of index. This was a silent
+        // data integrity error: [PERSON:idx_3] would reveal idx_0's name.
+        // If neither Strategy 1 nor 2 matches, show type label only (no reveal).
     }
 
-    // Admin can always click — either to see the real value (if piiMap has it) or at
-    // minimum to "unlock" the blur and see the type label.
-    const canReveal = isAdmin;
+    // Can reveal if: admin always, OR any role when piiMap contains the value
+    // (backend only includes a token in pii_map when the requester is allowed to see it —
+    // e.g. student with shield off gets their own data; admins get all data).
+    const canReveal = isAdmin || originalValue != null;
 
     const displayLabel = revealed && originalValue ? originalValue : cfg.label;
 
@@ -208,11 +203,13 @@ function PIIBadge({ token, userRole, piiMap }) {
                         : 'cursor-not-allowed select-none opacity-80',
                 ].join(' ')}
             >
-                {/* Icon: ShieldCheck (green) for admins who can reveal, Lock for others */}
+                {/* Icon: ShieldCheck for admins, Eye for students revealing own data, Lock for no-access */}
                 {canReveal
                     ? revealed
                         ? <EyeOff className="w-3 h-3 flex-shrink-0 text-green-400" />
-                        : <ShieldCheck className="w-3 h-3 flex-shrink-0 text-green-400" />
+                        : isAdmin
+                            ? <ShieldCheck className="w-3 h-3 flex-shrink-0 text-green-400" />
+                            : <Eye className="w-3 h-3 flex-shrink-0 text-blue-400" />
                     : <Lock className="w-3 h-3 flex-shrink-0" />
                 }
 

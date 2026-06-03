@@ -46,7 +46,7 @@ export default function Dashboard() {
       const interval = setInterval(loadData, 30000);
 
       // Setup Real-time Connection
-      const socketUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+      const socketUrl = import.meta.env.VITE_API_URL || window.location.origin;
       const socket = io(socketUrl, {
         withCredentials: true,
         transports: ['websocket', 'polling']

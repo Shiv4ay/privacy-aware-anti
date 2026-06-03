@@ -3,7 +3,25 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
-const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+
+// Internal MinIO endpoint (Docker service name — not accessible from browser)
+const MINIO_INTERNAL = process.env.MINIO_INTERNAL_ENDPOINT || process.env.MINIO_ENDPOINT || 'http://minio:9000';
+const MINIO_BUCKET = process.env.MINIO_BUCKET || 'privacy-documents';
+
+/**
+ * Rewrite a stored avatar URL so the browser can reach it.
+ * If the URL points to an internal Docker host (minio:9000), replace it with
+ * the API-hosted proxy path /api/profile/avatar/serve/<key>.
+ */
+function publicAvatarUrl(stored) {
+    if (!stored) return null;
+    // Detect internal MinIO URL patterns: http://minio:... or http://localhost:9000...
+    const internalPattern = /^https?:\/\/(minio|localhost)(:\d+)?\/[^/]+\/(avatars\/.+)$/;
+    const m = stored.match(internalPattern);
+    if (m) return `/api/profile/avatar/serve/${m[3]}`;
+    return stored; // OAuth/external URL — pass through as-is
+}
 
 // Configure MinIO/S3 client for avatar uploads
 const s3Client = new S3Client({
@@ -61,7 +79,9 @@ router.get('/', async (req, res) => {
         const user = result.rows[0];
 
         // Determine avatar URL priority: custom > oauth > null
-        const avatarUrl = user.custom_avatar_url || user.oauth_avatar_url || null;
+        // Rewrite internal MinIO URLs through the API proxy so browsers can load them
+        const rawAvatarUrl = user.custom_avatar_url || user.oauth_avatar_url || null;
+        const avatarUrl = publicAvatarUrl(rawAvatarUrl);
 
         res.json({
             profile: {
@@ -132,6 +152,26 @@ router.put('/', async (req, res) => {
 });
 
 /**
+ * GET /api/profile/avatar/serve/:filename
+ * Proxy avatars stored in MinIO so browsers can load them.
+ * MinIO is on an internal Docker network (not accessible from the browser directly).
+ * This endpoint is public — no auth required for avatars.
+ */
+router.get('/avatar/serve/:filename', async (req, res) => {
+    try {
+        const key = `avatars/${req.params.filename}`;
+        const cmd = new GetObjectCommand({ Bucket: MINIO_BUCKET, Key: key });
+        const s3res = await s3Client.send(cmd);
+        res.setHeader('Content-Type', s3res.ContentType || 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        s3res.Body.pipe(res);
+    } catch (err) {
+        // If MinIO object not found, redirect to a generic avatar placeholder
+        res.status(404).json({ error: 'Avatar not found' });
+    }
+});
+
+/**
  * POST /api/profile/avatar
  * Upload custom avatar image
  */
@@ -154,17 +194,20 @@ router.post('/avatar', upload.single('avatar'), async (req, res) => {
             ACL: 'public-read'
         }));
 
-        const avatarUrl = `${process.env.MINIO_ENDPOINT}/${process.env.MINIO_BUCKET}/${fileName}`;
+        // Store the proxy path so browsers can always access the avatar via the API,
+        // even though MinIO is on an internal Docker network.
+        const avatarUrl = `/api/profile/avatar/serve/${userId}_${crypto.randomBytes(0).toString('hex')}${fileExt}`;
+        const storedUrl = `${MINIO_INTERNAL}/${MINIO_BUCKET}/${fileName}`;
 
-        // Update user's custom_avatar_url
+        // Update user's custom_avatar_url (store internal URL for server-side use, proxy URL for client)
         await req.db.query(
             'UPDATE users SET custom_avatar_url = $1 WHERE id = $2',
-            [avatarUrl, userId]
+            [storedUrl, userId]
         );
 
         res.json({
             message: 'Avatar uploaded successfully',
-            avatarUrl
+            avatarUrl: publicAvatarUrl(storedUrl)
         });
     } catch (error) {
         console.error('Avatar upload error:', error);
@@ -276,4 +319,19 @@ router.get('/stats', async (req, res) => {
     }
 });
 
+// Exported standalone handler for public mounting (no JWT required)
+async function serveAvatar(req, res) {
+    try {
+        const key = `avatars/${req.params.filename}`;
+        const cmd = new GetObjectCommand({ Bucket: MINIO_BUCKET, Key: key });
+        const s3res = await s3Client.send(cmd);
+        res.setHeader('Content-Type', s3res.ContentType || 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        s3res.Body.pipe(res);
+    } catch (err) {
+        res.status(404).json({ error: 'Avatar not found' });
+    }
+}
+
 module.exports = router;
+module.exports.serveAvatar = serveAvatar;

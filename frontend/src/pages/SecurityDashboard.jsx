@@ -72,7 +72,7 @@ export default function SecurityDashboard() {
         }, 2000);
 
         // Socket.IO for instant push events
-        const socketUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+        const socketUrl = import.meta.env.VITE_API_URL || window.location.origin;
         const socket = io(socketUrl, {
             withCredentials: true,
             transports: ['websocket', 'polling'],

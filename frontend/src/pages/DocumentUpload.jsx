@@ -68,7 +68,7 @@ export default function DocumentUpload() {
 
       const fd = new FormData();
       fd.append('file', file);
-      fd.append('organization_id', user.organization);
+      fd.append('organization_id', user.org_id || user.organization);
 
       const res = await client.post('/documents/upload', fd, {
         headers: { 'Content-Type': 'multipart/form-data' },

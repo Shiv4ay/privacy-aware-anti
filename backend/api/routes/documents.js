@@ -96,11 +96,17 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             return res.status(400).json({ error: 'organization_id is required' });
         }
 
+        // Resolve numeric org id — frontend may send string 'ORG001' for OAuth users
+        const resolvedOrgId = parseInt(organization_id) || userOrgId;
+
         // Check if user has access to this organization
         // Super admin can upload to any org, others only to their own
-        if (req.user.role !== 'super_admin' && userOrgId !== parseInt(organization_id)) {
+        if (req.user.role !== 'super_admin' && userOrgId !== resolvedOrgId) {
             return res.status(403).json({ error: 'Access denied to this organization' });
         }
+
+        // Use numeric org id for all downstream operations
+        const effective_org_id = resolvedOrgId;
 
         const file = req.file;
         const fileName = file.originalname;
@@ -127,7 +133,8 @@ router.post('/upload', upload.single('file'), async (req, res) => {
                 content: content,
                 metadata: {
                     record_type: record_type || 'document',
-                    source: source_name || fileName
+                    source: source_name || fileName,
+                    text_content: content  // Store actual text so worker can index it
                 }
             }];
 
@@ -172,7 +179,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             batch.forEach((doc, batchIdx) => {
                 const docIndex = batchStartIndex + batchIdx;
                 const randomSuffix = Math.random().toString(36).substring(7);
-                const fileKey = `${organization_id}/${baseTimestamp}_${docIndex}_${randomSuffix}_${fileName}`;
+                const fileKey = `${effective_org_id}/${baseTimestamp}_${docIndex}_${randomSuffix}_${fileName}`;
 
                 // Encrypt the metadata (which contains the actual content)
                 const metadataString = JSON.stringify(doc.metadata);
@@ -189,7 +196,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
                     file.size,
                     file.mimetype,
                     file.mimetype,
-                    organization_id,
+                    effective_org_id,
                     'pending',
                     encryptedData.toString('base64'), // Store encrypted metadata as base64 in metadata column? Wait, metadata is JSONB.
                     // We'll store it as a JSON object containing the encrypted base64 string
@@ -234,16 +241,16 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             console.log(`[Documents] Batch ${Math.floor(i / BATCH_SIZE) + 1}: Inserted ${result.rows.length} documents (${i + result.rows.length}/${documents.length})`);
         }
 
-        console.log(`[Documents] Successfully uploaded ${insertedDocuments.length} documents to org ${organization_id}`);
+        console.log(`[Documents] Successfully uploaded ${insertedDocuments.length} documents to org ${effective_org_id}`);
 
         // Trigger automatic processing via worker
         try {
             const workerUrl = process.env.WORKER_URL || 'http://worker:8001';
-            console.log(`[Documents] Triggering auto-processing for org ${organization_id}`);
+            console.log(`[Documents] Triggering auto-processing for org ${effective_org_id}`);
 
             // Call worker's process-batch endpoint asynchronously (don't wait for completion)
             const axios = require('axios');
-            axios.post(`${workerUrl}/process-batch?org_id=${organization_id}&batch_size=${insertedDocuments.length}`)
+            axios.post(`${workerUrl}/process-batch?org_id=${effective_org_id}&batch_size=${insertedDocuments.length}`)
                 .then(response => {
                     console.log(`[Documents] Auto-processing completed:`, response.data);
                 })
@@ -260,7 +267,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             success: true,
             message: `Successfully uploaded ${insertedDocuments.length} document(s)`,
             documents: insertedDocuments,
-            organization_id: organization_id,
+            organization_id: effective_org_id,
             processing_status: 'triggered' // Indicate processing was started
         });
 

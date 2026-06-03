@@ -2,7 +2,7 @@
 // Automatically fetches a dev JWT in development mode.
 // Compatible with your backend index.js, devAuth.js, and .env values.
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const API_URL = import.meta.env.VITE_API_URL || "";
 const DEV_AUTH_KEY = import.meta.env.VITE_DEV_AUTH_KEY || "super-secret-dev-key"; 
 // (If you want, you can add VITE_DEV_AUTH_KEY in your frontend .env)
 

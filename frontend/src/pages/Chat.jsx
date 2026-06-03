@@ -6,7 +6,7 @@ import {
   Send, Bot, Loader2, Sparkles, AlertCircle,
   Copy, RefreshCw, Check, Shield, ChevronDown,
   GraduationCap, BookOpen, Users, BarChart2, Cpu,
-  Plus, Mic, Activity, EyeOff
+  Plus, Mic, Activity, EyeOff, Bell, X, ShieldAlert
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import PIIText from '../components/ui/PIIText';
@@ -166,6 +166,10 @@ export default function Chat() {
   const [isListening, setIsListening] = useState(false);
   // T9.4: Read-only shield status
   const [shieldActive, setShieldActive] = useState(false);
+  // Security alert bell
+  const [alertOpen, setAlertOpen] = useState(false);
+  const [secAlerts, setSecAlerts] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const messagesEndRef = useRef(null);
   const messagesAreaRef = useRef(null);
@@ -187,6 +191,23 @@ export default function Chat() {
       .then(res => setShieldActive(res.data.privacy_shield_enabled || false))
       .catch(() => {}); // fail silently — indicator is cosmetic
   }, []);
+
+  // Security alert polling — admin/super_admin only, every 30s
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  useEffect(() => {
+    if (!isAdmin) return;
+    const fetchAlerts = () => {
+      client.get('/notifications/security')
+        .then(res => {
+          setSecAlerts(res.data.events || []);
+          setUnreadCount(res.data.unread || 0);
+        })
+        .catch(() => {});
+    };
+    fetchAlerts();
+    const id = setInterval(fetchAlerts, 30_000);
+    return () => clearInterval(id);
+  }, [isAdmin]);
 
   // Detect scroll position
   const handleScroll = () => {
@@ -242,7 +263,10 @@ export default function Chat() {
         },
       });
 
-      const isSecurityBlock = ['security_blocked', 'security_blocked_ai', 'blocked'].includes(res.data?.status);
+      // Mirror backend logic: any status containing 'blocked' is a security event
+      // (covers security_blocked, security_blocked_ai, security_blocked_output, privacy_blocked)
+      const status = res.data?.status || '';
+      const isSecurityBlock = status !== 'success' && status.includes('blocked');
       setMessages(prev => [...prev, {
         id: Date.now() + 2,
         text: res.data?.response || res.data?.message || 'No response received.',
@@ -253,11 +277,24 @@ export default function Chat() {
       }]);
 
     } catch (err) {
-      const msg = err?.response?.data?.message || err?.response?.data?.error || err.message || 'Connection error';
-      toast.error(`Error: ${msg}`);
+      // Map HTTP errors to user-friendly messages — never expose internal Docker URLs or stack traces
+      let userMsg;
+      const status = err?.response?.status;
+      if (status === 503 || err?.response?.data?.status === 'error') {
+        userMsg = 'The AI service is temporarily unavailable. Please try again in a moment.';
+      } else if (status === 429) {
+        userMsg = 'Too many requests. Please wait a moment and try again.';
+      } else if (status === 403) {
+        userMsg = err?.response?.data?.error || 'Access denied.';
+      } else if (status === 401) {
+        userMsg = 'Your session has expired. Please log in again.';
+      } else {
+        userMsg = 'Connection error. Please check your network and try again.';
+      }
+      toast.error(userMsg);
       setMessages(prev => [...prev, {
         id: Date.now() + 1,
-        text: `Sorry, I encountered an error: ${msg}. Please try again.`,
+        text: userMsg,
         from: 'error',
         timestamp: new Date()
       }]);
@@ -319,14 +356,17 @@ export default function Chat() {
     recognition.start();
   };
 
-  // ── File Upload Dummy Handler (Visual Only) ───────────────────────────────
+  // ── File Upload Handler ────────────────────────────────────────────────────
+  // Document upload is handled through the Admin Panel → Documents tab.
+  // This button is kept for UX discoverability but does not upload the file.
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      toast.success(`Selected file: ${file.name}`);
-      // In a real app, you would upload this file to the backend or context here
+      toast('Documents are uploaded via the Admin Panel → Documents tab.', {
+        icon: 'ℹ️',
+        duration: 4000,
+      });
     }
-    // reset
     e.target.value = null;
   };
 
@@ -371,6 +411,21 @@ export default function Chat() {
             <span className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-premium-gold/10 border border-premium-gold/20 text-[11px] text-premium-gold font-bold">
               <Shield className="w-3 h-3" /> Privacy Enforced
             </span>
+            {/* Security Alert Bell — admin only */}
+            {isAdmin && (
+              <button
+                onClick={() => { setAlertOpen(o => !o); setUnreadCount(0); }}
+                className="relative p-2 rounded-lg hover:bg-white/10 transition-colors"
+                title="Security Alerts"
+              >
+                <Bell className="w-4 h-4 text-gray-300" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[10px] text-white font-bold flex items-center justify-center">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -522,6 +577,70 @@ export default function Chat() {
           </p>
         </div>
       </div>
+
+      {/* ── Security Alert Drawer (admin only) ────────────────────── */}
+      {isAdmin && alertOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setAlertOpen(false)}>
+          <div
+            className="w-full max-w-md h-full bg-[#0d0d0f] border-l border-white/10 shadow-2xl flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Drawer header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-red-400" />
+                <h2 className="text-sm font-bold text-white">Security Alerts</h2>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 font-bold">
+                  {secAlerts.length} events
+                </span>
+              </div>
+              <button onClick={() => setAlertOpen(false)} className="p-1 rounded hover:bg-white/10 text-gray-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Alert list */}
+            <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-2">
+              {secAlerts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-2">
+                  <Shield className="w-10 h-10 opacity-30" />
+                  <p className="text-sm">No security events recorded</p>
+                </div>
+              ) : secAlerts.map(ev => (
+                <div
+                  key={ev.id}
+                  className={`rounded-lg p-3 border text-xs flex flex-col gap-1 ${
+                    ev.type === 'jailbreak'
+                      ? 'bg-red-500/10 border-red-500/30'
+                      : 'bg-amber-500/10 border-amber-500/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className={`font-bold uppercase tracking-wide text-[10px] ${ev.type === 'jailbreak' ? 'text-red-400' : 'text-amber-400'}`}>
+                      {ev.type === 'jailbreak' ? '🚨 Jailbreak Attempt' : '⚠️ Privacy Violation'}
+                    </span>
+                    <span className="text-gray-500 text-[10px]">
+                      {new Date(ev.timestamp).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="text-gray-300">
+                    <span className="text-gray-500">User: </span>{ev.email} ({ev.user_role})
+                  </div>
+                  {ev.detail && (
+                    <div className="text-gray-400 italic truncate" title={ev.detail}>
+                      "{ev.detail}"
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="px-5 py-3 border-t border-white/10 text-[10px] text-gray-500">
+              Refreshes every 30 seconds · Showing last 50 events
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

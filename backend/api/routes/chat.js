@@ -4,15 +4,16 @@ const router = express.Router();
 
 const { authenticateJWT } = require('../middleware/authMiddleware');
 const { aiLimiter } = require('../middleware/rateLimiter');
-const { makeWorkerCircuit, workerFallback } = require('../middleware/circuitBreaker');
+const { makeWorkerCircuit } = require('../middleware/circuitBreaker');
 
 const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
 
 // Circuit breaker — one instance per process, wraps the worker chat call
-const _workerAxios = require('axios');
+// axios timeout slightly exceeds circuit-breaker timeout (240s) so the CB
+// always fires first and the underlying TCP socket is cleaned up promptly.
 const workerChatCircuit = makeWorkerCircuit(
-    async (payload) => _workerAxios.post(`${WORKER_URL}/chat`, payload, {
-        timeout: 300000,
+    async (payload) => axios.post(`${WORKER_URL}/chat`, payload, {
+        timeout: 250000,  // 250s — slightly above opossum 240s so CB fires first
         responseType: 'json',
     })
 );
@@ -133,7 +134,7 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
 
     const circuitResult = await workerChatCircuit.fire(workerPayload);
     // If circuit is open, fire() returns the fallback value
-    if (circuitResult && circuitResult.status === 503 && circuitResult.error) {
+    if (circuitResult?.__circuitOpen) {
       return res.status(503).json({ error: circuitResult.error });
     }
     const response = circuitResult;
@@ -244,11 +245,21 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
       }
     });
 
-    return res.json({
+    // Map error to a user-friendly message — never expose internal URLs or stack traces
+    let userMessage = 'The AI service is temporarily unavailable. Please try again in a moment.';
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      userMessage = 'The AI service is temporarily unavailable. Please try again in a moment.';
+    } else if (error.response?.status === 429) {
+      userMessage = 'Too many requests. Please wait a moment and try again.';
+    } else if (error.response?.status === 503 || error?.circuitOpen) {
+      userMessage = 'The AI service is temporarily unavailable. Please try again in a moment.';
+    }
+    return res.status(503).json({
       query: req.body?.query,
-      response: "I'm initializing the AI model. This can take a moment on first use. Please try again in 30 seconds!",
+      response: userMessage,
       context_used: false,
-      status: 'success'
+      status: 'error',
+      confidence: 0.0
     });
   }
 });
@@ -279,28 +290,49 @@ router.post('/chat/stream', authenticateJWT, aiLimiter, async (req, res) => {
     });
 
     // Forward to Python worker stream endpoint
-    const workerRes = await axios.post(`${WORKER_URL}/chat/stream`, {
-      query: query.trim(),
-      privacy_level,
-      privacy_mode,
-      org_id,
-      user_id: req.user?.userId || req.user?.user_id || req.user?.id,
-      user_role: req.user?.role || 'student',
-      department: req.user?.department || null,
-      user_category: req.user?.user_category || req.user?.userCategory || null,
-      entity_id: req.user?.entityId || req.user?.entity_id || null, // Zero-Trust ID
-      user_email: req.user?.email || null,  // Identity anchoring
-      username: req.user?.username || null,  // Identity anchoring
-      conversation_history: req.body.conversation_history || [],
-    }, {
-      responseType: 'stream',
-      timeout: 300000,
-    });
+    // M3-fix: 90s timeout (down from 300s) + AbortController for fail-fast.
+    // When the worker is down, the stream fails within 90s instead of hanging 5 minutes.
+    const streamAbort = new AbortController();
+    const streamTimeout = setTimeout(() => {
+      streamAbort.abort();
+      console.error('[ChatStream] 90s timeout — aborting stream');
+    }, 90000);
+
+    let workerRes;
+    try {
+      workerRes = await axios.post(`${WORKER_URL}/chat/stream`, {
+        query: query.trim(),
+        privacy_level,
+        privacy_mode,
+        org_id,
+        user_id: req.user?.userId || req.user?.user_id || req.user?.id,
+        user_role: req.user?.role || 'student',
+        department: req.user?.department || null,
+        user_category: req.user?.user_category || req.user?.userCategory || null,
+        entity_id: req.user?.entityId || req.user?.entity_id || null,
+        user_email: req.user?.email || null,
+        username: req.user?.username || null,
+        conversation_history: req.body.conversation_history || [],
+      }, {
+        responseType: 'stream',
+        timeout: 90000,
+        signal: streamAbort.signal,
+      });
+    } catch (connectErr) {
+      clearTimeout(streamTimeout);
+      // Worker unreachable or timed out — emit SSE error frame so frontend knows
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI service temporarily unavailable. Please try again.' })}\n\n`);
+        res.end();
+      }
+      return;
+    }
 
     // Pipe the SSE stream directly to the client
     workerRes.data.pipe(res);
 
     workerRes.data.on('end', () => {
+      clearTimeout(streamTimeout);
       // Audit log (best-effort, non-blocking)
       logAndBroadcast(req, {
         action: 'chat',
@@ -312,22 +344,29 @@ router.post('/chat/stream', authenticateJWT, aiLimiter, async (req, res) => {
           org_id,
         },
       }).catch(() => { });
-      res.end();
+      if (!res.writableEnded) res.end();
     });
 
     workerRes.data.on('error', (err) => {
+      clearTimeout(streamTimeout);
       console.error('[ChatStream] Stream error:', err.message);
-      res.end();
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ type: 'error', message: 'Stream interrupted. Please try again.' })}\n\n`);
+        res.end();
+      }
     });
 
   } catch (error) {
     console.error('[ChatStream] Error:', error.message);
     if (!res.headersSent) {
-      return res.status(error.response?.status || 500).json({
-        error: error.response?.data?.detail || error.message || 'Streaming failed',
+      return res.status(503).json({
+        error: 'AI service temporarily unavailable.',
       });
     }
-    res.end();
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI service temporarily unavailable.' })}\n\n`);
+      res.end();
+    }
   }
 });
 
@@ -344,16 +383,19 @@ router.post('/search', authenticateJWT, aiLimiter, async (req, res) => {
     const org_id = req.user?.org_id || 1;
     console.log(`[API Search] User: ${req.user?.username} (id=${req.user?.id}), OrgID: ${org_id}, Role: ${req.user?.role}`);
 
+    // Clamp top_k: minimum 1, maximum 20, default 5
+    const safeTopK = Math.min(Math.max(parseInt(top_k, 10) || 5, 1), 20);
+
     const response = await axios.post(`${WORKER_URL}/search`, {
       query: query.trim(),
-      top_k: top_k || 5,
+      top_k: safeTopK,
       org_id: org_id || null,
       user_id: req.user?.userId || req.user?.user_id || req.user?.id,
       user_role: req.user?.role || 'student',
       department: req.user?.department || null,
       user_category: req.user?.user_category || req.user?.userCategory || null,
       entity_id: req.user?.entityId || req.user?.entity_id || null // Zero-Trust ID
-    }, { timeout: 300000 });
+    }, { timeout: 60000 });
 
     // Audit log BEFORE sending response
     await logAndBroadcast(req, {
@@ -399,10 +441,13 @@ router.post('/search', authenticateJWT, aiLimiter, async (req, res) => {
       }
     });
 
-    return res.status(error.response?.status || 500).json({
-      error: error.response?.data?.detail || error.message || 'Search failed',
-      status: 'error'
-    });
+    // Normalize error — never expose internal ECONNREFUSED/stack traces
+    const upstreamStatus = error.response?.status;
+    const clientStatus = (upstreamStatus && upstreamStatus < 500) ? upstreamStatus : 503;
+    const clientMsg = upstreamStatus === 429
+      ? 'Too many requests. Please wait a moment and try again.'
+      : 'The search service is temporarily unavailable. Please try again.';
+    return res.status(clientStatus).json({ error: clientMsg, status: 'error' });
   }
 });
 

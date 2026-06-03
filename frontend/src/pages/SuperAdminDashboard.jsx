@@ -140,7 +140,7 @@ export default function SuperAdminDashboard() {
     // ── Socket ──────────────────────────────────────────────────
     useEffect(() => {
         fetchAll();
-        const socketUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+        const socketUrl = import.meta.env.VITE_API_URL || window.location.origin;
         const socket = io(socketUrl, { withCredentials: true, transports: ['websocket', 'polling'] });
         socketRef.current = socket;
 

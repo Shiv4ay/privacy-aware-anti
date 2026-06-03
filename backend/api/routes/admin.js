@@ -9,8 +9,11 @@ const pool = new Pool({
 });
 
 // Middleware to ensure user is Admin or Super Admin
+// Matches all admin-level role strings used across the system:
+// 'admin' (standard), 'university_admin' (institutional), 'super_admin' (cross-tenant)
+const ADMIN_ROLES = ['admin', 'university_admin', 'super_admin'];
 const requireAdmin = (req, res, next) => {
-    if (!req.user || !['admin', 'super_admin'].includes(req.user.role)) {
+    if (!req.user || !ADMIN_ROLES.includes(req.user.role)) {
         return res.status(403).json({ error: 'Access denied: Admin only' });
     }
     next();
@@ -213,8 +216,8 @@ router.get('/uploads', requireAdmin, async (req, res) => {
 });
 
 // GET /api/admin/documents/stats - Specific stats for documents page
-// ALLOWED for all users (view restricted to own org)
-router.get('/documents/stats', async (req, res) => {
+// Admin-only: exposes document filenames and metadata for the entire org
+router.get('/documents/stats', requireAdmin, async (req, res) => {
     try {
         const params = [];
         let whereClause = '';
@@ -288,11 +291,11 @@ router.get('/documents/stats', async (req, res) => {
 });
 
 // GET /api/admin/documents - List documents
-// ALLOWED for all users (view restricted to own org)
-router.get('/documents', async (req, res) => {
+// Admin-only: exposes all document filenames and metadata for the org
+router.get('/documents', requireAdmin, async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 50;
+        const limit = Math.min(200, parseInt(req.query.limit) || 50);
         const offset = (page - 1) * limit;
         const { filename, search, sortBy = 'created_at', sortOrder = 'DESC' } = req.query;
 
@@ -403,9 +406,9 @@ router.put('/users/:id/reactivate', requireAdmin, async (req, res) => {
 
         // Audit log
         await pool.query(
-            `INSERT INTO audit_log (user_id, action, resource_type, resource_id, success, error_message, ip_address, user_agent, metadata)
-             VALUES ($1, 'admin_reactivate_user', 'users', $2, TRUE, 'User manually reactivated by Admin', $3, $4, $5)`,
-            [req.user.id, userId, req.ip, req.get('User-Agent'), { admin_id: req.user.id }]
+            `INSERT INTO audit_logs (user_id, action, resource_type, details, ip_address, user_agent, created_at)
+             VALUES ($1, 'admin_reactivate_user', 'users', $2, $3, $4, NOW())`,
+            [req.user.userId, JSON.stringify({ target_user_id: userId, message: 'User manually reactivated by Admin' }), req.ip, req.get('User-Agent')]
         );
 
         res.json({ success: true, message: 'User successfully reactivated' });
@@ -446,7 +449,7 @@ router.put('/users/:id/suspend', requireAdmin, async (req, res) => {
         await pool.query(
             `INSERT INTO audit_logs (user_id, action, resource_type, details, ip_address, user_agent, created_at)
              VALUES ($1, 'admin_suspend_user', 'users', $2, $3, $4, NOW())`,
-            [req.user.user_id, JSON.stringify({ target_id: userId, message: 'User manually suspended by Admin' }), req.ip, req.get('User-Agent')]
+            [req.user.userId, JSON.stringify({ target_id: userId, message: 'User manually suspended by Admin' }), req.ip, req.get('User-Agent')]
         );
 
         res.json({ success: true, message: 'User successfully suspended' });
@@ -483,12 +486,16 @@ router.patch('/users/:id/role', requireSuperAdmin, async (req, res) => {
         if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
 
         // Invalidate sessions so new role takes effect on next login
-        await pool.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [userId]);
+        const roleChangeUserRes = await pool.query('SELECT user_id FROM users WHERE id = $1', [userId]);
+        const roleChangeUuid = roleChangeUserRes.rows[0]?.user_id;
+        if (roleChangeUuid) {
+            await pool.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [roleChangeUuid]);
+        }
 
         await pool.query(
             `INSERT INTO audit_logs (user_id, action, resource_type, details, ip_address, user_agent, created_at)
              VALUES ($1, 'admin_role_change', 'users', $2, $3, $4, NOW())`,
-            [req.user.id, JSON.stringify({ target_user_id: userId, new_role: role }), req.ip, req.get('User-Agent')]
+            [req.user.userId, JSON.stringify({ target_user_id: userId, new_role: role }), req.ip, req.get('User-Agent')]
         );
 
         res.json({ success: true, user: result.rows[0] });
@@ -513,7 +520,23 @@ router.patch('/users/:id/status', requireAdmin, async (req, res) => {
             return res.status(403).json({ error: 'Access denied' });
 
         await pool.query('UPDATE users SET is_active = $1 WHERE id = $2', [is_active, userId]);
-        if (!is_active) await pool.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [userId]);
+        if (!is_active) {
+            const statusUserRes = await pool.query('SELECT user_id FROM users WHERE id = $1', [userId]);
+            const statusUuid = statusUserRes.rows[0]?.user_id;
+            if (statusUuid) {
+                await pool.query('UPDATE auth_sessions SET is_active = FALSE WHERE user_id = $1', [statusUuid]);
+            }
+        }
+
+        // Audit log
+        await pool.query(
+            `INSERT INTO audit_logs (user_id, action, resource_type, details, ip_address, user_agent, created_at)
+             VALUES ($1, $2, 'users', $3, $4, $5, NOW())`,
+            [req.user.userId,
+             is_active ? 'admin_activate_user' : 'admin_deactivate_user',
+             JSON.stringify({ target_user_id: userId, new_status: is_active ? 'active' : 'inactive' }),
+             req.ip, req.get('User-Agent')]
+        );
 
         res.json({ success: true, is_active });
     } catch (error) {
@@ -526,7 +549,9 @@ router.delete('/users/:id', requireSuperAdmin, async (req, res) => {
     try {
         const userId = parseInt(req.params.id);
         if (userId === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
-        await pool.query('DELETE FROM auth_sessions WHERE user_id = $1', [userId]);
+        const deleteUserRes = await pool.query('SELECT user_id FROM users WHERE id = $1', [userId]);
+        const deleteUuid = deleteUserRes.rows[0]?.user_id;
+        if (deleteUuid) await pool.query('DELETE FROM auth_sessions WHERE user_id = $1', [deleteUuid]);
         const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
         if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
         res.json({ success: true });
@@ -551,7 +576,7 @@ router.get('/audit-logs', requireSuperAdmin, async (req, res) => {
         let pIdx = 1;
 
         if (action) { conditions.push(`al.action = $${pIdx++}`); params.push(action); }
-        if (userId) { conditions.push(`al.user_id = $${pIdx++}`); params.push(parseInt(userId)); }
+        if (userId) { conditions.push(`al.user_id = $${pIdx++}`); params.push(userId); }
         if (from) { conditions.push(`al.created_at >= $${pIdx++}`); params.push(new Date(from)); }
         if (to) { conditions.push(`al.created_at <= $${pIdx++}`); params.push(new Date(to)); }
 
@@ -631,6 +656,105 @@ router.patch('/orgs/:id/privacy', async (req, res) => {
     } catch (error) {
         console.error('Privacy update error:', error);
         res.status(500).json({ error: 'Failed to update privacy level' });
+    }
+});
+
+/**
+ * GET /api/admin/system-stats
+ * Comprehensive system stats for admin & super-admin dashboards
+ */
+router.get('/system-stats', requireAdmin, async (req, res) => {
+    const isSuperAdmin = req.user.role === 'super_admin';
+    const orgId = req.user.org_id;
+
+    try {
+        const orgParams = isSuperAdmin ? [] : [parseInt(orgId)];
+        const orgFilter = isSuperAdmin ? '' : 'WHERE org_id = $1';
+        const orgJoinFilter = isSuperAdmin ? '' : 'JOIN user_org_mapping m ON u.user_id = m.user_id WHERE m.org_id = $1';
+
+        // audit_logs has no org_id column — scope by users belonging to this org
+        const auditParams = isSuperAdmin ? [] : [parseInt(orgId)];
+        const auditOrgWhere = isSuperAdmin
+            ? ''
+            : 'AND user_id IN (SELECT user_id FROM user_org_mapping WHERE org_id = $1)';
+
+        const [usersRes, docsRes, feedbackRes, auditRes, orgRes] = await Promise.all([
+            pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE is_active) ::int AS active,
+                COUNT(*) FILTER (WHERE role='student')::int AS students,
+                COUNT(*) FILTER (WHERE role IN ('admin','super_admin'))::int AS admins
+                FROM users u ${orgJoinFilter}`, orgParams),
+            pool.query(`SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE status='processed')::int AS processed,
+                COUNT(*) FILTER (WHERE status='pending')::int AS pending,
+                COUNT(*) FILTER (WHERE status='failed')::int AS failed,
+                COALESCE(SUM(file_size),0)::bigint AS storage_bytes
+                FROM documents ${orgFilter}`, orgParams),
+            pool.query(`SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE rating='up')::int AS thumbs_up,
+                COUNT(*) FILTER (WHERE rating='down')::int AS thumbs_down
+                FROM response_feedback ${orgFilter}`, orgParams),
+            pool.query(`SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE action='jailbreak_attempt')::int AS jailbreaks,
+                COUNT(*) FILTER (WHERE action='privacy_violation')::int AS privacy_violations,
+                COUNT(*) FILTER (WHERE details->>'success' = 'false')::int AS blocked
+                FROM audit_logs
+                WHERE created_at >= NOW() - INTERVAL '7 days'
+                ${auditOrgWhere}`, auditParams),
+            isSuperAdmin
+                ? pool.query(`SELECT COUNT(*)::int AS total FROM organizations`)
+                : pool.query(`SELECT 1::int AS total`),
+        ]);
+
+        const fb = feedbackRes.rows[0];
+        const fbTotal = fb.total || 1;
+        const satisfaction = Math.round((fb.thumbs_up / fbTotal) * 100);
+
+        res.json({
+            users: usersRes.rows[0],
+            documents: docsRes.rows[0],
+            feedback: { ...fb, satisfaction_rate: satisfaction },
+            security: auditRes.rows[0],
+            organizations: orgRes.rows[0],
+        });
+    } catch (err) {
+        console.error('System Stats Error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch system stats', details: err.message });
+    }
+});
+
+/**
+ * GET /api/admin/query-stats
+ * Chat query stats by day for the past N days (for Admin line chart)
+ */
+router.get('/query-stats', requireAdmin, async (req, res) => {
+    const days = Math.min(30, parseInt(req.query.days) || 14);
+    const isSuperAdmin = req.user.role === 'super_admin';
+    const orgId = req.user.org_id;
+
+    try {
+        const conditions = [`a.created_at >= NOW() - INTERVAL '${days} days'`, `a.action IN ('chat','search')`];
+        const params = [];
+        if (!isSuperAdmin) { conditions.push(`m.org_id = $1`); params.push(orgId); }
+
+        const whereClause = 'WHERE ' + conditions.join(' AND ');
+        const joinClause = 'LEFT JOIN users u ON a.user_id = u.user_id LEFT JOIN user_org_mapping m ON u.user_id = m.user_id';
+
+        const result = await pool.query(`
+            SELECT
+                to_char(date_trunc('day', a.created_at), 'Mon DD') AS label,
+                COUNT(*)::int AS queries,
+                ROUND(AVG(CAST(a.details->>'confidence' AS FLOAT)) FILTER (WHERE a.details->>'confidence' IS NOT NULL) * 100)::int AS avg_confidence
+            FROM audit_logs a
+            ${joinClause}
+            ${whereClause}
+            GROUP BY date_trunc('day', a.created_at)
+            ORDER BY date_trunc('day', a.created_at) ASC
+        `, params);
+
+        res.json({ days: result.rows });
+    } catch (err) {
+        console.error('Query Stats Error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch query stats', details: err.message });
     }
 });
 

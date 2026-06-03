@@ -17,6 +17,18 @@ frontend/.env.*
 credentials.json
 *.key
 *.pem
+JWT_SECRETS.txt
+
+# Node / Frontend packages
+node_modules/
+dist/
+build/
+.svelte-kit/
+.next/
+.nuxt/
+out/
+.parcel-cache/
+.cache/
 
 # Python
 __pycache__/
@@ -39,11 +51,13 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.pytest_cache/
 
 # Virtual environments
 venv/
 ENV/
 env/
+.venv/
 
 # IDE
 .vscode/
@@ -51,21 +65,60 @@ env/
 *.swp
 *.swo
 *~
+.superpowers/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Docker volumes
+# Docker volumes & data
 postgres-data/
 minio-data/
 chromadb-data/
+Datasets;C/
 
-# Logs
+# Logs and diagnostic files
 *.log
 logs/
+*.txt
+*.jsonl
+!requirements.txt
+!*requirements*.txt
 
-# Temporary files
+# ZIP Archives
+*.zip
+
+# Temporary files & worktrees
 *.tmp
 push_output.txt
 .worktrees
+uploads/
+
+# Scratch JSON files in the project root (excluding standard config files)
+/*.json
+!/package.json
+!/package-lock.json
+!/tsconfig.json
+!/pyrightconfig.json
+
+# Scratch scripts in the project root
+/*.py
+/*.ps1
+/*.sql
+/*.js
+!/postcss.config.js
+!/tailwind.config.js
+
+# Unnecessary markdown documentation in the project root
+/COMPLETION_STATUS.md
+/FRONTEND_BUILD_VERIFICATION.md
+/FRONTEND_FIXES_SUMMARY.md
+/ISSUES.md
+/TASKS.md
+/DECISIONS.md
+/fixed_notes.md
+/research_paper_updates.md
+/PROJECT.md
+/SECURITY_TEST_CASES.md
+/PANEL_ANALYSIS_AND_QUERIES.md
+/CLAUDE.md

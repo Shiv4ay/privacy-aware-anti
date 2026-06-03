@@ -36,7 +36,7 @@ export default function AdminDashboard() {
         fetchData();
         const interval = setInterval(fetchData, 30000);
 
-        const socketUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+        const socketUrl = import.meta.env.VITE_API_URL || window.location.origin;
         const socket = io(socketUrl, { withCredentials: true, transports: ['websocket', 'polling'] });
 
         socket.on('connect', () => socket.emit('subscribe:system'));

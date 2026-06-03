@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    project: 'privacy-aware-rag'
+
+scrape_configs:
+  # API Gateway — Node.js / prom-client
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api:3001']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # Worker — FastAPI (if you add /metrics to worker later)
+  # - job_name: 'worker'
+  #   static_configs:
+  #     - targets: ['worker:8001']
+  #   metrics_path: '/metrics'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

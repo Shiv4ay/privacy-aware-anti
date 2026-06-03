@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG Bulk Test — Live Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
+    h1 { font-size: 1.6rem; font-weight: 700; color: #f8fafc; margin-bottom: 0.25rem; }
+    .subtitle { color: #94a3b8; font-size: 0.9rem; margin-bottom: 2rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .card { background: #1e293b; border-radius: 12px; padding: 1.25rem 1.5rem; border: 1px solid #334155; }
+    .card-label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
+    .card-value { font-size: 2rem; font-weight: 800; }
+    .card-sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.2rem; }
+    .green { color: #4ade80; }
+    .red { color: #f87171; }
+    .amber { color: #fbbf24; }
+    .blue { color: #60a5fa; }
+    .white { color: #f8fafc; }
+
+    .progress-wrap { background: #1e293b; border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem; border: 1px solid #334155; }
+    .progress-header { display: flex; justify-content: space-between; margin-bottom: 0.75rem; font-size: 0.875rem; color: #94a3b8; }
+    .progress-bar-bg { background: #334155; border-radius: 99px; height: 24px; overflow: hidden; }
+    .progress-bar-fill { height: 100%; border-radius: 99px; background: linear-gradient(90deg, #3b82f6, #8b5cf6); transition: width 0.5s ease; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; color: #fff; }
+    .progress-stats { display: flex; gap: 1.5rem; margin-top: 0.75rem; font-size: 0.8rem; color: #94a3b8; }
+
+    .status-bar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 2rem; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot.running { background: #4ade80; animation: pulse 1.5s infinite; }
+    .dot.done { background: #60a5fa; }
+    .dot.error { background: #f87171; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .status-text { font-size: 0.875rem; font-weight: 600; }
+
+    .last-result { background: #1e293b; border-radius: 12px; padding: 1.25rem 1.5rem; border: 1px solid #334155; margin-bottom: 2rem; }
+    .last-result h3 { font-size: 0.8rem; color: #64748b; text-transform: uppercase; margin-bottom: 0.75rem; }
+    .result-row { display: flex; gap: 0.5rem; align-items: center; font-size: 0.875rem; }
+    .badge { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; }
+    .badge-A { background: #1d4ed8; color: #bfdbfe; }
+    .badge-B { background: #065f46; color: #a7f3d0; }
+    .badge-C { background: #92400e; color: #fde68a; }
+    .badge-D { background: #7c3aed; color: #ddd6fe; }
+    .badge-E { background: #9f1239; color: #fecdd3; }
+    .badge-F { background: #374151; color: #d1d5db; }
+    .badge-ok { background: #14532d; color: #86efac; }
+    .badge-err { background: #7f1d1d; color: #fca5a5; }
+
+    .eta-box { background: #172554; border: 1px solid #1d4ed8; border-radius: 8px; padding: 0.75rem 1rem; display: inline-block; }
+    .eta-box span { color: #60a5fa; font-size: 1.25rem; font-weight: 700; }
+
+    .actions { margin-top: 2rem; display: flex; gap: 1rem; flex-wrap: wrap; }
+    .btn { padding: 0.6rem 1.4rem; border-radius: 8px; border: none; cursor: pointer; font-size: 0.875rem; font-weight: 600; }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-secondary { background: #334155; color: #e2e8f0; }
+    .btn-secondary:hover { background: #475569; }
+
+    .refresh-note { font-size: 0.75rem; color: #475569; margin-top: 0.5rem; }
+    #countdown { color: #60a5fa; }
+
+    .complete-banner { background: linear-gradient(135deg, #064e3b, #065f46); border: 1px solid #059669; border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem; text-align: center; }
+    .complete-banner h2 { color: #4ade80; font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+  <h1>Privacy-Aware RAG &mdash; Bulk Test Dashboard</h1>
+  <p class="subtitle">Live progress for 1105-query evaluation pipeline &nbsp;&bull;&nbsp; Auto-refreshes every 5s</p>
+
+  <div id="completeBanner" class="complete-banner hidden">
+    <h2>&#10003; Bulk Test Complete!</h2>
+    <p style="color:#6ee7b7">All queries finished. Run <code style="background:#0f172a;padding:2px 6px;border-radius:4px">python backend/scripts/check_and_finalize.py</code> to generate the report.</p>
+  </div>
+
+  <div class="status-bar">
+    <div class="dot running" id="statusDot"></div>
+    <span class="status-text" id="statusText">Loading...</span>
+  </div>
+
+  <div class="progress-wrap">
+    <div class="progress-header">
+      <span id="progressLabel">0 / 1105</span>
+      <span id="progressPct">0%</span>
+    </div>
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill" id="progressBar" style="width:0%">0%</div>
+    </div>
+    <div class="progress-stats">
+      <span>Elapsed: <strong id="elapsedStr">—</strong></span>
+      <span>ETA: <strong id="etaStr" style="color:#60a5fa">—</strong></span>
+      <span>Rate: <strong id="rateStr">—</strong></span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-label">Completed</div>
+      <div class="card-value blue" id="doneVal">—</div>
+      <div class="card-sub">of 1105 queries</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Remaining</div>
+      <div class="card-value white" id="remainVal">—</div>
+      <div class="card-sub">queries pending</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Errors</div>
+      <div class="card-value red" id="errorsVal">—</div>
+      <div class="card-sub">will auto-retry</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Success Rate</div>
+      <div class="card-value green" id="successRate">—</div>
+      <div class="card-sub">of completed</div>
+    </div>
+  </div>
+
+  <div class="last-result" id="lastResultBox" style="display:none">
+    <h3>Last completed query</h3>
+    <div class="result-row" id="lastResultRow"></div>
+  </div>
+
+  <div class="refresh-note">Auto-refreshing in <span id="countdown">5</span>s &nbsp;&bull;&nbsp; <a href="#" onclick="fetchStatus();return false" style="color:#60a5fa">Refresh now</a></div>
+
+  <div class="actions">
+    <button class="btn btn-secondary" onclick="window.location.href='test_report.html'">Open Report</button>
+    <button class="btn btn-secondary" onclick="fetchStatus()">Refresh Now</button>
+  </div>
+
+<script>
+  let countdownVal = 5;
+  let timer;
+
+  function fmt(s) {
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60), sec = s % 60;
+    if (m < 60) return m + 'm ' + sec + 's';
+    const h = Math.floor(m / 60), min = m % 60;
+    return h + 'h ' + min + 'm';
+  }
+
+  function catBadge(cat) {
+    return `<span class="badge badge-${cat}">${cat}</span>`;
+  }
+
+  function fetchStatus() {
+    clearInterval(timer);
+    fetch('status.json?_=' + Date.now())
+      .then(r => r.json())
+      .catch(() => null)
+      .then(data => {
+        if (!data) {
+          document.getElementById('statusText').textContent = 'Waiting for test to start...';
+          startCountdown();
+          return;
+        }
+
+        const done = data.done || 0;
+        const total = data.total || 1105;
+        const errors = data.errors || 0;
+        const pct = data.pct || Math.round(100 * done / total);
+        const elapsed = data.elapsed_s || 0;
+        const eta = data.eta_s || 0;
+        const running = data.running !== false;
+        const rate = elapsed > 0 ? (done / elapsed * 60).toFixed(1) : '—';
+        const successRate = done > 0 ? Math.round(100 * (done - errors) / done) + '%' : '—';
+
+        // Progress bar
+        document.getElementById('progressBar').style.width = pct + '%';
+        document.getElementById('progressBar').textContent = pct + '%';
+        document.getElementById('progressLabel').textContent = done + ' / ' + total;
+        document.getElementById('progressPct').textContent = pct + '%';
+
+        // Stats
+        document.getElementById('doneVal').textContent = done;
+        document.getElementById('remainVal').textContent = total - done;
+        document.getElementById('errorsVal').textContent = errors;
+        document.getElementById('successRate').textContent = successRate;
+        document.getElementById('elapsedStr').textContent = fmt(elapsed);
+        document.getElementById('etaStr').textContent = running ? fmt(eta) : 'Done!';
+        document.getElementById('rateStr').textContent = rate + ' q/min';
+
+        // Status dot
+        const dot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        if (!running) {
+          dot.className = 'dot done';
+          statusText.textContent = 'Complete — all ' + total + ' queries done';
+          document.getElementById('completeBanner').classList.remove('hidden');
+        } else if (errors > done * 0.2) {
+          dot.className = 'dot error';
+          statusText.textContent = 'Running — high error rate, check console';
+        } else {
+          dot.className = 'dot running';
+          statusText.textContent = 'Running — ' + done + ' done, ' + (total-done) + ' remaining';
+        }
+
+        // Last result
+        if (data.last_result && data.last_result.query_id) {
+          const lr = data.last_result;
+          const okClass = lr.status_code === 200 ? 'badge-ok' : 'badge-err';
+          const okText = lr.status_code === 200 ? '200 OK' : (lr.status_code || 'ERR');
+          document.getElementById('lastResultBox').style.display = 'block';
+          document.getElementById('lastResultRow').innerHTML =
+            catBadge(lr.category) +
+            `<strong style="margin-left:4px">${lr.query_id}</strong>` +
+            `<span class="badge ${okClass}" style="margin-left:4px">${okText}</span>` +
+            `<span style="color:#94a3b8;margin-left:8px">${lr.status || ''}</span>` +
+            `<span style="color:#64748b;margin-left:auto">${lr.elapsed}s</span>`;
+        }
+
+        startCountdown();
+      });
+  }
+
+  function startCountdown() {
+    countdownVal = 5;
+    document.getElementById('countdown').textContent = countdownVal;
+    timer = setInterval(() => {
+      countdownVal--;
+      document.getElementById('countdown').textContent = countdownVal;
+      if (countdownVal <= 0) {
+        clearInterval(timer);
+        fetchStatus();
+      }
+    }, 1000);
+  }
+
+  // Initial load
+  fetchStatus();
+</script>
+</body>
+</html>

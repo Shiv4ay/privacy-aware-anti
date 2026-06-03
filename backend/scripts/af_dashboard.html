@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="5">
+<title>Admin + Faculty Bulk Test — Live Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; padding: 24px; }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; color: #58a6ff; }
+  .subtitle { font-size: 13px; color: #8b949e; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; text-align: center; }
+  .card .label { font-size: 12px; color: #8b949e; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 28px; font-weight: 700; }
+  .value.green { color: #3fb950; }
+  .value.red   { color: #f85149; }
+  .value.blue  { color: #58a6ff; }
+  .value.yellow{ color: #d29922; }
+  .bar-wrap { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+  .bar-wrap .bar-label { font-size: 13px; margin-bottom: 8px; color: #8b949e; }
+  .bar-outer { background: #21262d; border-radius: 6px; height: 24px; overflow: hidden; }
+  .bar-inner { height: 100%; background: linear-gradient(90deg, #238636, #3fb950); border-radius: 6px; transition: width 0.5s; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; font-size: 12px; font-weight: 600; color: #fff; min-width: 40px; }
+  .cat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .cat-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }
+  .cat-card .cat-header { font-size: 13px; font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; }
+  .cat-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; background: #21262d; }
+  .cat-badge.admin { color: #58a6ff; border: 1px solid #1f6feb; }
+  .cat-badge.faculty { color: #3fb950; border: 1px solid #238636; }
+  .last-box { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+  .last-box .lbl { font-size: 11px; color: #8b949e; margin-bottom: 4px; }
+  .last-box .val { font-size: 13px; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot-green { background: #3fb950; animation: pulse 1.5s infinite; }
+  .dot-gray { background: #6e7681; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .ts { font-size: 11px; color: #6e7681; text-align: right; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: #8b949e; margin-bottom: 16px; }
+  .legend span { display: flex; align-items: center; gap: 4px; }
+</style>
+</head>
+<body>
+<h1>Admin + Faculty Bulk Test</h1>
+<p class="subtitle">Privacy-Aware RAG — Live Results Dashboard</p>
+
+<div class="legend">
+  <span><b style="color:#58a6ff">G</b> Admin Aggregate SQL</span>
+  <span><b style="color:#58a6ff">H</b> Admin Individual Lookup</span>
+  <span><b style="color:#f85149">I</b> Admin Jailbreak Block</span>
+  <span><b style="color:#3fb950">J</b> Faculty Own Profile</span>
+  <span><b style="color:#d29922">K</b> Faculty Privacy Block</span>
+  <span><b style="color:#f85149">L</b> Faculty Jailbreak Block</span>
+  <span><b style="color:#3fb950">M</b> Faculty Aggregate</span>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="label">Completed</div>
+    <div class="value blue" id="done">—</div>
+  </div>
+  <div class="card">
+    <div class="label">Total</div>
+    <div class="value" id="total">313</div>
+  </div>
+  <div class="card">
+    <div class="label">Errors</div>
+    <div class="value red" id="errors">—</div>
+  </div>
+  <div class="card">
+    <div class="label">ETA</div>
+    <div class="value yellow" id="eta">—</div>
+  </div>
+  <div class="card">
+    <div class="label">Elapsed</div>
+    <div class="value" id="elapsed">—</div>
+  </div>
+</div>
+
+<div class="bar-wrap">
+  <div class="bar-label">
+    <span class="status-dot dot-green" id="status-dot"></span>
+    <span id="status-label">Running...</span>
+  </div>
+  <div class="bar-outer">
+    <div class="bar-inner" id="progress-bar" style="width:0%">0%</div>
+  </div>
+</div>
+
+<div id="last-result-box" class="last-box" style="display:none">
+  <div class="lbl">Last Completed Query</div>
+  <div class="val" id="last-qid">—</div>
+  <div style="display:flex;gap:16px;margin-top:6px">
+    <div><span class="lbl">Category</span><br><span id="last-cat" style="font-weight:600"></span></div>
+    <div><span class="lbl">HTTP Status</span><br><span id="last-http"></span></div>
+    <div><span class="lbl">Result</span><br><span id="last-status"></span></div>
+    <div><span class="lbl">Time</span><br><span id="last-elapsed"></span></div>
+  </div>
+</div>
+
+<div class="ts" id="timestamp">Last update: —</div>
+
+<script>
+const CAT_COLORS = {
+  G: '#58a6ff', H: '#58a6ff', I: '#f85149',
+  J: '#3fb950', K: '#d29922', L: '#f85149', M: '#3fb950'
+};
+
+function fmtTime(s) {
+  if (!s && s !== 0) return '—';
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+async function update() {
+  try {
+    const r = await fetch('status_af.json?t=' + Date.now());
+    if (!r.ok) return;
+    const d = await r.json();
+
+    document.getElementById('done').textContent    = d.done ?? '—';
+    document.getElementById('total').textContent   = d.total ?? '—';
+    document.getElementById('errors').textContent  = d.errors ?? '—';
+    document.getElementById('eta').textContent     = fmtTime(d.eta_s);
+    document.getElementById('elapsed').textContent = fmtTime(d.elapsed_s);
+
+    const pct = d.pct ?? 0;
+    const bar = document.getElementById('progress-bar');
+    bar.style.width = pct + '%';
+    bar.textContent = pct + '%';
+
+    const dot   = document.getElementById('status-dot');
+    const label = document.getElementById('status-label');
+    if (d.running === false) {
+      dot.className = 'status-dot dot-gray';
+      label.textContent = 'Test complete!';
+    } else {
+      dot.className = 'status-dot dot-green';
+      label.textContent = `Running... ${d.done}/${d.total} queries`;
+    }
+
+    if (d.last_result) {
+      const lr = d.last_result;
+      document.getElementById('last-result-box').style.display = '';
+      document.getElementById('last-qid').textContent    = lr.query_id ?? '—';
+      const cat = lr.category ?? '?';
+      const catEl = document.getElementById('last-cat');
+      catEl.textContent = cat;
+      catEl.style.color = CAT_COLORS[cat] || '#c9d1d9';
+      document.getElementById('last-http').textContent   = lr.status_code ?? '—';
+      document.getElementById('last-status').textContent = lr.status ?? '—';
+      document.getElementById('last-elapsed').textContent = (lr.elapsed ? lr.elapsed + 's' : '—');
+    }
+
+    document.getElementById('timestamp').textContent = 'Last update: ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    document.getElementById('timestamp').textContent = 'Last update: error — ' + e.message;
+  }
+}
+
+update();
+setInterval(update, 5000);
+</script>
+</body>
+</html>

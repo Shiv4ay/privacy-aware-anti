@@ -12,7 +12,7 @@ const FallbackBanner = () => {
                 // Note: model-status endpoint might be public or protected. 
                 // If protected, we need token. If public, we don't.
                 // Assuming public or we have token.
-                const response = await axios.get('http://localhost:3001/api/model-status', { headers });
+                const response = await axios.get('/api/model-status', { headers });
                 setStatus(response.data);
             } catch (error) {
                 console.error('Failed to fetch model status', error);
