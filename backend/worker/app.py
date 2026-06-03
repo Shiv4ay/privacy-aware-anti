@@ -274,6 +274,24 @@ logger.info("Configured Ollama embed model (enforced single): %s", SELECTED_EMBE
 app = FastAPI(title="Privacy-Aware RAG Worker", version="1.0.0")
 
 # -----------------------------
+# Internal API Key guard
+# -----------------------------
+_WORKER_INTERNAL_KEY = os.environ.get("WORKER_INTERNAL_KEY", "")
+
+@app.middleware("http")
+async def internal_key_guard(request: Request, call_next):
+    """Reject requests not coming from the Node.js gateway (no valid internal key)."""
+    # Skip guard when key is not configured (dev/local mode) or for health endpoint
+    if not _WORKER_INTERNAL_KEY or request.url.path in ("/health", "/"):
+        return await call_next(request)
+    provided = request.headers.get("X-Internal-Key", "")
+    if provided != _WORKER_INTERNAL_KEY:
+        from fastapi.responses import JSONResponse
+        logger.warning(f"[SECURITY] Rejected direct worker access from {request.client.host} — missing/invalid X-Internal-Key")
+        return JSONResponse(status_code=403, content={"detail": "Forbidden: direct worker access not allowed"})
+    return await call_next(request)
+
+# -----------------------------
 # ChromaDB client
 # -----------------------------
 # Note: chromadb client usage depends on installed client version; adapt if required.
@@ -1597,10 +1615,10 @@ def detect_cross_student_query(query: str, entity_id: Optional[str], user_role: 
 
     # Before blocking, verify at least one foreign token looks like a real
     # Indian/English personal name (not a domain term still slipping through).
-    # Basic heuristic: personal names are typically 4-15 chars, pure alpha.
+    # Basic heuristic: personal names are typically 3-15 chars, pure alpha.
     real_name_candidates = [
         n for n in foreign_names
-        if n.isalpha() and 4 <= len(n) <= 15
+        if n.isalpha() and 3 <= len(n) <= 15
         and n not in _NON_NAME_WORDS  # belt-and-suspenders check
     ]
     if not real_name_candidates:
@@ -3316,6 +3334,11 @@ _NLU_ALIASES = [
     (r'\bcompare\s+(?:my\s+)?internship\s+(?:and|with|to)\s+(?:my\s+)?placement\b', 'internship placement company hired'),
     # General cross-data
     (r'\bmy\s+(?:overall|complete|full|comprehensive|total)\s+(?:journey|profile|story|summary|overview)\b', 'student details placement internship marks grades'),
+    # ── Informal shorthand expansions ─────────────────────────────────────────
+    (r'\bmy\s+cg\b', 'cgpa'),
+    (r'\bmy\s+sem\b', 'semester'),
+    (r'\bgive\s+me\s+stats\b', 'placement statistics'),
+    (r'\bnumbers\s+please\b', 'statistics summary'),
 ]
 
 # --- Smart Query Builder (Phase 6.1: Advanced Entity-Aware Context) ---

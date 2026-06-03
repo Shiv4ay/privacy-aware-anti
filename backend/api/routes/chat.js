@@ -6,6 +6,8 @@ const { authenticateJWT } = require('../middleware/authMiddleware');
 const { aiLimiter } = require('../middleware/rateLimiter');
 
 const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
+const WORKER_INTERNAL_KEY = process.env.WORKER_INTERNAL_KEY || '';
+const INTERNAL_HEADERS = WORKER_INTERNAL_KEY ? { 'X-Internal-Key': WORKER_INTERNAL_KEY } : {};
 
 /**
  * Helper: Write audit log to audit_logs + broadcast via Redis for real-time UI
@@ -119,7 +121,7 @@ router.post('/chat', authenticateJWT, aiLimiter, async (req, res) => {
       user_email: req.user?.email || null,  // Identity anchoring
       username: req.user?.username || null,  // Identity anchoring
       conversation_history: req.body.conversation_history || [],
-    }, { timeout: 300000 });
+    }, { timeout: 300000, headers: INTERNAL_HEADERS });
 
     // Universal security block detection: catch ANY status containing 'blocked'
     // Covers: blocked, security_blocked, security_blocked_ai, security_blocked_output, privacy_blocked, and any future *_blocked variants
@@ -278,6 +280,7 @@ router.post('/chat/stream', authenticateJWT, aiLimiter, async (req, res) => {
     }, {
       responseType: 'stream',
       timeout: 300000,
+      headers: INTERNAL_HEADERS,
     });
 
     // Pipe the SSE stream directly to the client
@@ -336,7 +339,7 @@ router.post('/search', authenticateJWT, aiLimiter, async (req, res) => {
       department: req.user?.department || null,
       user_category: req.user?.user_category || req.user?.userCategory || null,
       entity_id: req.user?.entityId || req.user?.entity_id || null // Zero-Trust ID
-    }, { timeout: 300000 });
+    }, { timeout: 300000, headers: INTERNAL_HEADERS });
 
     // Audit log BEFORE sending response
     await logAndBroadcast(req, {
