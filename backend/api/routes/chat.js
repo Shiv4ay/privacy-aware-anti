@@ -7,6 +7,8 @@ const { aiLimiter } = require('../middleware/rateLimiter');
 const { makeWorkerCircuit } = require('../middleware/circuitBreaker');
 
 const WORKER_URL = process.env.WORKER_URL || 'http://worker:8001';
+const WORKER_INTERNAL_KEY = process.env.WORKER_INTERNAL_KEY || '';
+const INTERNAL_HEADERS = WORKER_INTERNAL_KEY ? { 'X-Internal-Key': WORKER_INTERNAL_KEY } : {};
 
 // Circuit breaker — one instance per process, wraps the worker chat call
 // axios timeout slightly exceeds circuit-breaker timeout (240s) so the CB
@@ -15,6 +17,7 @@ const workerChatCircuit = makeWorkerCircuit(
     async (payload) => axios.post(`${WORKER_URL}/chat`, payload, {
         timeout: 250000,  // 250s — slightly above opossum 240s so CB fires first
         responseType: 'json',
+        headers: INTERNAL_HEADERS,
     })
 );
 
@@ -290,6 +293,7 @@ router.post('/chat/stream', authenticateJWT, aiLimiter, async (req, res) => {
     });
 
     // Forward to Python worker stream endpoint
+    // Forward to Python worker stream endpoint
     // M3-fix: 90s timeout (down from 300s) + AbortController for fail-fast.
     // When the worker is down, the stream fails within 90s instead of hanging 5 minutes.
     const streamAbort = new AbortController();
@@ -317,6 +321,7 @@ router.post('/chat/stream', authenticateJWT, aiLimiter, async (req, res) => {
         responseType: 'stream',
         timeout: 90000,
         signal: streamAbort.signal,
+        headers: INTERNAL_HEADERS,
       });
     } catch (connectErr) {
       clearTimeout(streamTimeout);
@@ -395,7 +400,7 @@ router.post('/search', authenticateJWT, aiLimiter, async (req, res) => {
       department: req.user?.department || null,
       user_category: req.user?.user_category || req.user?.userCategory || null,
       entity_id: req.user?.entityId || req.user?.entity_id || null // Zero-Trust ID
-    }, { timeout: 60000 });
+    }, { timeout: 60000, headers: INTERNAL_HEADERS });
 
     // Audit log BEFORE sending response
     await logAndBroadcast(req, {

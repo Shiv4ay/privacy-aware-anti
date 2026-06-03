@@ -59,11 +59,15 @@ def fail(label: str, detail: str = ""):
     print(f"  \033[31m[FAIL]\033[0m {label}  →  {detail[:120]}")
 
 
+_INTERNAL_KEY = os.environ.get("WORKER_INTERNAL_KEY", "")
+_INTERNAL_HEADERS = {"X-Internal-Key": _INTERNAL_KEY} if _INTERNAL_KEY else {}
+
+
 def chat(query: str, role: str = "admin", entity_id: str = None, timeout: int = 45) -> dict:
     payload = {"query": query, "org_id": ORG_ID, "user_role": role, "organization": "PES"}
     if entity_id:
         payload["entity_id"] = entity_id
-    r = requests.post(f"{WORKER_URL}/chat", json=payload, timeout=timeout)
+    r = requests.post(f"{WORKER_URL}/chat", json=payload, headers=_INTERNAL_HEADERS, timeout=timeout)
     r.raise_for_status()
     return r.json()
 

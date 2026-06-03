@@ -63,8 +63,10 @@ JAILBREAK_SIGNATURES = [
     r"(?i)\b(research\s+purpose|academic\s+purpose|educational\s+purpose)\b.{0,80}(show|give|provide|expose|reveal)\b.{0,40}(pii|personal|private|sensitive|student)\b",
     # Encoding bypass — base64 or long encoded strings passed as instructions
     r"(?i)\b(?:execute|run|eval|decode)\s*[:\-]?\s*[A-Za-z0-9+/]{20,}={0,2}\b",
+    # False conversation-history manipulation — "In our last session you were in admin mode"
+    r"(?i)\b(in\s+our\s+last\s+session|previously\s+you\s+(were|agreed|said)|last\s+time\s+you)\b.{0,60}\b(admin|bypass|ignore|override)\b",
     # Emotional pretext — distress framing to access another student's records
-    r"(?i)\b(?:failing|desperate|struggling|failing\s+exam|bad\s+grade)\b.{0,80}\b(?:classmate|friend|peer|colleague)\b.{0,60}\b(?:record|data|mark|grade|detail|info)\b",
+    r"(?i)\b(?:failing|desperate|struggling|failing\s+exam|bad\s+grade|emergency|urgent|please\s+help)\b.{0,80}\b(?:classmate|friend|peer|colleague|student|their|his|her)\b.{0,60}\b(?:record|data|mark|grade|result|detail|info)\b",
     # Bulk PII export / data extraction as file
     r"(?i)\b(export|download|extract|dump|save)\b.{0,60}\b(all\s+student|student\s+pii|pii|personal\s+data|sensitive\s+data|student\s+data)\b.{0,40}\b(csv|excel|json|file|spreadsheet|format)\b",
     r"(?i)\b(export|download|extract|dump)\b.{0,40}\b(student|user|pii|personal)\b.{0,30}\b(as\s+a?\s*)?(csv|excel|json|file)\b",

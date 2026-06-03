@@ -274,6 +274,24 @@ logger.info("Configured Ollama embed model (enforced single): %s", SELECTED_EMBE
 app = FastAPI(title="Privacy-Aware RAG Worker", version="1.0.0")
 
 # -----------------------------
+# Internal API Key guard
+# -----------------------------
+_WORKER_INTERNAL_KEY = os.environ.get("WORKER_INTERNAL_KEY", "")
+
+@app.middleware("http")
+async def internal_key_guard(request: Request, call_next):
+    """Reject requests not coming from the Node.js gateway (no valid internal key)."""
+    # Skip guard when key is not configured (dev/local mode) or for health endpoint
+    if not _WORKER_INTERNAL_KEY or request.url.path in ("/health", "/"):
+        return await call_next(request)
+    provided = request.headers.get("X-Internal-Key", "")
+    if provided != _WORKER_INTERNAL_KEY:
+        from fastapi.responses import JSONResponse
+        logger.warning(f"[SECURITY] Rejected direct worker access from {request.client.host} — missing/invalid X-Internal-Key")
+        return JSONResponse(status_code=403, content={"detail": "Forbidden: direct worker access not allowed"})
+    return await call_next(request)
+
+# -----------------------------
 # ChromaDB client
 # -----------------------------
 # Note: chromadb client usage depends on installed client version; adapt if required.
@@ -1686,10 +1704,10 @@ def detect_cross_student_query(query: str, entity_id: Optional[str], user_role: 
 
     # Before blocking, verify at least one foreign token looks like a real
     # Indian/English personal name (not a domain term still slipping through).
-    # Basic heuristic: personal names are typically 4-15 chars, pure alpha.
+    # Basic heuristic: personal names are typically 3-15 chars, pure alpha.
     real_name_candidates = [
         n for n in foreign_names
-        if n.isalpha() and 4 <= len(n) <= 15
+        if n.isalpha() and 3 <= len(n) <= 15
         and n not in _NON_NAME_WORDS  # belt-and-suspenders check
     ]
     if not real_name_candidates:
@@ -1842,8 +1860,28 @@ def generate_chat_response(query: str, context: str, user_role: str = "student",
     # Running Presidio on them causes false positives (e.g. "INTERNSHIP STATISTICS"
     # classified as ORGANIZATION). Skip redaction when caller explicitly marks the context
     # as aggregate (is_aggregate_context=True), set only by _try_admin_aggregate_query().
+<<<<<<< HEAD
     # No magic-string check — rely only on the boolean to prevent bypass via crafted input.
     _is_aggregate_ctx = is_aggregate_context
+=======
+    # The old magic-string check is kept as belt-and-suspenders but is no longer the primary gate.
+    _is_aggregate_ctx = is_aggregate_context or normalized_context.lstrip().startswith("ADMIN STATISTICS RECORD:")
+
+    if _is_aggregate_ctx:
+        redacted_context = normalized_context
+        context_pii_map = {}
+        logger.info(f"RAG SESSION: Aggregate SQL context — skipping PII redaction (no individual PII present). Context len={len(redacted_context)}")
+    else:
+        redacted_context, context_pii_map = redact_text(
+            normalized_context,
+            return_map=True,
+            pii_map=pii_session_map,
+            counters=pii_session_counters,
+            strictness=privacy_level,
+            protected_values=protected_values
+        )
+        logger.info(f"RAG SESSION: PII redaction applied for role={user_role}. Mapped {len(context_pii_map)} entities. Context len={len(redacted_context)}")
+>>>>>>> feature/chat-prod-fixes
 
     if _is_aggregate_ctx:
         redacted_context = normalized_context
@@ -2695,6 +2733,7 @@ def health_check():
 
     return {"status": "ok", "checks": checks}
 
+<<<<<<< HEAD
 
 @app.get("/ready")
 def readiness_probe():
@@ -2798,6 +2837,8 @@ async def purge_entity_data(entity_id: str, request: Request, _: None = Depends(
 
     return {"entity_id": entity_id, "org_id": org_id, "deleted_vectors": deleted}
 
+=======
+>>>>>>> feature/chat-prod-fixes
 @app.post("/redact")
 def redact_api_endpoint(request: RedactionRequest):
     """
@@ -3582,6 +3623,11 @@ _NLU_ALIASES = [
     (r'\bcompare\s+(?:my\s+)?internship\s+(?:and|with|to)\s+(?:my\s+)?placement\b', 'internship placement company hired'),
     # General cross-data
     (r'\bmy\s+(?:overall|complete|full|comprehensive|total)\s+(?:journey|profile|story|summary|overview)\b', 'student details placement internship marks grades'),
+    # ── Informal shorthand expansions ─────────────────────────────────────────
+    (r'\bmy\s+cg\b', 'cgpa'),
+    (r'\bmy\s+sem\b', 'semester'),
+    (r'\bgive\s+me\s+stats\b', 'placement statistics'),
+    (r'\bnumbers\s+please\b', 'statistics summary'),
 ]
 
 # --- Smart Query Builder (Phase 6.1: Advanced Entity-Aware Context) ---
@@ -4449,6 +4495,7 @@ def _try_admin_aggregate_query(query: str, org_id) -> str:
     # "how many students did internships?" must not match student count — exclude intern-related queries
     is_count_students   = (any(p in q for p in ["how many student", "total student", "student count", "number of student", "enrolled student"])
                            and not any(p in q for p in ["intern", "placed", "placement"]))
+<<<<<<< HEAD
     is_placement_db_count = (any(p in q for p in [
         "placement database", "in the placement", "placement record", "placed student",
         "how many student", "students are placed", "students placed", "total placed",
@@ -4525,6 +4572,21 @@ def _try_admin_aggregate_query(query: str, org_id) -> str:
                                                   "internships are there", "internships exist",
                                                   "internship pay above", "internships that pay"])
                            or ("how many" in q and "intern" in q))
+=======
+    is_placement_rank   = any(p in q for p in ["which compan", "top compan", "most student", "hired most", "placement rank", "company hire"])
+    is_avg_salary       = any(p in q for p in ["average salary", "avg salary", "average ctc", "avg ctc", "average package", "mean salary"])
+    is_failed_docs      = any(p in q for p in ["failed document", "failed ingestion", "ingestion fail", "status fail", "document fail"])
+    is_all_faculty      = any(p in q for p in ["all faculty", "list faculty", "faculty member", "show faculty"])
+    is_doc_summary      = any(p in q for p in ["document summary", "how many document", "total document", "document count", "document status"])
+    is_placement_rate   = any(p in q for p in ["placement rate", "placement percent", "how many placed", "placed student", "got placement",
+                                                  "students are placed", "students got placed", "students placed", "how many students placed",
+                                                  "how many student placed", "students have been placed", "total placed"])
+    is_max_salary       = any(p in q for p in ["highest ctc", "highest salary", "highest package", "maximum salary", "max ctc",
+                                                  "maximum ctc", "top salary", "highest lpa", "best package", "highest pay"])
+    is_internship_count = any(p in q for p in ["how many intern", "internship count", "total intern", "number of intern",
+                                                  "students did internship", "students did intern", "intern count",
+                                                  "students interned", "students completed internship"])
+>>>>>>> feature/chat-prod-fixes
     is_audit_summary    = any(p in q for p in ["audit log", "recent log", "security log", "query log"])
     # T9.5: 9 new patterns
     is_role_distribution = any(p in q for p in ["role distribution", "user role", "how many admin", "how many user", "role breakdown", "role count", "user breakdown"])
@@ -4627,9 +4689,13 @@ def _try_admin_aggregate_query(query: str, org_id) -> str:
                 is_system_health, is_active_users, is_org_overview, is_processing_jobs,
                 is_super_admin_mutation, is_dept_gpa, is_students_at_company,
                 is_faculty_course_map, is_batch_placement,
+<<<<<<< HEAD
                 is_max_salary, is_internship_count, is_placement_by_location,
                 is_city_distribution, is_placement_analytics, is_threshold_salary,
                 is_company_count, is_combined_total, is_min_salary]):
+=======
+                is_max_salary, is_internship_count]):
+>>>>>>> feature/chat-prod-fixes
         return ""  # Not an aggregate query — fall through to ChromaDB
 
     conn = None
@@ -4670,6 +4736,7 @@ def _try_admin_aggregate_query(query: str, org_id) -> str:
         # ── (b) company placement/internship ranking — scoped to org ─────────
         if is_placement_rank:
             try:
+<<<<<<< HEAD
                 use_intern = "intern" in q and "placement" not in q
                 tbl = "internships" if use_intern else "placements"
                 label = "INTERNSHIP" if use_intern else "PLACEMENT"
@@ -4692,14 +4759,30 @@ def _try_admin_aggregate_query(query: str, org_id) -> str:
                         f" LEFT JOIN companies c ON p.company_id = c.company_id AND c.org_id = p.org_id"
                         f" WHERE p.org_id = %s"
                         f" GROUP BY company ORDER BY {order_col} DESC LIMIT 15",
+=======
+                if org_id:
+                    cur.execute(
+                        "SELECT COALESCE(c.company_name, p.company_id) AS company, COUNT(*) AS hire_count"
+                        " FROM placements p"
+                        " LEFT JOIN companies c ON p.company_id = c.company_id AND c.org_id = p.org_id"
+                        " WHERE p.org_id = %s"
+                        " GROUP BY company ORDER BY hire_count DESC LIMIT 10",
+>>>>>>> feature/chat-prod-fixes
                         (org_id,)
                     )
                 else:
                     cur.execute(
+<<<<<<< HEAD
                         f"SELECT COALESCE(c.company_name, p.company_id) AS company, {metric_col}"
                         f" FROM {tbl} p"
                         f" LEFT JOIN companies c ON p.company_id = c.company_id"
                         f" GROUP BY company ORDER BY {order_col} DESC LIMIT 15"
+=======
+                        "SELECT COALESCE(c.company_name, p.company_id) AS company, COUNT(*) AS hire_count"
+                        " FROM placements p"
+                        " LEFT JOIN companies c ON p.company_id = c.company_id"
+                        " GROUP BY company ORDER BY hire_count DESC LIMIT 10"
+>>>>>>> feature/chat-prod-fixes
                     )
                 results = cur.fetchall()
                 if results:
